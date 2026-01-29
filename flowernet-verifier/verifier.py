@@ -10,24 +10,38 @@ from sklearn.decomposition import LatentDirichletAllocation
 
 class FlowerNetVerifier:
     def __init__(self):
-        print("🌸 FlowerNet 验证层正在初始化模型，请稍候...")
+        print("🌸 FlowerNet 验证层启动（延迟加载模式）")
         
-        # Verifier 自己的公网 URL（可选，用于返回给客户端或日志记录）
+        # Verifier 自己的公网 URL
         self.public_url = os.getenv('VERIFIER_PUBLIC_URL', 'http://localhost:8000')
         print(f"  - Verifier Public URL: {self.public_url}")
         
-        # 1. 加载 BGE-M3 (用于冗余检测 & 语义相似度)
-        self.bge_model = BGEM3FlagModel('BAAI/bge-m3', use_fp16=True)
+        # 延迟加载：模型首次使用时才加载（节省内存）
+        self._bge_model = None
+        self._sbert_model = None
         
-        # 2. 加载 Sentence-BERT (用于主题相关性)
-        self.sbert_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-        
-        # 3. 初始化 Rouge 计算器
+        # 轻量级组件立即初始化
         self.scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
-        
-        # 4. LDA 辅助工具 (简单分词)
         self.vectorizer = CountVectorizer(stop_words='english')
-        print("✅ 所有验证算法已就绪")
+        print("✅ 验证层就绪（模型将按需加载）")
+    
+    @property
+    def bge_model(self):
+        """延迟加载 BGE-M3 模型"""
+        if self._bge_model is None:
+            print("⏳ 首次加载 BGE-M3 模型...")
+            self._bge_model = BGEM3FlagModel('BAAI/bge-m3', use_fp16=True)
+            print("✅ BGE-M3 已加载")
+        return self._bge_model
+    
+    @property
+    def sbert_model(self):
+        """延迟加载 SentenceBERT 模型"""
+        if self._sbert_model is None:
+            print("⏳ 首次加载 SentenceBERT 模型...")
+            self._sbert_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+            print("✅ SentenceBERT 已加载")
+        return self._sbert_model
 
     # --- 核心辅助工具 ---
     def _tokenize(self, text):
