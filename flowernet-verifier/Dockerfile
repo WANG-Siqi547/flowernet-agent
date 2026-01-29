@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY verifier.py .
 COPY main.py .
 
-# 暴露 FastAPI 默认端口
+# 暴露端口（从环境变量读取）
 EXPOSE 8000
 
-# 启动命令
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 启动命令（使用 PORT 环境变量，默认 8000）
+CMD sh -c 'uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}'

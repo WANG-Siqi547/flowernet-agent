@@ -20,8 +20,8 @@ COPY algo_toolbox.py .
 COPY controler.py .
 COPY main.py .
 
-# 暴露 FastAPI 端口
+# 暴露端口（从环境变量读取）
 EXPOSE 8001
 
-# 启动命令
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+# 启动命令（使用 PORT 环境变量，默认 8001）
+CMD sh -c 'uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}'
