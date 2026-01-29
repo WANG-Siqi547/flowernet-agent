@@ -1,0 +1,124 @@
+# 🚀 FlowerNet 多服务部署 Blueprint
+# 使用此文件可一次性部署所有服务到 Render.com
+# 
+# 使用方法:
+# 1. 将此文件放在项目根目录
+# 2. 推送到 GitHub
+# 3. 在 Render Dashboard: New → Blueprint
+# 4. 连接 GitHub 仓库
+# 5. Render 自动检测并部署所有服务
+
+services:
+  # ==========================================
+  # Service 1: Verifier (文本验证服务)
+  # ==========================================
+  - type: web
+    name: flowernet-verifier
+    env: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./flowernet-verifier/Dockerfile
+    dockerContext: ./flowernet-verifier
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: VERIFIER_PUBLIC_URL
+        value: https://flowernet-verifier.onrender.com
+    healthCheckPath: /
+    
+  # ==========================================
+  # Service 2: Controller (流程控制服务)
+  # ==========================================
+  - type: web
+    name: flowernet-controller
+    env: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./flowernet-controler/Dockerfile
+    dockerContext: ./flowernet-controler
+    envVars:
+      - key: PORT
+        value: 8001
+      - key: CONTROLLER_PUBLIC_URL
+        value: https://flowernet-controller.onrender.com
+      - key: VERIFIER_URL
+        value: https://flowernet-verifier.onrender.com
+    healthCheckPath: /
+    
+  # ==========================================
+  # Service 3-7: 未来服务模板（取消注释即可启用）
+  # ==========================================
+  
+  # - type: web
+  #   name: flowernet-generator
+  #   env: docker
+  #   region: singapore
+  #   plan: free
+  #   dockerfilePath: ./flowernet-generator/Dockerfile
+  #   dockerContext: ./flowernet-generator
+  #   envVars:
+  #     - key: PORT
+  #       value: 8002
+  #     - key: GENERATOR_PUBLIC_URL
+  #       value: https://flowernet-generator.onrender.com
+  #   healthCheckPath: /
+  
+  # - type: web
+  #   name: flowernet-summarizer
+  #   env: docker
+  #   region: singapore
+  #   plan: free
+  #   dockerfilePath: ./flowernet-summarizer/Dockerfile
+  #   dockerContext: ./flowernet-summarizer
+  #   envVars:
+  #     - key: PORT
+  #       value: 8003
+  #     - key: SUMMARIZER_PUBLIC_URL
+  #       value: https://flowernet-summarizer.onrender.com
+  #   healthCheckPath: /
+  
+  # - type: web
+  #   name: flowernet-translator
+  #   env: docker
+  #   region: singapore
+  #   plan: free
+  #   dockerfilePath: ./flowernet-translator/Dockerfile
+  #   dockerContext: ./flowernet-translator
+  #   envVars:
+  #     - key: PORT
+  #       value: 8004
+  #     - key: TRANSLATOR_PUBLIC_URL
+  #       value: https://flowernet-translator.onrender.com
+  #   healthCheckPath: /
+  
+  # - type: web
+  #   name: flowernet-analyzer
+  #   env: docker
+  #   region: singapore
+  #   plan: free
+  #   dockerfilePath: ./flowernet-analyzer/Dockerfile
+  #   dockerContext: ./flowernet-analyzer
+  #   envVars:
+  #     - key: PORT
+  #       value: 8005
+  #     - key: ANALYZER_PUBLIC_URL
+  #       value: https://flowernet-analyzer.onrender.com
+  #   healthCheckPath: /
+  
+  # - type: web
+  #   name: flowernet-api-gateway
+  #   env: docker
+  #   region: singapore
+  #   plan: free
+  #   dockerfilePath: ./flowernet-gateway/Dockerfile
+  #   dockerContext: ./flowernet-gateway
+  #   envVars:
+  #     - key: PORT
+  #       value: 8006
+  #     - key: GATEWAY_PUBLIC_URL
+  #       value: https://flowernet-api.onrender.com
+  #     - key: VERIFIER_URL
+  #       value: https://flowernet-verifier.onrender.com
+  #     - key: CONTROLLER_URL
+  #       value: https://flowernet-controller.onrender.com
+  #   healthCheckPath: /

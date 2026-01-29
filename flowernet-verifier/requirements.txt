@@ -1,0 +1,30 @@
+# --- 基础 Web 服务器与环境 ---
+fastapi==0.109.0
+uvicorn==0.27.0
+pydantic==2.5.3
+pyngrok==7.0.5
+nest-asyncio==1.5.8
+requests==2.31.0
+
+# --- 核心 NLP 与 深度学习模型 ---
+torch>=2.0.0
+transformers>=4.36.0
+# BGE-M3 官方库 (同时支持 Dense, Sparse/BM25 和 Multi-vector)
+FlagEmbedding>=1.2.0 
+# Sentence-BERT (升级版本以兼容新 huggingface-hub)
+sentence-transformers>=2.2.0 
+
+# --- 传统文本算法 (LDA, Rouge, BM25) ---
+# 用于 LDA 主题模型和基础向量计算
+scikit-learn==1.3.2 
+# 用于计算 Rouge-L
+rouge-score==0.1.2 
+# 纯 Python 实现的 BM25 (轻量级)
+rank_bm25==0.2.2 
+# 文本分词辅助
+nltk==3.8.1
+jieba==0.42.1
+
+# --- 数据处理 ---
+numpy>=1.24.0
+pandas>=2.0.0

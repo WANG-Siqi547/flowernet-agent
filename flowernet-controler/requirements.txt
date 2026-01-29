@@ -1,0 +1,21 @@
+# --- 基础 Web 服务器与通信 ---
+fastapi==0.109.0
+uvicorn==0.27.0
+pydantic==2.5.3
+requests==2.31.0      # 核心：用于向验证层 API 发送 POST 请求
+
+# --- 算法工具箱算法依赖 (Entity Recall & LayRED) ---
+spacy==3.7.2          # 用于 NLP 任务：实体识别、依存句法分析
+# 注意：spacy 模型 en_core_web_sm 需要在 Dockerfile 中通过命令行下载
+
+# --- 相似度计算与数据处理 (SemDedup & PacSum) ---
+scikit-learn==1.3.2   # 用于计算余弦相似度（Cosine Similarity）
+numpy>=1.24.0
+pandas>=2.0.0
+
+# --- LLM 生成层对接 (假设你使用 OpenAI 或类似 API) ---
+openai==1.10.0
+
+# --- 环境与隧道 (Colab/本地调试使用) ---
+pyngrok==7.0.5
+nest-asyncio==1.5.8

@@ -1,0 +1,50 @@
+services:
+  # 1. 验证层 (Verifier) - 负责内容验证
+  verifier-app:
+    build: ./flowernet-verifier
+    container_name: flower-verifier
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_LEVEL=INFO
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - flowernet
+    volumes:
+      - verifier_cache:/root/.cache
+
+  # 2. 控制层 (Controller) - 总控制中心
+  controller-app:
+    build: ./flowernet-controler
+    container_name: flower-controller
+    ports:
+      - "8001:8001"
+    environment:
+      - VERIFIER_URL=http://verifier-app:8000
+      - LOG_LEVEL=INFO
+    depends_on:
+      verifier-app:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - flowernet
+
+networks:
+  flowernet:
+    driver: bridge
+
+volumes:
+  verifier_cache:
+    driver: local

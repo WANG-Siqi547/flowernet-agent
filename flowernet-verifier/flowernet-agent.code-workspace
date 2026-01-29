@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../flowernet-agent"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../flowernet-controler"
+		}
+	],
+	"settings": {}
+}

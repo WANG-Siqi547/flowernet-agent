@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: flowernet-controller
+    env: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: PORT
+        value: 8001
+      - key: CONTROLLER_PUBLIC_URL
+        value: https://flowernet-controller.onrender.com
+      - key: VERIFIER_URL
+        value: https://flowernet-verifier.onrender.com
+    healthCheckPath: /

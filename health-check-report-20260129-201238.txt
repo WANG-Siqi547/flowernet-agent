@@ -1,0 +1,16 @@
+FlowerNet 健康检查报告
+生成时间: 2026-01-29 20:12:38
+
+=== 容器状态 ===
+NAME                IMAGE                            COMMAND                  SERVICE          CREATED         STATUS         PORTS
+flower-controller   flowernet-agent-controller-app   "uvicorn main:app --…"   controller-app   7 minutes ago   Up 7 minutes   0.0.0.0:8001->8001/tcp, [::]:8001->8001/tcp
+flower-verifier     flowernet-agent-verifier-app     "uvicorn main:app --…"   verifier-app     7 minutes ago   Up 7 minutes   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp
+
+=== 资源使用 ===
+CONTAINER                                                          CPU %     MEM USAGE / LIMIT
+79f1106cc1efb4483254417c092dc8b0cc6e91e73c3db780bb564b61b72cc04a   0.33%     202.2MiB / 7.653GiB
+a7fef954d739befce93e2eb9a471dd81bd47592ffe95fc40254893624f8695ab   0.43%     1.643GiB / 7.653GiB
+
+=== 网络状态 ===
+[]
+网络信息不可用
