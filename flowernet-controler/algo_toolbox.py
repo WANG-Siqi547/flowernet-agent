@@ -2,13 +2,23 @@ import spacy
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
-# 加载轻量级 NLP 模型
-nlp = spacy.load("en_core_web_sm")
+# 延迟加载 spaCy 模型（不在导入时立即加载）
+_nlp = None
+
+def get_nlp():
+    """延迟加载 spaCy 模型"""
+    global _nlp
+    if _nlp is None:
+        print("⏳ 首次加载 spaCy 模型...")
+        _nlp = spacy.load("en_core_web_sm")
+        print("✅ spaCy 模型已加载")
+    return _nlp
 
 class FlowerNetAlgos:
     @staticmethod
     def entity_recall(outline):
         """【提高相关性】通过实体提取，强制 100% 覆盖"""
+        nlp = get_nlp()
         doc = nlp(outline)
         # 提取专有名词和名词短语
         entities = [ent.text for ent in doc.ents]
@@ -19,6 +29,7 @@ class FlowerNetAlgos:
     @staticmethod
     def layred_structure(outline):
         """【提高相关性】层级化结构约束，提升逻辑链条"""
+        nlp = get_nlp()
         doc = nlp(outline)
         # 提取逻辑主线 (主-谓-宾)
         relations = []
@@ -35,7 +46,8 @@ class FlowerNetAlgos:
     def sem_dedup(failed_draft, history):
         """【降低冗余】检测草稿中的语义重复句，生成禁止指令"""
         if not history: return ""
-        # 简单逻辑：提取失败草稿的关键短语作为“负面约束”
+        # 简单逻辑：提取失败草稿的关键短语作为"负面约束"
+        nlp = get_nlp()
         doc = nlp(failed_draft)
         redundant_candidates = [sent.text for sent in doc.sents if len(sent.text) > 10]
         # 告诉模型不要重复这些已经表达过的意思
