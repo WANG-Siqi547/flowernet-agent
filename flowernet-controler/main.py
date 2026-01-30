@@ -16,6 +16,10 @@ controller = FlowerNetController(VERIFIER_SERVICE_URL, mock_llm_generator)
 class GenerateRequest(BaseModel):
     outline: str
 
+@app.get("/")
+def read_root():
+    return {"status": "online", "message": "FlowerNet Controller is ready.", "public_url": controller.public_url}
+
 @app.post("/process")
 async def process_task(req: GenerateRequest):
     final_draft, success = controller.run_loop(req.outline)
