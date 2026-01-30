@@ -11,35 +11,6 @@ class FlowerNetController:
         print(f"Controller 初始化:")
         print(f"  - Public URL: {self.public_url}")
 
-    def build_initial_prompt(self, outline, history=None):
-        """
-        构建初始 Prompt
-        输入：outline（大纲），history（历史内容列表，可选）
-        输出：初始 prompt
-        """
-        if history is None:
-            history = []
-            
-        # 1. 基础约束 (LayRED & Entity Recall)
-        entity_instr = FlowerNetAlgos.entity_recall(outline)
-        logic_instr = FlowerNetAlgos.layred_structure(outline)
-        hallucination_instr = FlowerNetAlgos.anti_hallucination()
-        
-        # 2. 动态冗余约束 (PacSum)
-        context = FlowerNetAlgos.pacsum_template(history)
-        
-        prompt = f"""
-任务：根据大纲编写内容。
-大纲：{outline}
-背景上下文：{context}
-
-指令约束：
-- {entity_instr}
-- {logic_instr}
-- {hallucination_instr}
-"""
-        return prompt
-
     def refine_prompt(self, old_prompt, failed_draft, feedback, outline, history=None):
         """
         根据 Verifier 反馈修改 Prompt

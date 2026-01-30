@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 from controler import FlowerNetController
 import os
 
@@ -10,10 +10,6 @@ app = FastAPI(title="FlowerNet Controller API")
 controller = FlowerNetController()
 
 # ============ API 数据模型 ============
-
-class InitialPromptRequest(BaseModel):
-    outline: str
-    history: List[str] = []
 
 class RefinePromptRequest(BaseModel):
     old_prompt: str
@@ -31,32 +27,9 @@ def read_root():
         "message": "FlowerNet Controller is ready.", 
         "public_url": controller.public_url,
         "endpoints": {
-            "/initial_prompt": "生成初始 prompt",
-            "/refine_prompt": "根据反馈修改 prompt"
+            "/refine_prompt": "根据 Verifier 反馈修改 prompt"
         }
     }
-
-@app.post("/initial_prompt")
-async def create_initial_prompt(req: InitialPromptRequest):
-    """
-    生成初始 Prompt
-    输入：outline（大纲）+ history（历史内容）
-    输出：初始 prompt
-    """
-    try:
-        prompt = controller.build_initial_prompt(
-            outline=req.outline,
-            history=req.history
-        )
-        return {
-            "success": True,
-            "prompt": prompt
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
 
 @app.post("/refine_prompt")
 async def refine_prompt(req: RefinePromptRequest):
