@@ -23,7 +23,8 @@ class FlowerNetVerifier:
 
     def _tokenize(self, text):
         """分词"""
-        return list(jieba.cut(text))
+        tokens = [t.strip().lower() for t in jieba.cut(text)]
+        return [t for t in tokens if t]
 
     def calculate_relevancy(self, draft, outline):
         """计算草稿与大纲的相关性"""
@@ -62,16 +63,18 @@ class FlowerNetVerifier:
             return {"score": 0.0, "details": "No history yet"}
 
         all_histories = " ".join(history_list)
-        draft_tokens = set(self._tokenize(draft))
-        history_tokens = set(self._tokenize(all_histories))
+        draft_tokens_list = [t for t in self._tokenize(draft) if len(t) > 1]
+        history_tokens_list = [t for t in self._tokenize(all_histories) if len(t) > 1]
+        draft_tokens_set = set(draft_tokens_list)
+        history_tokens_set = set(history_tokens_list)
 
-        if draft_tokens:
-            token_overlap = len(draft_tokens & history_tokens) / len(draft_tokens)
+        if draft_tokens_set:
+            token_overlap = len(draft_tokens_set & history_tokens_set) / len(draft_tokens_set)
         else:
             token_overlap = 0.0
 
-        draft_bigrams = set(zip(draft_tokens, list(draft_tokens)[1:]))
-        history_bigrams = set(zip(history_tokens, list(history_tokens)[1:]))
+        draft_bigrams = set(zip(draft_tokens_list, draft_tokens_list[1:]))
+        history_bigrams = set(zip(history_tokens_list, history_tokens_list[1:]))
         
         if draft_bigrams:
             bigram_overlap = len(draft_bigrams & history_bigrams) / len(draft_bigrams)
