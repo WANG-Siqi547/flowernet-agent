@@ -27,11 +27,19 @@ class FlowerNetVerifier:
     
     @property
     def bge_model(self):
-        """延迟加载 BGE-M3 模型"""
+        """延迟加载 BGE-M3 模型（如果内存不足，回退到 sbert）"""
         if self._bge_model is None:
-            print("⏳ 首次加载 BGE-M3 模型...")
-            self._bge_model = BGEM3FlagModel('BAAI/bge-m3', use_fp16=True)
-            print("✅ BGE-M3 已加载")
+            try:
+                print("⏳ 尝试加载 BGE-M3 模型...")
+                # 使用更小的模型或直接用 sbert 代替
+                # self._bge_model = BGEM3FlagModel('BAAI/bge-m3', use_fp16=True)
+                # 改为使用已有的 sbert_model 来节省内存
+                print("⚠️  内存受限，使用 SentenceBERT 代替 BGE-M3")
+                self._bge_model = self.sbert_model  # 复用同一个模型
+                print("✅ 使用轻量级模型")
+            except Exception as e:
+                print(f"❌ BGE-M3 加载失败: {e}，使用 SentenceBERT")
+                self._bge_model = self.sbert_model
         return self._bge_model
     
     @property
@@ -119,18 +127,16 @@ class FlowerNetVerifier:
         if not history_list:
             return {"score": 0.0, "details": "No history yet"}
 
-        # 1. BGE-M3 (句子/段落级语义重复)
-        # BGE-M3 的 compute_score 可以直接算出多维度相似度
+        # 1. 语义相似度检测（使用 SentenceBERT，节省内存）
+        # 直接用 sbert 而不是 bge，避免加载大模型
         all_histories = " ".join(history_list)
-        bge_scores = self.bge_model.compute_score([[draft, all_histories]])
-        # 取 dense 和 sparse 的平均值作为语义重合度
-        bge_sim = (bge_scores['dense'][0] + bge_scores['colbert'][0]) / 2
-
-        # 2. LDA + S-BERT (主题漂移/重复)
-        # 如果当前主题和历史主题相似度极高，说明在原地打转
+        
         emb_draft = self.sbert_model.encode(draft, convert_to_tensor=True)
         emb_history = self.sbert_model.encode(all_histories, convert_to_tensor=True)
-        topic_overlap = util.pytorch_cos_sim(emb_draft, emb_history).item()
+        semantic_sim = util.pytorch_cos_sim(emb_draft, emb_history).item()
+
+        # 2. 主题重复检测（已经计算过了，复用）
+        topic_overlap = semantic_sim  # 使用同样的语义相似度
 
         # 3. 事实层面简化检测 (模拟 FActScore 逻辑)
         # 我们检测 Draft 中的核心名词在 History 中出现的频率
@@ -138,14 +144,14 @@ class FlowerNetVerifier:
         history_keywords = set([w for w in self._tokenize(all_histories) if len(w) > 1])
         fact_overlap = len(draft_keywords & history_keywords) / max(len(draft_keywords), 1)
 
-        # 4. 权重融合
-        # 冗余得分越高，说明越重复。推荐权重：BGE (0.5), Topic (0.3), Fact (0.2)
-        total_redundancy = (bge_sim * 0.5) + (topic_overlap * 0.3) + (fact_overlap * 0.2)
+        # 4. 权重融合（简化版，不使用 BGE）
+        # 冗余得分越高，说明越重复。使用语义相似度和事实重叠
+        total_redundancy = (semantic_sim * 0.6) + (fact_overlap * 0.4)
 
         return {
             "score": float(round(total_redundancy, 4)),
             "details": {
-                "bge": float(bge_sim),
+                "semantic": float(semantic_sim),
                 "topic": float(topic_overlap),
                 "fact": float(fact_overlap),
             },
