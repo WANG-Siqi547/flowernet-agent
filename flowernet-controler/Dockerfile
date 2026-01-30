@@ -12,9 +12,6 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 下载 spaCy 英文模型
-RUN python -m spacy download en_core_web_sm
-
 # 复制代码文件
 COPY algo_toolbox.py .
 COPY controler.py .
