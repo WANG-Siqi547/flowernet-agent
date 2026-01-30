@@ -4,70 +4,88 @@ import os
 from algo_toolbox import FlowerNetAlgos
 
 class FlowerNetController:
-    def __init__(self, verifier_url=None, generator_func=None):
-        # 优先使用传入的 URL，否则从环境变量读取
-        self.verifier_url = verifier_url or os.getenv('VERIFIER_URL', 'http://localhost:8000')
-        self.generator = generator_func  # 这里的 generator 是调用 LLM 的函数
-        self.history = []
-        
+    def __init__(self):
         # Controller 自己的公网 URL（可选，用于返回给客户端）
         self.public_url = os.getenv('CONTROLLER_PUBLIC_URL', 'http://localhost:8001')
         
         print(f"Controller 初始化:")
-        print(f"  - Verifier URL: {self.verifier_url}")
         print(f"  - Public URL: {self.public_url}")
 
-    def build_prompt(self, outline, failed_draft=None, scenario="initial"):
-        """构造/修改 Prompt 的核心"""
+    def build_initial_prompt(self, outline, history=None):
+        """
+        构建初始 Prompt
+        输入：outline（大纲），history（历史内容列表，可选）
+        输出：初始 prompt
+        """
+        if history is None:
+            history = []
+            
         # 1. 基础约束 (LayRED & Entity Recall)
         entity_instr = FlowerNetAlgos.entity_recall(outline)
         logic_instr = FlowerNetAlgos.layred_structure(outline)
         hallucination_instr = FlowerNetAlgos.anti_hallucination()
         
-        # 2. 动态冗余约束 (PacSum & SemDedup)
-        context = FlowerNetAlgos.pacsum_template(self.history)
+        # 2. 动态冗余约束 (PacSum)
+        context = FlowerNetAlgos.pacsum_template(history)
         
         prompt = f"""
-        任务：根据大纲编写内容。
-        大纲：{outline}
-        背景上下文：{context}
-        
-        指令约束：
-        - {entity_instr}
-        - {logic_instr}
-        - {hallucination_instr}
-        """
+任务：根据大纲编写内容。
+大纲：{outline}
+背景上下文：{context}
 
-        if scenario == "fix_redundancy" and failed_draft:
-            dedup_instr = FlowerNetAlgos.sem_dedup(failed_draft, self.history)
-            prompt += f"\n- 修正要求：{dedup_instr}\n- 请换一个角度描述，不要与前文重复。"
-            
+指令约束：
+- {entity_instr}
+- {logic_instr}
+- {hallucination_instr}
+"""
         return prompt
 
-    def run_loop(self, outline, max_retries=3):
-        current_prompt = self.build_prompt(outline)
+    def refine_prompt(self, old_prompt, failed_draft, feedback, outline, history=None):
+        """
+        根据 Verifier 反馈修改 Prompt
+        输入：
+          - old_prompt: 之前使用的 prompt
+          - failed_draft: 未通过验证的 draft
+          - feedback: Verifier 返回的反馈信息（包含 relevancy_index, redundancy_index 等）
+          - outline: 原始大纲
+          - history: 历史内容列表（可选）
+        输出：修改后的新 prompt
+        """
+        if history is None:
+            history = []
+            
+        # 解析反馈
+        redundancy_index = feedback.get('redundancy_index', 0)
+        relevancy_index = feedback.get('relevancy_index', 0)
+        feedback_msg = feedback.get('feedback', '')
         
-        for attempt in range(max_retries):
-            # 1. 调用生成层 (LLM)
-            draft = self.generator(current_prompt)
-            
-            # 2. 调用验证层 API (跨服务调用)
-            response = requests.post(
-                f"{self.verifier_url}/verify",
-                json={"draft": draft, "outline": outline, "history": self.history}
-            )
-            res_data = response.json()
-            
-            if res_data["is_passed"]:
-                self.history.append(draft)
-                return draft, True
+        # 基础约束保持不变
+        entity_instr = FlowerNetAlgos.entity_recall(outline)
+        logic_instr = FlowerNetAlgos.layred_structure(outline)
+        hallucination_instr = FlowerNetAlgos.anti_hallucination()
+        context = FlowerNetAlgos.pacsum_template(history)
+        
+        new_prompt = f"""
+任务：根据大纲编写内容。
+大纲：{outline}
+背景上下文：{context}
 
-            # 3. 如果不合格，根据反馈修改 Prompt
-            print(f"第 {attempt+1} 次尝试失败: {res_data['feedback']}")
-            
-            if res_data["redundancy_index"] > 0.6:
-                current_prompt = self.build_prompt(outline, draft, "fix_redundancy")
-            else:
-                current_prompt = self.build_prompt(outline, draft, "fix_relevancy")
-                
-        return "未能生成合格内容", False
+指令约束：
+- {entity_instr}
+- {logic_instr}
+- {hallucination_instr}
+"""
+        
+        # 根据具体问题添加修正指令
+        if redundancy_index > 0.6:
+            # 冗余度过高
+            dedup_instr = FlowerNetAlgos.sem_dedup(failed_draft, history)
+            new_prompt += f"\n\n⚠️ 修正要求（冗余问题）：\n{dedup_instr}\n请换一个角度描述，不要与前文重复。避免使用与历史内容相同的词汇和表达。"
+        
+        if relevancy_index < 0.6:
+            # 相关性不足
+            new_prompt += f"\n\n⚠️ 修正要求（相关性问题）：\n内容偏离了大纲要求。请严格按照大纲的核心主题展开，确保每句话都与「{outline}」直接相关。"
+        
+        new_prompt += f"\n\n💡 上次生成的问题：{feedback_msg}"
+        
+        return new_prompt
