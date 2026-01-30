@@ -9,8 +9,8 @@ app = FastAPI()
 def mock_llm_generator(prompt):
     return "这是模拟 LLM 生成的草稿..."
 
-# VERIFIER_URL 应该指向 Docker Compose 中的服务名
-VERIFIER_SERVICE_URL = os.getenv("VERIFIER_URL", "http://verifier-app:8000")
+# VERIFIER_URL 应该指向公网部署的 Render 服务
+VERIFIER_SERVICE_URL = os.getenv("VERIFIER_URL", "https://flowernet-verifier.onrender.com")
 controller = FlowerNetController(VERIFIER_SERVICE_URL, mock_llm_generator)
 
 class GenerateRequest(BaseModel):
