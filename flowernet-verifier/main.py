@@ -13,12 +13,22 @@ class VerifyRequest(BaseModel):
     rel_threshold: Optional[float] = 0.6  # 可选：自定义相关性阈值
     red_threshold: Optional[float] = 0.7  # 可选：自定义冗余度阈值
 
-# 2. 初始化应用和验证器
+# 2. 初始化应用
 app = FastAPI(title="FlowerNet Verifying Layer API")
 
-# 在全局范围内初始化，这样模型只会加载一次，避免内存浪费
-print("🚀 FlowerNet Service is starting...")
-verifier = FlowerNetVerifier()
+# 全局 verifier 对象（延迟初始化）
+_verifier = None
+
+def get_verifier():
+    """延迟初始化 verifier（首次使用时才创建）"""
+    global _verifier
+    if _verifier is None:
+        print("⏳ 首次初始化 Verifier...")
+        _verifier = FlowerNetVerifier()
+        print("✅ Verifier 已初始化")
+    return _verifier
+
+print("🚀 FlowerNet API 启动（Verifier 将按需初始化）...")
 
 # 3. 定义根目录（用于检查服务是否存活）
 @app.get("/")
@@ -29,6 +39,8 @@ def read_root():
 @app.post("/verify")
 async def perform_verification(request: VerifyRequest):
     try:
+        # 获取或创建 verifier（延迟初始化）
+        verifier = get_verifier()
         # 调用 verifier.py 中的 verify 方法
         result = verifier.verify(
             draft=request.draft,
