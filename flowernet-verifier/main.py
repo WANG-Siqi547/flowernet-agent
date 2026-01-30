@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
-from verifier import FlowerNetVerifier  # 导入你刚刚跑通的算法类
+from verifier_lite import FlowerNetVerifier  # 使用轻量级版本，无需大模型
 
 # 1. 定义数据格式 (Pydantic 模型)
 # 这样 FastAPI 会自动帮你检查收到的数据对不对
