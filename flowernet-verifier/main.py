@@ -44,7 +44,8 @@ class FlowerNetVerifier:
             bm25_score = 0.5
 
         length_score = min(len(draft) / max(len(outline), 1), 1.0)
-        relevancy_score = (keyword_coverage * 0.4) + (bm25_score * 0.3) + (length_score * 0.3)
+        # 提高关键词覆盖率权重，降低长度影响
+        relevancy_score = (keyword_coverage * 0.6) + (bm25_score * 0.3) + (length_score * 0.1)
 
         return {
             "score": float(round(relevancy_score, 4)),
@@ -77,7 +78,8 @@ class FlowerNetVerifier:
         else:
             bigram_overlap = 0.0
 
-        redundancy_score = (token_overlap * 0.5) + (bigram_overlap * 0.5)
+        # 提高单词重叠权重，更严格检测冗余
+        redundancy_score = (token_overlap * 0.7) + (bigram_overlap * 0.3)
 
         return {
             "score": float(round(redundancy_score, 4)),
