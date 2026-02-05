@@ -4,10 +4,12 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py 8002 gemini
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 8002
     envVars:
       - key: GOOGLE_API_KEY
         sync: false
-      - key: PORT
-        value: 8002
+      - key: GENERATOR_PROVIDER
+        value: gemini
+      - key: GENERATOR_MODEL
+        value: models/gemini-2.5-flash
     healthCheckPath: /health

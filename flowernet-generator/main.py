@@ -51,12 +51,17 @@ app = FastAPI(title="FlowerNet Generator API")
 
 # 初始化生成器
 generator = None
+_provider = "gemini"
+_model = None
 
 def init_generator(provider: str = "gemini", model: str = None):
     """初始化生成器（支持 Gemini 和 Claude）"""
-    global generator
+    global generator, _provider, _model
     
     try:
+        _provider = provider
+        _model = model
+        
         if provider == "gemini":
             model = model or "models/gemini-2.5-flash"
             generator = FlowerNetGenerator(provider="gemini", model=model)
@@ -91,6 +96,27 @@ def get_orchestrator():
             max_iterations=max_iterations
         )
     return orchestrator
+
+
+# 启动事件：在应用启动时初始化 Generator
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化 Generator"""
+    import os
+    
+    provider = os.getenv('GENERATOR_PROVIDER', 'gemini')
+    model = os.getenv('GENERATOR_MODEL', None)
+    
+    print(f"\n⚡ 启动事件触发")
+    print(f"📦 环境变量: GENERATOR_PROVIDER={provider}, GENERATOR_MODEL={model}")
+    print(f"🔑 API Key 设置: {'是' if os.getenv('GOOGLE_API_KEY') else '否'}")
+    
+    init_generator(provider=provider, model=model)
+    
+    if generator is None:
+        print("⚠️  警告: Generator 初始化失败，某些端点可能不可用")
+    else:
+        print("✅ Generator 初始化成功")
 
 
 # ============ API 端点 ============
@@ -208,8 +234,8 @@ if __name__ == "__main__":
     
     # 优先使用环境变量 PORT（Render 会自动设置），否则使用命令行参数
     port = int(os.getenv("PORT", sys.argv[1] if len(sys.argv) > 1 else 8002))
-    provider = sys.argv[2] if len(sys.argv) > 2 else "gemini"  # 默认使用 Gemini
-    model = sys.argv[3] if len(sys.argv) > 3 else None
+    provider = os.getenv("GENERATOR_PROVIDER", sys.argv[2] if len(sys.argv) > 2 else "gemini")
+    model = os.getenv("GENERATOR_MODEL", sys.argv[3] if len(sys.argv) > 3 else None)
     
     # 初始化生成器
     init_generator(provider=provider, model=model)
