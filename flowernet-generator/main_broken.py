@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import uvicorn
 import os
-import sys
 
 from generator import FlowerNetGenerator, FlowerNetOrchestrator
 
@@ -76,8 +75,6 @@ def init_generator(provider: str = "gemini", model: str = None):
         return generator
     except Exception as e:
         print(f"❌ Generator 初始化失败: {e}")
-        import traceback
-        traceback.print_exc()
         return None
 
 # 初始化编排器（用于调用其他服务）
@@ -105,56 +102,59 @@ def get_orchestrator():
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化 Generator"""
-    provider = os.getenv('GENERATOR_PROVIDER', 'gemini')
-    model = os.getenv('GENERATOR_MODEL', None)
-    api_key = os.getenv('GOOGLE_API_KEY', '')
-    
-    msg = f"\n⚡ 启动事件触发\n"
-    msg += f"📦 环境变量:\n"
-    msg += f"   - GENERATOR_PROVIDER: {provider}\n"
-    msg += f"   - GENERATOR_MODEL: {model}\n"
-    msg += f"   - GOOGLE_API_KEY: {'✅ 已设置' if api_key else '❌ 未设置'}\n"
-    
-    print(msg)
-    sys.stdout.flush()
-    
-    result = init_generator(provider=provider, model=model)
-    
-    if result is None:
-        print("⚠️  警告: Generator 初始化失败，某些端点可能不可用")
-    else:
-        print(f"✅ Generator 初始化成功: {type(result).__name__}")
-    
-    sys.stdout.flush()
-
+    import os
+       import sys
+   
+       provider = os.getenv('GENERATOR_PROVIDER', 'gemini')
+       model = os.getenv('GENERATOR_MODEL', None)
+       api_key = os.getenv('GOOGLE_API_KEY', '')
+   
+       msg = f"\n⚡ 启动事件触发\n"
+       msg += f"📦 环境变量:\n"
+       msg += f"   - GENERATOR_PROVIDER: {provider}\n"
+       msg += f"   - GENERATOR_MODEL: {model}\n"
+       msg += f"   - GOOGLE_API_KEY: {'✅ 已设置' if api_key else '❌ 未设置'}\n"
+   
+       print(msg)
+       sys.stdout.flush()
+   
+       result = init_generator(provider=provider, model=model)
+   
+       if result is None:
+           print("⚠️  警告: Generator 初始化失败，某些端点可能不可用")
+       else:
+           print(f"✅ Generator 初始化成功: {type(result).__name__}")
+   
+       sys.stdout.flush()
 
 # 调试端点：检查 Generator 状态
 @app.get("/debug")
 async def debug():
-    """调试信息"""
-    return {
-        "status": "Generator initialized" if generator else "Generator NOT initialized",
-        "generator": {
-            "is_none": generator is None,
-            "type": str(type(generator)) if generator else "None"
-        },
-        "environment": {
-            "GENERATOR_PROVIDER": os.getenv('GENERATOR_PROVIDER', 'NOT SET'),
-            "GENERATOR_MODEL": os.getenv('GENERATOR_MODEL', 'NOT SET'),
-            "GOOGLE_API_KEY": "SET" if os.getenv('GOOGLE_API_KEY') else "NOT SET"
-        }
-    }
+   """调试信息"""
+   import os
+   
+   return {
+       "status": "Generator initialized" if generator else "Generator NOT initialized",
+       "generator": {
+           "is_none": generator is None,
+           "type": str(type(generator)) if generator else "None"
+       },
+       "environment": {
+           "GENERATOR_PROVIDER": os.getenv('GENERATOR_PROVIDER', 'NOT SET'),
+           "GENERATOR_MODEL": os.getenv('GENERATOR_MODEL', 'NOT SET'),
+           "GOOGLE_API_KEY": "SET" if os.getenv('GOOGLE_API_KEY') else "NOT SET"
+       }
+   }
 
 
 # 健康检查端点
 @app.get("/health")
 async def health():
-    """服务健康检查"""
-    return {
-        "status": "healthy" if generator else "degraded",
-        "generator_initialized": generator is not None
-    }
-
+   """服务健康检查"""
+   return {
+       "status": "healthy" if generator else "degraded",
+       "generator_initialized": generator is not None
+   }
 
 # ============ API 端点 ============
 
@@ -266,6 +266,9 @@ async def generate_document(request: GenerateDocumentRequest):
 # ============ 本地测试 ============
 
 if __name__ == "__main__":
+    import sys
+    import os
+    
     # 优先使用环境变量 PORT（Render 会自动设置），否则使用命令行参数
     port = int(os.getenv("PORT", sys.argv[1] if len(sys.argv) > 1 else 8002))
     provider = os.getenv("GENERATOR_PROVIDER", sys.argv[2] if len(sys.argv) > 2 else "gemini")
