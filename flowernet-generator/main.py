@@ -54,10 +54,11 @@ app = FastAPI(title="FlowerNet Generator API")
 generator = None
 _provider = "gemini"
 _model = None
+_init_error = None
 
 def init_generator(provider: str = "gemini", model: str = None):
     """初始化生成器（支持 Gemini 和 Claude）"""
-    global generator, _provider, _model
+    global generator, _provider, _model, _init_error
     
     try:
         _provider = provider
@@ -72,9 +73,11 @@ def init_generator(provider: str = "gemini", model: str = None):
         else:
             raise ValueError(f"不支持的提供商: {provider}")
         
+        _init_error = None
         print(f"✅ Generator 已初始化 ({provider})")
         return generator
     except Exception as e:
+        _init_error = str(e)
         print(f"❌ Generator 初始化失败: {e}")
         import traceback
         traceback.print_exc()
@@ -138,6 +141,7 @@ async def debug():
             "is_none": generator is None,
             "type": str(type(generator)) if generator else "None"
         },
+        "init_error": _init_error,
         "environment": {
             "GENERATOR_PROVIDER": os.getenv('GENERATOR_PROVIDER', 'NOT SET'),
             "GENERATOR_MODEL": os.getenv('GENERATOR_MODEL', 'NOT SET'),
@@ -179,7 +183,12 @@ async def generate(request: GenerateRequest):
     简单生成：只根据 prompt 生成 draft，不进行验证
     """
     if generator is None:
-        raise HTTPException(status_code=500, detail="Generator not initialized")
+        init_generator(
+            provider=os.getenv("GENERATOR_PROVIDER", "gemini"),
+            model=os.getenv("GENERATOR_MODEL", None)
+        )
+    if generator is None:
+        raise HTTPException(status_code=500, detail=f"Generator not initialized: {_init_error or 'unknown error'}")
     
     try:
         result = generator.generate_draft(
@@ -197,7 +206,12 @@ async def generate_with_context(request: GenerateWithContextRequest):
     带上下文的生成：考虑大纲和历史内容
     """
     if generator is None:
-        raise HTTPException(status_code=500, detail="Generator not initialized")
+        init_generator(
+            provider=os.getenv("GENERATOR_PROVIDER", "gemini"),
+            model=os.getenv("GENERATOR_MODEL", None)
+        )
+    if generator is None:
+        raise HTTPException(status_code=500, detail=f"Generator not initialized: {_init_error or 'unknown error'}")
     
     try:
         result = generator.generate_with_context(
@@ -223,7 +237,12 @@ async def generate_section(request: GenerateSectionRequest):
     4. 重复直到通过或达到最大迭代次数
     """
     if generator is None:
-        raise HTTPException(status_code=500, detail="Generator not initialized")
+        init_generator(
+            provider=os.getenv("GENERATOR_PROVIDER", "gemini"),
+            model=os.getenv("GENERATOR_MODEL", None)
+        )
+    if generator is None:
+        raise HTTPException(status_code=500, detail=f"Generator not initialized: {_init_error or 'unknown error'}")
     
     try:
         orch = get_orchestrator()
@@ -247,7 +266,12 @@ async def generate_document(request: GenerateDocumentRequest):
     每个段落都会经过生成-验证-修改循环
     """
     if generator is None:
-        raise HTTPException(status_code=500, detail="Generator not initialized")
+        init_generator(
+            provider=os.getenv("GENERATOR_PROVIDER", "gemini"),
+            model=os.getenv("GENERATOR_MODEL", None)
+        )
+    if generator is None:
+        raise HTTPException(status_code=500, detail=f"Generator not initialized: {_init_error or 'unknown error'}")
     
     try:
         orch = get_orchestrator()
