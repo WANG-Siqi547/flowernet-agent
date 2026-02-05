@@ -204,9 +204,10 @@ async def generate_document(request: GenerateDocumentRequest):
 
 if __name__ == "__main__":
     import sys
+    import os
     
-    # 可以通过命令行参数指定端口和提供商
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8002
+    # 优先使用环境变量 PORT（Render 会自动设置），否则使用命令行参数
+    port = int(os.getenv("PORT", sys.argv[1] if len(sys.argv) > 1 else 8002))
     provider = sys.argv[2] if len(sys.argv) > 2 else "gemini"  # 默认使用 Gemini
     model = sys.argv[3] if len(sys.argv) > 3 else None
     
@@ -214,7 +215,7 @@ if __name__ == "__main__":
     init_generator(provider=provider, model=model)
     
     print(f"\n🚀 FlowerNet Generator 启动在 http://0.0.0.0:{port}")
-    print(f"📖 API 文档: http://localhost:{port}/docs")
+    print(f"📖 API 文档: http://0.0.0.0:{port}/docs")
     print(f"🤖 使用 LLM: {provider} ({model or 'default'})")
     
     uvicorn.run(app, host="0.0.0.0", port=port)

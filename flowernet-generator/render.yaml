@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: flowernet-generator
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py 8002 gemini
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: PORT
+        value: 8002
+    healthCheckPath: /health
