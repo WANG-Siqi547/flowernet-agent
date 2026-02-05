@@ -14,12 +14,8 @@ COPY . .
 # 暴露端口
 EXPOSE 8002
 
-# 设置环境变量
-ENV ANTHROPIC_API_KEY=""
-ENV GENERATOR_URL="http://localhost:8002"
-ENV VERIFIER_URL="http://localhost:8000"
-ENV CONTROLLER_URL="http://localhost:8001"
-ENV MAX_ITERATIONS="5"
+# 默认端口（Render 会覆盖 PORT）
+ENV PORT=8002
 
-# 运行应用
-CMD ["python", "main.py", "8002"]
+# 运行应用（兼容 Render 的 PORT 环境变量）
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8002}"]
