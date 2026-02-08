@@ -138,7 +138,7 @@ class FlowerNetGenerator:
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Gemini API Error: {str(e)}",
+                "error": f"猫咪报错🐱 ：Gemini API Error: {str(e)}， 错了咪！",
                 "draft": ""
             }
     
