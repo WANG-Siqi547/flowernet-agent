@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: flowernet-outliner
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: OUTLINER_MODEL
+        value: models/gemini-2.5-flash
+      - key: USE_DATABASE
+        value: false
+      - key: DATABASE_PATH
+        value: flowernet_history.db
+    healthCheckPath: /

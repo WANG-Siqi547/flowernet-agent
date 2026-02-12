@@ -10,6 +10,8 @@ from rouge_score import rouge_scorer
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 
+from history_store import HistoryManager
+
 
 # ============ FlowerNetVerifier 轻量级版本 ============
 class FlowerNetVerifier:
@@ -122,6 +124,7 @@ class VerifyRequest(BaseModel):
     draft: str                  # 当前生成的草稿
     outline: str                # 对应的大纲/任务要求
     history: List[str] = []     # 之前已经生成的章节内容列表（用于查重）
+    document_id: Optional[str] = None  # 如果不传 history，可用 document_id 从数据库读取
     rel_threshold: Optional[float] = 0.6  # 可选：自定义相关性阈值
     red_threshold: Optional[float] = 0.7  # 可选：自定义冗余度阈值
 
@@ -130,6 +133,7 @@ app = FastAPI(title="FlowerNet Verifying Layer API")
 
 # 全局 verifier 对象（延迟初始化）
 _verifier = None
+_history_manager = None
 
 def get_verifier():
     """延迟初始化 verifier（首次使用时才创建）"""
@@ -139,6 +143,15 @@ def get_verifier():
         _verifier = FlowerNetVerifier()
         print("✅ Verifier 已初始化")
     return _verifier
+
+def get_history_manager():
+    """延迟初始化 HistoryManager（用于从数据库读取历史内容）"""
+    global _history_manager
+    if _history_manager is None:
+        use_db = os.getenv('USE_DATABASE', 'false').lower() == 'true'
+        db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
+        _history_manager = HistoryManager(use_database=use_db, db_path=db_path)
+    return _history_manager
 
 print("🚀 FlowerNet API 启动（Verifier 将按需初始化）...")
 
@@ -153,11 +166,16 @@ async def perform_verification(request: VerifyRequest):
     try:
         # 获取或创建 verifier（延迟初始化）
         verifier = get_verifier()
+        history_list = request.history
+        if (not history_list) and request.document_id:
+            history_manager = get_history_manager()
+            history_records = history_manager.get_history(request.document_id)
+            history_list = [entry["content"] for entry in history_records]
         # 调用 verifier.py 中的 verify 方法
         result = verifier.verify(
             draft=request.draft,
             outline=request.outline,
-            history_list=request.history,
+            history_list=history_list,
             rel_threshold=request.rel_threshold,
             red_threshold=request.red_threshold
         )

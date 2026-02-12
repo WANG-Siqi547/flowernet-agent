@@ -58,6 +58,7 @@ bash start-flowernet.sh
 - Verifier: http://localhost:8000
 - Controller: http://localhost:8001
 - Generator: http://localhost:8002
+- Outliner: http://localhost:8003
 
 ### 4. 测试生成
 
@@ -105,6 +106,9 @@ print(result['draft'])
 │                        通过或达上限
 └─────────────────────────────────────────────────────┘
 ```
+
+**新增组件**:
+- **Outliner (8003)**: 生成文档结构大纲与 Content Prompts
 
 ### 工作流程
 
@@ -246,9 +250,20 @@ python3 test_flowernet_e2e.py
    curl https://flowernet-generator.onrender.com/debug
    ```
 
-### Verifier 和 Controller 部署
+### Verifier、Controller 和 Outliner 部署
 
-类似步骤，Root Directory 分别设为 `flowernet-verifier` 和 `flowernet-controler`。
+类似步骤，Root Directory 分别设为：
+- `flowernet-verifier`
+- `flowernet-controler`
+- `flowernet-outliner`
+
+**Outliner 环境变量**:
+```
+GOOGLE_API_KEY=你的密钥
+OUTLINER_MODEL=models/gemini-2.5-flash
+USE_DATABASE=false
+DATABASE_PATH=flowernet_history.db
+```
 
 ### 使用云端服务
 
@@ -344,6 +359,72 @@ client = FlowerNetClient(
 }
 ```
 
+### Outliner API
+
+**POST /generate-outline**
+```json
+{
+  "user_background": "背景信息...",
+  "user_requirements": "需求描述...",
+  "max_sections": 4,
+  "max_subsections_per_section": 3
+}
+```
+
+**POST /generate-structure**
+```json
+{
+  "user_background": "背景信息...",
+  "user_requirements": "需求描述...",
+  "max_sections": 4,
+  "max_subsections_per_section": 3
+}
+```
+
+**POST /history/add**
+```json
+{
+  "document_id": "doc_001",
+  "section_id": "section_1",
+  "subsection_id": "subsection_1_1",
+  "content": "生成的内容...",
+  "metadata": {"tokens": 120}
+}
+```
+
+---
+
+## 🗄️ History 数据库与工作流程
+
+### 存储内容（只存 History）
+每条记录包含：
+- `document_id`
+- `section_id`
+- `subsection_id`
+- `content`
+- `timestamp`
+- `metadata`
+
+### 工作流程（DB 作为唯一 History 源）
+1. **Outliner/生成流程写入**：只把“通过验证的最终内容”写入数据库
+2. **Verifier 读取**：通过 `document_id` 从数据库读取历史内容
+3. **验证完成清理**：文档全部完成后清空该 `document_id` 的历史
+
+### 读写方式（两种模式）
+- **SQLite 模式**（推荐）：设置 `USE_DATABASE=true`，并指定 `DATABASE_PATH`
+- **内存模式**：`USE_DATABASE=false`（重启即丢）
+
+### Verifier 调用示例（推荐走数据库）
+```json
+{
+  "draft": "生成内容...",
+  "outline": "主题大纲",
+  "document_id": "doc_001",
+  "rel_threshold": 0.6,
+  "red_threshold": 0.7
+}
+```
+
 ---
 
 ## ⚙️ 配置指南
@@ -356,6 +437,9 @@ client = FlowerNetClient(
 | `ANTHROPIC_API_KEY` | - | Claude API 密钥 |
 | `GENERATOR_PROVIDER` | `gemini` | LLM 提供商 |
 | `GENERATOR_MODEL` | `models/gemini-2.5-flash` | 使用的模型 |
+| `OUTLINER_MODEL` | `models/gemini-2.5-flash` | Outliner 使用的模型 |
+| `USE_DATABASE` | `false` | Outliner History 是否使用 SQLite |
+| `DATABASE_PATH` | `flowernet_history.db` | Outliner SQLite 路径 |
 | `MAX_ITERATIONS` | `5` | 最大迭代次数 |
 
 ### 验证阈值调整
