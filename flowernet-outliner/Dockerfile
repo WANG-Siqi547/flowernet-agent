@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制代码
 COPY outliner.py .
 COPY database.py .
+COPY history_store.py .
 COPY main.py .
 
 # 暴露端口
