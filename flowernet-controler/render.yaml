@@ -13,4 +13,8 @@ services:
         value: https://flowernet-controller.onrender.com
       - key: VERIFIER_URL
         value: https://flowernet-verifier.onrender.com
+      - key: USE_DATABASE
+        value: "true"
+      - key: DATABASE_PATH
+        value: /tmp/flowernet_history.db
     healthCheckPath: /

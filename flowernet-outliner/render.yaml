@@ -11,7 +11,9 @@ services:
       - key: OUTLINER_MODEL
         value: models/gemini-2.5-flash
       - key: USE_DATABASE
-        value: false
+        value: "true"
       - key: DATABASE_PATH
-        value: flowernet_history.db
+        value: /tmp/flowernet_history.db
+      - key: OUTLINER_URL
+        value: https://flowernet-outliner.onrender.com
     healthCheckPath: /

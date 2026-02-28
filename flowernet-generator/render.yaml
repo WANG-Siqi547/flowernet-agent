@@ -12,4 +12,16 @@ services:
         value: gemini
       - key: GENERATOR_MODEL
         value: models/gemini-2.5-flash
+      - key: USE_DATABASE
+        value: "true"
+      - key: DATABASE_PATH
+        value: /tmp/flowernet_history.db
+      - key: GENERATOR_URL
+        value: https://flowernet-generator.onrender.com
+      - key: VERIFIER_URL
+        value: https://flowernet-verifier.onrender.com
+      - key: CONTROLLER_URL
+        value: https://flowernet-controller.onrender.com
+      - key: OUTLINER_URL
+        value: https://flowernet-outliner.onrender.com
     healthCheckPath: /health
