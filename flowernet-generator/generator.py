@@ -1,12 +1,13 @@
 """
 FlowerNet Generator - LLM驱动的内容生成模块
 根据prompt使用LLM生成draft内容
-支持多种 LLM 提供商: Anthropic Claude, Google Gemini
+支持多种 LLM 提供商: Anthropic Claude, Google Gemini, Ollama
 """
 
 import os
 import requests
 import json
+import subprocess
 from typing import Optional, Dict, Any, List
 
 try:
@@ -28,9 +29,10 @@ class FlowerNetGenerator:
     内容生成器：支持多种 LLM 提供商
     - Anthropic Claude (需要 ANTHROPIC_API_KEY)
     - Google Gemini (需要 GOOGLE_API_KEY，完全免费)
+    - Ollama (本地运行，完全免费无限制)
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "models/gemini-2.5-flash", provider: str = "gemini"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "qwen2.5:7b", provider: str = "ollama"):
         """
         初始化生成器
         
@@ -39,11 +41,13 @@ class FlowerNetGenerator:
             model: 使用的模型名称
                 - Claude: "claude-3-5-sonnet-20241022"
                 - Gemini: "models/gemini-2.5-flash" (免费, 最新), "models/gemini-2.5-pro" (免费但有限制)
-            provider: LLM 提供商 ("claude" 或 "gemini")
+                - Ollama: "qwen2.5:7b", "llama3.1:8b", "mistral:7b" 等
+            provider: LLM 提供商 ("claude", "gemini", 或 "ollama")
         """
         self.provider = provider.lower()
         self.model = model
         self.public_url = os.getenv('GENERATOR_PUBLIC_URL', 'http://localhost:8002')
+        self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
         
         # 根据提供商初始化
         if self.provider == "gemini":
@@ -75,8 +79,17 @@ class FlowerNetGenerator:
             print(f"  - Model: {self.model}")
             print(f"  - Provider: Anthropic Claude")
             print(f"  - Public URL: {self.public_url}")
+            
+        elif self.provider == "ollama":
+            self.client = None  # Ollama 使用HTTP API，不需要SDK客户端
+            
+            print(f"✅ Generator 初始化 (Ollama - 本地免费):")
+            print(f"  - Model: {self.model}")
+            print(f"  - Provider: Ollama (本地)")
+            print(f"  - Ollama URL: {self.ollama_url}")
+            print(f"  - Public URL: {self.public_url}")
         else:
-            raise ValueError(f"不支持的提供商: {provider}。请使用 'claude' 或 'gemini'")
+            raise ValueError(f"不支持的提供商: {provider}。请使用 'claude', 'gemini', 或 'ollama'")
 
     def generate_draft(self, prompt: str, max_tokens: int = 2000) -> Dict[str, Any]:
         """
@@ -94,6 +107,8 @@ class FlowerNetGenerator:
                 return self._generate_with_gemini(prompt, max_tokens)
             elif self.provider == "claude":
                 return self._generate_with_claude(prompt, max_tokens)
+            elif self.provider == "ollama":
+                return self._generate_with_ollama(prompt, max_tokens)
             else:
                 raise ValueError(f"未知的提供商: {self.provider}")
         except Exception as e:
@@ -175,6 +190,60 @@ class FlowerNetGenerator:
                 "error": f"Claude API Error: {str(e)}",
                 "draft": ""
             }
+    
+    def _generate_with_ollama(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
+        """使用 Ollama 本地生成内容"""
+        try:
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "num_predict": max_tokens,
+                    "temperature": 0.7
+                }
+            }
+            cmd = [
+                "curl", "-s", "-X", "POST", f"{self.ollama_url}/api/generate",
+                "-H", "Content-Type: application/json",
+                "-d", json.dumps(payload, ensure_ascii=False)
+            ]
+            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            if completed.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"Ollama curl 执行失败: {completed.stderr.strip()}",
+                    "draft": ""
+                }
+
+            if not completed.stdout.strip():
+                return {
+                    "success": False,
+                    "error": "Ollama 返回空响应",
+                    "draft": ""
+                }
+
+            result = json.loads(completed.stdout)
+            draft_text = result.get('response', '')
+            
+            return {
+                "success": True,
+                "draft": draft_text,
+                "metadata": {
+                    "model": self.model,
+                    "provider": "ollama",
+                    "prompt_tokens": result.get('prompt_eval_count', 0),
+                    "output_tokens": result.get('eval_count', 0),
+                    "total_duration_ms": result.get('total_duration', 0) / 1000000,  # 纳秒转毫秒
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Ollama API Error: {str(e)}",
+                "draft": ""
+            }
 
     def generate_with_context(
         self,
@@ -215,6 +284,7 @@ class FlowerNetOrchestrator:
     """
     FlowerNet 流程编排器：
     管理整个循环流程（Generator -> Verifier -> Controller -> Generator ...）
+    集成 History Database 自动存储验证通过的内容
     """
     
     def __init__(
@@ -222,7 +292,8 @@ class FlowerNetOrchestrator:
         generator_url: str = "http://localhost:8002",
         verifier_url: str = "http://localhost:8000",
         controller_url: str = "http://localhost:8001",
-        max_iterations: int = 5
+        max_iterations: int = 5,
+        history_manager = None
     ):
         """
         初始化编排器
@@ -232,11 +303,13 @@ class FlowerNetOrchestrator:
             verifier_url: Verifier 服务的 URL
             controller_url: Controller 服务的 URL
             max_iterations: 最大迭代次数
+            history_manager: HistoryManager 实例（用于自动存储验证通过的内容）
         """
         self.generator_url = generator_url
         self.verifier_url = verifier_url
         self.controller_url = controller_url
         self.max_iterations = max_iterations
+        self.history_manager = history_manager
         self.session = requests.Session()
         
         print(f"🌸 FlowerNet 编排器初始化:")
@@ -244,27 +317,36 @@ class FlowerNetOrchestrator:
         print(f"  - Verifier URL: {verifier_url}")
         print(f"  - Controller URL: {controller_url}")
         print(f"  - Max iterations: {max_iterations}")
+        print(f"  - History Manager: {'✅ 已启用' if history_manager else '❌ 未启用'}")
 
     def generate_section(
         self,
         outline: str,
         initial_prompt: str,
+        document_id: str = None,
+        section_id: str = None,
+        subsection_id: str = None,
         history: Optional[List[str]] = None,
         rel_threshold: float = 0.6,
         red_threshold: float = 0.7
     ) -> Dict[str, Any]:
         """
-        生成一个段落，并进行验证-修改的循环
+        生成一个subsection，并进行验证-修改的循环
+        验证通过后自动存入 History Database
         
         流程：
         1. Generator 根据 prompt 生成 draft
         2. Verifier 检验 draft（相关性和冗余度）
         3. 如果验证不通过，Controller 修改 prompt
         4. 回到步骤1，直到验证通过或达到最大迭代次数
+        5. 验证通过后自动存入数据库（如果提供了history_manager）
         
         Args:
-            outline: 段落大纲
+            outline: 段落大纲（subsection主题）
             initial_prompt: 初始生成提示
+            document_id: 文档ID（用于数据库存储）
+            section_id: Section ID（如 "section_1"）
+            subsection_id: Subsection ID（如 "subsection_1_1"）
             history: 历史内容列表
             rel_threshold: 相关性阈值
             red_threshold: 冗余度阈值
@@ -330,10 +412,34 @@ class FlowerNetOrchestrator:
             print(f"📊 冗余度: {red_score:.4f} (阈值: {red_threshold})")
             print(f"💬 反馈: {feedback}")
             
-            # 3️⃣ 如果验证通过，返回结果
+            # 3️⃣ 如果验证通过，存入数据库并返回结果
             if is_passed:
                 print(f"\n✨ 内容验证通过！")
+                
+                # 自动存入 History Database（如果提供了history_manager和必要的ID）
+                if self.history_manager and document_id and section_id and subsection_id:
+                    try:
+                        self.history_manager.add_entry(
+                            document_id=document_id,
+                            section_id=section_id,
+                            subsection_id=subsection_id,
+                            content=draft,
+                            metadata={
+                                "relevancy_index": rel_score,
+                                "redundancy_index": red_score,
+                                "iterations": iterations,
+                                "outline": outline
+                            }
+                        )
+                        print(f"💾 已存入数据库: {document_id}/{section_id}/{subsection_id}")
+                    except Exception as e:
+                        print(f"⚠️  存储到数据库失败: {e}")
+                else:
+                    print(f"⚠️  未存入数据库（缺少 history_manager 或 ID 信息）")
+                
+                # 更新内存历史记录
                 history.append(draft)
+                
                 return {
                     "success": True,
                     "draft": draft,
@@ -343,7 +449,8 @@ class FlowerNetOrchestrator:
                         "redundancy_index": red_score,
                         "feedback": feedback
                     },
-                    "all_drafts": all_drafts
+                    "all_drafts": all_drafts,
+                    "stored_in_db": bool(self.history_manager and document_id)
                 }
             
             # 4️⃣ 如果验证不通过，调用 Controller 修改 prompt
@@ -388,15 +495,38 @@ class FlowerNetOrchestrator:
         }
 
     def _call_generator(self, prompt: str) -> Dict[str, Any]:
-        """调用 Generator API"""
+        """
+        调用 Generator 进行内容生成
+        注意：这里假设编排器在同一进程中有 generator 对象
+        如果 generator_url 是本地的，直接使用本地 generator
+        """
+        # 如果有本地 generator 对象，直接使用它（避免 HTTP 循环）
+        if hasattr(self, '_local_generator') and self._local_generator:
+            return self._local_generator.generate_draft(prompt)
+        
+        # 否则使用 HTTP 调用
         try:
+            print(f"🔗 [Orchestrator] 调用 Generator API: {self.generator_url}/generate")
             response = self.session.post(
                 f"{self.generator_url}/generate",
                 json={"prompt": prompt},
-                timeout=60
+                timeout=120
             )
-            return response.json()
+            print(f"   响应状态: {response.status_code}")
+            print(f"   响应长度: {len(response.text)}")
+            
+            if response.status_code != 200:
+                print(f"   ❌ 非 200 状态码!")
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text[:100]}"
+                }
+            
+            result = response.json()
+            print(f"   ✅ 获得有效响应")
+            return result
         except Exception as e:
+            print(f"   ❌ 异常: {type(e).__name__}: {str(e)}")
             return {
                 "success": False,
                 "error": str(e)
@@ -412,23 +542,41 @@ class FlowerNetOrchestrator:
     ) -> Dict[str, Any]:
         """调用 Verifier API"""
         try:
-            response = self.session.post(
-                f"{self.verifier_url}/verify",
-                json={
-                    "draft": draft,
-                    "outline": outline,
-                    "history": history,
-                    "rel_threshold": rel_threshold,
-                    "red_threshold": red_threshold
-                },
-                timeout=60
-            )
-            data = response.json()
+            print(f"🔗 [Orchestrator] 调用 Verifier API: {self.verifier_url}/verify")
+            payload = {
+                "draft": draft,
+                "outline": outline,
+                "history": history,
+                "rel_threshold": rel_threshold,
+                "red_threshold": red_threshold
+            }
+            cmd = [
+                "curl", "-s", "-X", "POST", f"{self.verifier_url}/verify",
+                "-H", "Content-Type: application/json",
+                "-d", json.dumps(payload, ensure_ascii=False)
+            ]
+            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if completed.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"Verifier curl 执行失败: {completed.stderr.strip()}"
+                }
+
+            if not completed.stdout.strip():
+                return {
+                    "success": False,
+                    "error": "Verifier 返回空响应"
+                }
+
+            data = json.loads(completed.stdout)
+            print(f"   响应长度: {len(completed.stdout)}")
             return {
                 "success": True,
                 **data
             }
         except Exception as e:
+            print(f"   ❌ Verifier 异常: {type(e).__name__}: {str(e)[:100]}")
             return {
                 "success": False,
                 "error": str(e)
@@ -444,19 +592,37 @@ class FlowerNetOrchestrator:
     ) -> Dict[str, Any]:
         """调用 Controller API"""
         try:
-            response = self.session.post(
-                f"{self.controller_url}/refine_prompt",
-                json={
-                    "old_prompt": old_prompt,
-                    "failed_draft": failed_draft,
-                    "feedback": feedback,
-                    "outline": outline,
-                    "history": history
-                },
-                timeout=60
-            )
-            return response.json()
+            print(f"🔗 [Orchestrator] 调用 Controller API: {self.controller_url}/refine_prompt")
+            payload = {
+                "old_prompt": old_prompt,
+                "failed_draft": failed_draft,
+                "feedback": feedback,
+                "outline": outline,
+                "history": history
+            }
+            cmd = [
+                "curl", "-s", "-X", "POST", f"{self.controller_url}/refine_prompt",
+                "-H", "Content-Type: application/json",
+                "-d", json.dumps(payload, ensure_ascii=False)
+            ]
+            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if completed.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"Controller curl 执行失败: {completed.stderr.strip()}"
+                }
+
+            if not completed.stdout.strip():
+                return {
+                    "success": False,
+                    "error": "Controller 返回空响应"
+                }
+
+            print(f"   响应长度: {len(completed.stdout)}")
+            return json.loads(completed.stdout)
         except Exception as e:
+            print(f"   ❌ Controller 异常: {type(e).__name__}: {str(e)[:100]}")
             return {
                 "success": False,
                 "error": str(e)
@@ -464,18 +630,32 @@ class FlowerNetOrchestrator:
 
     def generate_document(
         self,
+        document_id: str,
         title: str,
-        outline_list: List[str],
+        outline_list: List[Dict[str, Any]],
         system_prompt: str = "",
         rel_threshold: float = 0.6,
         red_threshold: float = 0.7
     ) -> Dict[str, Any]:
         """
-        生成完整文档（多个段落）
+        生成完整文档（多个sections，每个section包含多个subsections）
+        文档完成后自动清空 History Database
         
         Args:
+            document_id: 文档唯一标识（用于数据库管理）
             title: 文档标题
-            outline_list: 大纲列表
+            outline_list: 大纲列表，格式:
+                [
+                    {
+                        "section_id": "section_1",
+                        "section_title": "第一章",
+                        "subsections": [
+                            {"subsection_id": "subsection_1_1", "title": "...", "outline": "..."},
+                            {"subsection_id": "subsection_1_2", "title": "...", "outline": "..."}
+                        ]
+                    },
+                    ...
+                ]
             system_prompt: 系统级提示（对所有段落适用）
             rel_threshold: 相关性阈值
             red_threshold: 冗余度阈值
@@ -485,63 +665,120 @@ class FlowerNetOrchestrator:
         """
         print(f"\n{'#'*60}")
         print(f"📄 开始生成文档: {title}")
+        print(f"📄 文档ID: {document_id}")
         print(f"{'#'*60}")
-        print(f"大纲: {outline_list}")
         
         document = {
+            "document_id": document_id,
             "title": title,
             "sections": [],
             "total_iterations": 0,
+            "total_subsections": 0,
             "success_count": 0,
-            "failed_sections": []
+            "failed_subsections": []
         }
         
-        history = []
+        history = []  # 内存历史记录（用于验证冗余度）
         
-        for idx, outline in enumerate(outline_list, 1):
-            print(f"\n[{idx}/{len(outline_list)}] 生成段落...")
+        # 遍历所有 sections
+        for section_idx, section_data in enumerate(outline_list, 1):
+            section_id = section_data.get("section_id", f"section_{section_idx}")
+            section_title = section_data.get("section_title", f"Section {section_idx}")
+            subsections = section_data.get("subsections", [])
             
-            # 为每个段落生成初始 prompt
-            initial_prompt = self._generate_initial_prompt(
-                system_prompt=system_prompt,
-                outline=outline,
-                section_number=idx,
-                total_sections=len(outline_list)
-            )
+            print(f"\n{'='*60}")
+            print(f"📖 Section {section_idx}/{len(outline_list)}: {section_title}")
+            print(f"📖 Section ID: {section_id}")
+            print(f"📖 包含 {len(subsections)} 个 subsections")
+            print(f"{'='*60}")
             
-            # 调用生成-验证循环
-            result = self.generate_section(
-                outline=outline,
-                initial_prompt=initial_prompt,
-                history=history,
-                rel_threshold=rel_threshold,
-                red_threshold=red_threshold
-            )
+            section_result = {
+                "section_id": section_id,
+                "section_title": section_title,
+                "subsections": [],
+                "success_count": 0,
+                "failed_count": 0
+            }
             
-            document["total_iterations"] += result.get("iterations", 0)
+            # 遍历该 section 下的所有 subsections
+            for subsection_idx, subsection_data in enumerate(subsections, 1):
+                subsection_id = subsection_data.get("subsection_id", f"subsection_{section_idx}_{subsection_idx}")
+                subsection_title = subsection_data.get("title", f"Subsection {subsection_idx}")
+                outline = subsection_data.get("outline", subsection_title)
+                
+                document["total_subsections"] += 1
+                
+                print(f"\n  [{section_idx}.{subsection_idx}] 生成 subsection: {subsection_title}")
+                print(f"  Subsection ID: {subsection_id}")
+                
+                # 为该 subsection 生成初始 prompt
+                initial_prompt = self._generate_initial_prompt(
+                    system_prompt=system_prompt,
+                    outline=outline,
+                    section_number=subsection_idx,
+                    total_sections=len(subsections)
+                )
+                
+                # 调用生成-验证循环（带数据库存储）
+                result = self.generate_section(
+                    outline=outline,
+                    initial_prompt=initial_prompt,
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    history=history,
+                    rel_threshold=rel_threshold,
+                    red_threshold=red_threshold
+                )
+                
+                document["total_iterations"] += result.get("iterations", 0)
+                
+                if result.get("success"):
+                    section_result["subsections"].append({
+                        "subsection_id": subsection_id,
+                        "subsection_title": subsection_title,
+                        "outline": outline,
+                        "content": result.get("draft", ""),
+                        "iterations": result.get("iterations", 0),
+                        "verification": result.get("verification", {}),
+                        "stored_in_db": result.get("stored_in_db", False)
+                    })
+                    section_result["success_count"] += 1
+                    document["success_count"] += 1
+                    history.append(result.get("draft", ""))
+                else:
+                    section_result["failed_count"] += 1
+                    document["failed_subsections"].append({
+                        "section_id": section_id,
+                        "subsection_id": subsection_id,
+                        "subsection_title": subsection_title,
+                        "outline": outline,
+                        "error": result.get("error", "Unknown error")
+                    })
             
-            if result.get("success"):
-                document["sections"].append({
-                    "outline": outline,
-                    "content": result.get("draft", ""),
-                    "iterations": result.get("iterations", 0),
-                    "verification": result.get("verification", {})
-                })
-                document["success_count"] += 1
-                history.append(result.get("draft", ""))
-            else:
-                document["failed_sections"].append({
-                    "outline": outline,
-                    "error": result.get("error", "Unknown error")
-                })
+            # 将该 section 添加到文档中
+            document["sections"].append(section_result)
         
         # 生成最终报告
         print(f"\n{'#'*60}")
         print(f"📊 文档生成完成")
         print(f"{'#'*60}")
-        print(f"✅ 成功段落: {document['success_count']}/{len(outline_list)}")
-        print(f"❌ 失败段落: {len(document['failed_sections'])}/{len(outline_list)}")
-        print(f"总迭代次数: {document['total_iterations']}")
+        print(f"✅ 成功 subsections: {document['success_count']}/{document['total_subsections']}")
+        print(f"❌ 失败 subsections: {len(document['failed_subsections'])}/{document['total_subsections']}")
+        print(f"📖 总 sections: {len(document['sections'])}")
+        print(f"🔄 总迭代次数: {document['total_iterations']}")
+        
+        # 文档完成后清空 History Database
+        if self.history_manager:
+            try:
+                self.history_manager.clear_history(document_id)
+                print(f"🗑️  已清空文档 {document_id} 的历史记录")
+                document["history_cleared"] = True
+            except Exception as e:
+                print(f"⚠️  清空历史记录失败: {e}")
+                document["history_cleared"] = False
+        else:
+            document["history_cleared"] = False
         
         return document
 

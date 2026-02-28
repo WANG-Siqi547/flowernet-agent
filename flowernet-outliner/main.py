@@ -9,10 +9,16 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import uvicorn
 import os
+import json
 from datetime import datetime
 
 from outliner import FlowerNetOutliner
-from database import HistoryManager
+import sys
+import os.path
+# Add root directory to path to import shared history_store
+if '..' not in sys.path:
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from history_store import HistoryManager
 
 
 # ============ Pydantic Models ============
@@ -37,6 +43,33 @@ class HistoryEntry(BaseModel):
 class HistoryQuery(BaseModel):
     """查询 History 的请求"""
     document_id: str = Field(..., description="文档 ID")
+
+
+class SaveOutlineRequest(BaseModel):
+    """保存大纲的请求"""
+    document_id: str = Field(..., description="文档 ID")
+    outline_content: str = Field(..., description="大纲内容（可以是 JSON 或纯文本）")
+    outline_type: str = Field(default="document", description="大纲类型: document/section/subsection")
+    section_id: Optional[str] = Field(default=None, description="Section ID（section/subsection 级别需要）")
+    subsection_id: Optional[str] = Field(default=None, description="Subsection ID（subsection 级别需要）")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="额外元数据")
+
+
+class GetOutlineRequest(BaseModel):
+    """获取大纲的请求"""
+    document_id: str = Field(..., description="文档 ID")
+    outline_type: str = Field(default="document", description="大纲类型: document/section/subsection")
+    section_id: Optional[str] = Field(default=None, description="Section ID")
+    subsection_id: Optional[str] = Field(default=None, description="Subsection ID")
+
+
+class GenerateAndSaveOutlineRequest(BaseModel):
+    """生成大纲并保存的请求"""
+    document_id: str = Field(..., description="文档 ID")
+    user_background: str = Field(..., description="用户背景信息")
+    user_requirements: str = Field(..., description="用户需求描述")
+    max_sections: int = Field(default=5, ge=2, le=10)
+    max_subsections_per_section: int = Field(default=4, ge=2, le=8)
 
 
 # ============ FastAPI App ============
@@ -67,16 +100,27 @@ async def startup_event():
     global outliner, history_manager
     
     # 初始化 Outliner
-    api_key = os.getenv('GOOGLE_API_KEY', '')
-    if not api_key:
-        print("❌ 警告: 未设置 GOOGLE_API_KEY 环境变量")
+    provider = os.getenv('OUTLINER_PROVIDER', 'ollama')
+    model = os.getenv('OUTLINER_MODEL', 'qwen2.5:7b')
     
-    model = os.getenv('OUTLINER_MODEL', 'models/gemini-2.5-flash')
-    outliner = FlowerNetOutliner(api_key=api_key, model=model)
+    if provider == 'ollama':
+        outliner = FlowerNetOutliner(provider=provider, model=model)
+    elif provider == 'gemini':
+        api_key = os.getenv('GOOGLE_API_KEY', '')
+        if not api_key:
+            print("❌ 警告: 未设置 GOOGLE_API_KEY 环境变量")
+        outliner = FlowerNetOutliner(api_key=api_key, model=model, provider=provider)
+    else:
+        raise ValueError(f"不支持的 Outliner provider: {provider}")
     
-    # 初始化 History Manager（默认内存模式）
-    use_db = os.getenv('USE_DATABASE', 'false').lower() == 'true'
-    db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
+    # 初始化 History Manager（默认使用数据库模式）
+    use_db = os.getenv('USE_DATABASE', 'true').lower() == 'true'
+    raw_db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
+    if os.path.isabs(raw_db_path):
+        db_path = raw_db_path
+    else:
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        db_path = os.path.join(project_root, raw_db_path)
     history_manager = HistoryManager(use_database=use_db, db_path=db_path)
     
     print("=" * 50)
@@ -293,6 +337,186 @@ async def get_statistics(query: HistoryQuery):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============ 新增：大纲管理接口 ============
+
+@app.post("/outline/save")
+async def save_outline(request: SaveOutlineRequest):
+    """
+    保存大纲到数据库
+    
+    Args:
+        request: 包含大纲内容和类型
+        
+    Returns:
+        {"success": True, "message": "大纲已保存"}
+    """
+    try:
+        history_manager.save_outline(
+            document_id=request.document_id,
+            outline_content=request.outline_content,
+            outline_type=request.outline_type,
+            section_id=request.section_id,
+            subsection_id=request.subsection_id,
+            metadata=request.metadata
+        )
+        
+        return {
+            "success": True,
+            "message": f"大纲已保存: {request.outline_type} level"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/outline/get")
+async def get_outline(request: GetOutlineRequest):
+    """
+    获取已保存的大纲
+    
+    Args:
+        request: 包含查询条件
+        
+    Returns:
+        {"success": True, "outline": "...", "outline_type": "document"}
+    """
+    try:
+        outline = history_manager.get_outline(
+            document_id=request.document_id,
+            outline_type=request.outline_type,
+            section_id=request.section_id,
+            subsection_id=request.subsection_id
+        )
+        
+        return {
+            "success": True,
+            "document_id": request.document_id,
+            "outline_type": request.outline_type,
+            "outline": outline
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/outline/generate-and-save")
+async def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
+    """
+    生成大纲并自动保存到数据库，同时为每个 section/subsection 的大纲也保存
+    
+    这实现了你的第一步需求：
+    1. 调用一次LLM生成整篇文章的大纲
+    2. 再调用一次LLM根据大纲生成每个section和subsection的大纲
+    3. 这些大纲全都存储到数据库
+    
+    Args:
+        request: 包含 document_id 和生成参数
+        
+    Returns:
+        {
+            "success": True,
+            "document_title": "...",
+            "document_id": "...",
+            "outline_saved": True,
+            "structure_outline_saved": True,
+            "subsection_outlines_count": 12,
+            "structure": {...}
+        }
+    """
+    try:
+        # 第一步：生成整篇文章的大纲
+        print(f"\n📝 第一步：生成整篇文章的大纲...")
+        result = outliner.generate_full_outline(
+            user_background=request.user_background,
+            user_requirements=request.user_requirements,
+            max_sections=request.max_sections,
+            max_subsections_per_section=request.max_subsections_per_section
+        )
+        
+        if not result.get("success"):
+            return result
+        
+        structure = result["structure"]
+        document_title = result["document_title"]
+        content_prompts = result["content_prompts"]
+        
+        # 保存整篇文章的大纲
+        print(f"💾 保存整篇文章的大纲...")
+        history_manager.save_outline(
+            document_id=request.document_id,
+            outline_content=f"# {document_title}\n\n" + json.dumps(structure, ensure_ascii=False, indent=2),
+            outline_type="document",
+            metadata={"title": document_title, "input": {
+                "user_background": request.user_background,
+                "user_requirements": request.user_requirements
+            }}
+        )
+        
+        # 第二步：为每个 section 和 subsection 保存其大纲
+        print(f"💾 保存每个 section 和 subsection 的大纲...")
+        subsection_outline_count = 0
+        
+        for section in structure.get("sections", []):
+            section_id = section.get("id", "")
+            section_title = section.get("title", "")
+            section_description = f"该章节包含以下小节:\n"
+            
+            for subsection in section.get("subsections", []):
+                subsection_id = subsection.get("id", "")
+                subsection_title = subsection.get("title", "")
+                subsection_desc = subsection.get("description", "")
+                
+                # 保存 subsection 的大纲
+                outlined_content_prompt = None
+                for cp in content_prompts:
+                    if cp["section_id"] == section_id and cp["subsection_id"] == subsection_id:
+                        outlined_content_prompt = cp.get("content_prompt", "")
+                        break
+                
+                history_manager.save_outline(
+                    document_id=request.document_id,
+                    outline_content=f"## {subsection_title}\n\n{subsection_desc}\n\n### 生成提示\n{outlined_content_prompt or 'N/A'}",
+                    outline_type="subsection",
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    metadata={"title": subsection_title}
+                )
+                
+                subsection_outline_count += 1
+                section_description += f"\n- {subsection_title}: {subsection_desc}"
+            
+            # 保存 section 的大纲
+            history_manager.save_outline(
+                document_id=request.document_id,
+                outline_content=f"# {section_title}\n\n{section_description}",
+                outline_type="section",
+                section_id=section_id,
+                metadata={"title": section_title}
+            )
+        
+        print(f"✅ 大纲生成并保存完成!")
+        print(f"   - 文档大纲: 已保存")
+        print(f"   - Section 大纲: {len(structure.get('sections', []))} 个")
+        print(f"   - Subsection 大纲: {subsection_outline_count} 个")
+        
+        return {
+            "success": True,
+            "document_title": document_title,
+            "document_id": request.document_id,
+            "outline_saved": True,
+            "structure_outline_saved": True,
+            "section_count": len(structure.get("sections", [])),
+            "subsection_outlines_count": subsection_outline_count,
+            "structure": structure,
+            "content_prompts": content_prompts
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============ Main ============
 
 if __name__ == "__main__":
@@ -302,5 +526,5 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=port,
-        reload=True
+        reload=False
     )

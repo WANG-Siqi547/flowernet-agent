@@ -1,13 +1,21 @@
 """
 FlowerNet Outliner - 文档大纲生成与内容提示词管理
 根据用户需求生成文档结构，并为每个段落生成专用的 Content Prompt
+支持多种 LLM: Ollama (本地), Google Gemini
 """
 
 import os
 import json
+import requests
+import subprocess
 from typing import Optional, Dict, Any, List
-from google import genai
-from google.genai import types
+
+try:
+    from google import genai
+    from google.genai import types
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
 
 class FlowerNetOutliner:
@@ -15,26 +23,45 @@ class FlowerNetOutliner:
     文档大纲生成器
     - 第一阶段：使用 Document Structure Prompt 生成层级大纲
     - 第二阶段：为每个 subsection 生成 Content Prompt
+    - 支持 Ollama (本地) 和 Google Gemini
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "models/gemini-2.5-flash"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "qwen2.5:7b", provider: str = "ollama"):
         """
         初始化 Outliner
         
         Args:
-            api_key: Google API Key（默认从环境变量读取）
-            model: 使用的 Gemini 模型
+            api_key: API Key（仅 Gemini 需要，默认从环境变量读取）
+            model: 使用的模型名称
+                - Ollama: "qwen2.5:7b", "llama3.1:8b" 等
+                - Gemini: "models/gemini-2.5-flash"
+            provider: LLM 提供商 ("ollama" 或 "gemini")
         """
-        self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
-        if not self.api_key:
-            raise ValueError("请设置 GOOGLE_API_KEY 环境变量或传入 api_key 参数")
-        
+        self.provider = provider.lower()
         self.model = model
-        self.client = genai.Client(api_key=self.api_key)
+        self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
         
-        print(f"✅ Outliner 初始化成功:")
-        print(f"  - Model: {self.model}")
-        print(f"  - Provider: Google Gemini")
+        if self.provider == "ollama":
+            self.client = None  # Ollama 使用 HTTP API
+            print(f"✅ Outliner 初始化成功 (Ollama - 本地):")
+            print(f"  - Model: {self.model}")
+            print(f"  - Provider: Ollama (本地无限制)")
+            print(f"  - Ollama URL: {self.ollama_url}")
+            
+        elif self.provider == "gemini":
+            if not GEMINI_AVAILABLE:
+                raise ImportError("需要安装 google-genai: pip install google-genai")
+            
+            self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
+            if not self.api_key:
+                raise ValueError("请设置 GOOGLE_API_KEY 环境变量或传入 api_key 参数")
+            
+            self.client = genai.Client(api_key=self.api_key)
+            print(f"✅ Outliner 初始化成功 (Gemini):")
+            print(f"  - Model: {self.model}")
+            print(f"  - Provider: Google Gemini")
+        else:
+            raise ValueError(f"不支持的提供商: {provider}。请使用 'ollama' 或 'gemini'")
     
     def generate_document_structure(
         self,
@@ -117,17 +144,22 @@ class FlowerNetOutliner:
         
         try:
             # 调用 LLM 生成大纲
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=structure_prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.7,
-                    max_output_tokens=4000
+            if self.provider == "ollama":
+                structure_text = self._call_ollama(structure_prompt, max_tokens=4000)
+            elif self.provider == "gemini":
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=structure_prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.7,
+                        max_output_tokens=4000
+                    )
                 )
-            )
+                structure_text = response.text.strip()
+            else:
+                raise ValueError(f"未知的提供商: {self.provider}")
             
             # 解析 JSON
-            structure_text = response.text.strip()
             
             # 移除可能的代码块标记
             if structure_text.startswith("```json"):
@@ -143,23 +175,24 @@ class FlowerNetOutliner:
             print(f"  - 标题: {structure.get('title', 'N/A')}")
             print(f"  - Sections: {len(structure.get('sections', []))}")
             
+            metadata = {"model": self.model, "provider": self.provider}
+            if self.provider == "gemini" and 'response' in locals():
+                metadata["prompt_tokens"] = response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0
+                metadata["output_tokens"] = response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0
+            
             return {
                 "success": True,
                 "structure": structure,
-                "metadata": {
-                    "model": self.model,
-                    "prompt_tokens": response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0,
-                    "output_tokens": response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0,
-                }
+                "metadata": metadata
             }
             
         except json.JSONDecodeError as e:
             print(f"❌ JSON 解析失败: {e}")
-            print(f"原始输出: {response.text[:500]}")
+            print(f"原始输出: {structure_text[:500]}")
             return {
                 "success": False,
                 "error": f"JSON 解析失败: {str(e)}",
-                "raw_output": response.text
+                "raw_output": structure_text
             }
         except Exception as e:
             print(f"❌ 大纲生成失败: {e}")
@@ -318,6 +351,37 @@ class FlowerNetOutliner:
             "total_subsections": len(content_prompts),
             "metadata": structure_result.get("metadata", {})
         }
+    
+    def _call_ollama(self, prompt: str, max_tokens: int = 2000) -> str:
+        """调用 Ollama API 生成内容"""
+        try:
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "num_predict": max_tokens,
+                    "temperature": 0.7
+                }
+            }
+            cmd = [
+                "curl", "-s", "-X", "POST", f"{self.ollama_url}/api/generate",
+                "-H", "Content-Type: application/json",
+                "-d", json.dumps(payload, ensure_ascii=False)
+            ]
+            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            if completed.returncode != 0:
+                raise Exception(f"Ollama curl 执行失败: {completed.stderr.strip()}")
+
+            if not completed.stdout.strip():
+                raise Exception("Ollama 返回空响应")
+
+            result = json.loads(completed.stdout)
+            return result.get('response', '')
+            
+        except Exception as e:
+            raise Exception(f"Ollama API Error: {str(e)}")
 
 
 # ============ 测试代码 ============

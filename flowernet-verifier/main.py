@@ -148,8 +148,13 @@ def get_history_manager():
     """延迟初始化 HistoryManager（用于从数据库读取历史内容）"""
     global _history_manager
     if _history_manager is None:
-        use_db = os.getenv('USE_DATABASE', 'false').lower() == 'true'
-        db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
+        use_db = os.getenv('USE_DATABASE', 'true').lower() == 'true'
+        raw_db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
+        if os.path.isabs(raw_db_path):
+            db_path = raw_db_path
+        else:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            db_path = os.path.join(project_root, raw_db_path)
         _history_manager = HistoryManager(use_database=use_db, db_path=db_path)
     return _history_manager
 
