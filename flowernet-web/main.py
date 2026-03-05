@@ -135,10 +135,20 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             "max_sections": req.chapter_count,
             "max_subsections_per_section": req.subsection_count,
         }
-        outline_resp = post_json(f"{OUTLINER_URL}/generate-outline", outline_payload)
+        
+        try:
+            outline_resp = requests.post(
+                f"{OUTLINER_URL}/generate-outline",
+                json=outline_payload,
+                timeout=REQUEST_TIMEOUT
+            ).json()
+        except Exception as e:
+            msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {str(e)}'})
+            yield f"data: {msg}\n\n"
+            return
 
         if not outline_resp.get("success"):
-            msg = json.dumps({'type': 'error', 'message': '大纲生成失败'})
+            msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {outline_resp.get("error", "未知错误")}'})
             yield f"data: {msg}\n\n"
             return
 
@@ -173,7 +183,12 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         def generate_async():
             nonlocal gen_resp, error_occurred
             try:
-                gen_resp = post_json(f"{GENERATOR_URL}/generate_document", generate_payload)
+                resp = requests.post(
+                    f"{GENERATOR_URL}/generate_document",
+                    json=generate_payload,
+                    timeout=REQUEST_TIMEOUT
+                )
+                gen_resp = resp.json() if resp.status_code == 200 else {"success": False, "error": f"HTTP {resp.status_code}"}
             except Exception as e:
                 error_occurred = True
                 print(f"生成错误: {e}")
@@ -198,7 +213,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                     current_count = len(history)
                     
                     if current_count > last_count:
-                        progress = min(100, int(current_count / total_subsections * 100))
+                        progress = min(100, int(current_count / total_subsections * 100)) if total_subsections > 0 else 0
                         msg = json.dumps({'type': 'progress', 'message': f'进度: {current_count}/{total_subsections} 小节已完成 ({progress}%)'})
                         yield f"data: {msg}\n\n"
                         last_count = current_count
@@ -210,7 +225,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         gen_thread.join(timeout=10)
         
         if error_occurred or gen_resp is None:
-            msg = json.dumps({'type': 'error', 'message': '文档生成失败'})
+            msg = json.dumps({'type': 'error', 'message': '文档生成失败或超时'})
             yield f"data: {msg}\n\n"
             return
         
@@ -224,12 +239,15 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         msg = json.dumps({'type': 'progress', 'message': '📦 整合文档内容...'})
         yield f"data: {msg}\n\n"
         
-        history_resp = requests.post(
-            f"{OUTLINER_URL}/history/get",
-            json={"document_id": document_id},
-            timeout=10
-        )
-        history_items = history_resp.json().get("history", []) if history_resp.status_code == 200 else []
+        try:
+            history_resp = requests.post(
+                f"{OUTLINER_URL}/history/get",
+                json={"document_id": document_id},
+                timeout=10
+            )
+            history_items = history_resp.json().get("history", []) if history_resp.status_code == 200 else []
+        except:
+            history_items = []
 
         markdown_content = build_markdown_document(title, structure, history_items)
         
@@ -250,7 +268,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         yield f"data: {msg}\n\n"
         
     except Exception as e:
-        msg = json.dumps({'type': 'error', 'message': str(e)})
+        msg = json.dumps({'type': 'error', 'message': f'内部错误: {str(e)}'})
         yield f"data: {msg}\n\n"
 
 
