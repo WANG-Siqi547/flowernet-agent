@@ -177,8 +177,20 @@ class DocumentGenerationOrchestrator:
                             "content": generated_content
                         })
                         
-                        # 保存到数据库的已通过历史
+                        # 保存到数据库（两个表）
                         if self.history_manager:
+                            # 1. 保存到 history 表（用于 Web 显示）
+                            self.history_manager.add_entry(
+                                document_id=document_id,
+                                section_id=section_id,
+                                subsection_id=subsection_id,
+                                content=generated_content,
+                                metadata={
+                                    "iterations": subsection_gen_result.get("iterations", 0),
+                                    "verification": subsection_gen_result.get("verification", {})
+                                }
+                            )
+                            # 2. 保存到 passed_history 表（用于后续 subsection 的上下文）
                             self.history_manager.add_passed_history(
                                 document_id=document_id,
                                 section_id=section_id,
