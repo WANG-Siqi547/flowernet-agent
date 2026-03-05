@@ -1,8 +1,11 @@
 from datetime import datetime
 from io import BytesIO
 import os
-from typing import Any, Dict, List
+import threading
+import time
+from typing import Any, Dict, List, Generator
 from urllib.parse import quote
+import json
 
 import requests
 from docx import Document
@@ -113,6 +116,173 @@ def index() -> FileResponse:
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok", "service": "flowernet-web"}
+
+
+def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
+    """流式生成文档，实时推送进度到前端"""
+    try:
+        # 开始
+        msg = json.dumps({'type': 'start', 'message': '开始生成大纲...'})
+        yield f"data: {msg}\n\n"
+        
+        document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        user_requirements = build_requirements_text(req)
+
+        # 第1步：生成大纲
+        outline_payload = {
+            "user_background": req.user_background,
+            "user_requirements": user_requirements,
+            "max_sections": req.chapter_count,
+            "max_subsections_per_section": req.subsection_count,
+        }
+        outline_resp = post_json(f"{OUTLINER_URL}/generate-outline", outline_payload)
+
+        if not outline_resp.get("success"):
+            msg = json.dumps({'type': 'error', 'message': '大纲生成失败'})
+            yield f"data: {msg}\n\n"
+            return
+
+        doc_title = outline_resp.get("document_title", req.topic)
+        msg = json.dumps({'type': 'outline', 'message': f'✅ 大纲生成完成\n主题: {doc_title}'})
+        yield f"data: {msg}\n\n"
+
+        title = outline_resp.get("document_title") or f"{req.topic} 文档"
+        structure = outline_resp.get("structure", {})
+        content_prompts = outline_resp.get("content_prompts", [])
+        total_subsections = req.chapter_count * req.subsection_count
+
+        # 第2步：生成文档内容（异步启动）
+        msg = json.dumps({'type': 'progress', 'message': f'🚀 开始生成内容（共{total_subsections}个小节）...'})
+        yield f"data: {msg}\n\n"
+
+        generate_payload = {
+            "document_id": document_id,
+            "title": title,
+            "structure": structure,
+            "content_prompts": content_prompts,
+            "user_background": req.user_background,
+            "user_requirements": user_requirements,
+            "rel_threshold": req.rel_threshold,
+            "red_threshold": req.red_threshold,
+        }
+        
+        # 在后台线程中启动生成，同时主线程推送进度
+        gen_resp = None
+        error_occurred = False
+        
+        def generate_async():
+            nonlocal gen_resp, error_occurred
+            try:
+                gen_resp = post_json(f"{GENERATOR_URL}/generate_document", generate_payload)
+            except Exception as e:
+                error_occurred = True
+                print(f"生成错误: {e}")
+        
+        gen_thread = threading.Thread(target=generate_async, daemon=True)
+        gen_thread.start()
+        
+        # 定期检查生成进度
+        last_count = 0
+        timeout = time.time() + REQUEST_TIMEOUT
+        
+        while gen_thread.is_alive() and time.time() < timeout:
+            try:
+                # 查询当前生成的小节数
+                history_resp = requests.post(
+                    f"{OUTLINER_URL}/history/get",
+                    json={"document_id": document_id},
+                    timeout=10
+                )
+                if history_resp.status_code == 200:
+                    history = history_resp.json().get("history", [])
+                    current_count = len(history)
+                    
+                    if current_count > last_count:
+                        progress = min(100, int(current_count / total_subsections * 100))
+                        msg = json.dumps({'type': 'progress', 'message': f'进度: {current_count}/{total_subsections} 小节已完成 ({progress}%)'})
+                        yield f"data: {msg}\n\n"
+                        last_count = current_count
+            except:
+                pass
+            
+            time.sleep(2)  # 每2秒检查一次
+        
+        gen_thread.join(timeout=10)
+        
+        if error_occurred or gen_resp is None:
+            msg = json.dumps({'type': 'error', 'message': '文档生成失败'})
+            yield f"data: {msg}\n\n"
+            return
+        
+        if not gen_resp.get("success"):
+            err_msg = gen_resp.get('error', '文档生成失败')
+            msg = json.dumps({'type': 'error', 'message': err_msg})
+            yield f"data: {msg}\n\n"
+            return
+        
+        # 第3步：获取最终内容
+        msg = json.dumps({'type': 'progress', 'message': '📦 整合文档内容...'})
+        yield f"data: {msg}\n\n"
+        
+        history_resp = requests.post(
+            f"{OUTLINER_URL}/history/get",
+            json={"document_id": document_id},
+            timeout=10
+        )
+        history_items = history_resp.json().get("history", []) if history_resp.status_code == 200 else []
+
+        markdown_content = build_markdown_document(title, structure, history_items)
+        
+        result = {
+            "success": True,
+            "document_id": document_id,
+            "title": title,
+            "content": markdown_content,
+            "stats": {
+                "passed_subsections": gen_resp.get("passed_subsections", 0),
+                "failed_subsections": len(gen_resp.get("failed_subsections", [])),
+                "total_iterations": gen_resp.get("total_iterations", 0),
+                "generation_time": gen_resp.get("generation_time", ""),
+            },
+        }
+        
+        msg = json.dumps({'type': 'complete', 'result': result})
+        yield f"data: {msg}\n\n"
+        
+    except Exception as e:
+        msg = json.dumps({'type': 'error', 'message': str(e)})
+        yield f"data: {msg}\n\n"
+
+
+@app.get("/api/generate-stream")
+async def generate_stream_endpoint(
+    topic: str,
+    chapter_count: int = 2,
+    subsection_count: int = 2,
+    user_background: str = "普通读者",
+    extra_requirements: str = "",
+    rel_threshold: float = 0.6,
+    red_threshold: float = 0.7,
+):
+    """SSE 端点：实时推送文档生成进度"""
+    req = GenerateDocRequest(
+        topic=topic,
+        chapter_count=chapter_count,
+        subsection_count=subsection_count,
+        user_background=user_background,
+        extra_requirements=extra_requirements,
+        rel_threshold=rel_threshold,
+        red_threshold=red_threshold,
+    )
+    
+    return StreamingResponse(
+        generate_stream(req),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 @app.post("/api/generate")
