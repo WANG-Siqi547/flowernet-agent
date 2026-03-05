@@ -146,7 +146,14 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {str(e)}'})
             yield f"data: {msg}\n\n"
             return
-
+        
+        # 检查是否是验证错误（422）
+        if "detail" in outline_resp and isinstance(outline_resp["detail"], list):
+            errors = [e.get("msg", "未知验证错误") for e in outline_resp["detail"]]
+            msg = json.dumps({'type': 'error', 'message': f'参数验证失败: {"; ".join(errors)}'})
+            yield f"data: {msg}\n\n"
+            return
+        
         if not outline_resp.get("success"):
             msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {outline_resp.get("error", "未知错误")}'})
             yield f"data: {msg}\n\n"
