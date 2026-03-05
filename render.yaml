@@ -24,6 +24,10 @@ services:
         value: 8000
       - key: VERIFIER_PUBLIC_URL
         value: https://flowernet-verifier.onrender.com
+      - key: USE_DATABASE
+        value: "true"
+      - key: DATABASE_PATH
+        value: flowernet_history.db
     healthCheckPath: /
     
   # ==========================================
@@ -43,7 +47,92 @@ services:
         value: https://flowernet-controller.onrender.com
       - key: VERIFIER_URL
         value: https://flowernet-verifier.onrender.com
+      - key: USE_DATABASE
+        value: "true"
+      - key: DATABASE_PATH
+        value: flowernet_history.db
     healthCheckPath: /
+    
+  # ==========================================
+  # Service 3: Outliner (大纲生成服务)
+  # ==========================================
+  - type: web
+    name: flowernet-outliner
+    env: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./flowernet-outliner/Dockerfile
+    dockerContext: ./flowernet-outliner
+    envVars:
+      - key: PORT
+        value: 8003
+      - key: OUTLINER_PROVIDER
+        value: ollama
+      - key: OUTLINER_MODEL
+        value: qwen2.5:7b
+      - key: OLLAMA_URL
+        value: http://localhost:11434
+      - key: USE_DATABASE
+        value: "true"
+      - key: DATABASE_PATH
+        value: flowernet_history.db
+    healthCheckPath: /
+    
+  # ==========================================
+  # Service 4: Generator (文档生成服务)
+  # ==========================================
+  - type: web
+    name: flowernet-generator
+    env: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./flowernet-generator/Dockerfile
+    dockerContext: ./flowernet-generator
+    envVars:
+      - key: PORT
+        value: 8002
+      - key: GENERATOR_PROVIDER
+        value: ollama
+      - key: GENERATOR_MODEL
+        value: qwen2.5:7b
+      - key: OLLAMA_URL
+        value: http://localhost:11434
+      - key: USE_DATABASE
+        value: "true"
+      - key: DATABASE_PATH
+        value: flowernet_history.db
+      - key: VERIFIER_URL
+        value: https://flowernet-verifier.onrender.com
+      - key: CONTROLLER_URL
+        value: https://flowernet-controller.onrender.com
+      - key: OUTLINER_URL
+        value: https://flowernet-outliner.onrender.com
+      - key: NO_PROXY
+        value: "localhost,127.0.0.1"
+    healthCheckPath: /
+    
+  # ==========================================
+  # Service 5: Web UI (前端用户界面)
+  # ==========================================
+  - type: web
+    name: flowernet-web
+    env: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./flowernet-web/Dockerfile
+    dockerContext: ./flowernet-web
+    envVars:
+      - key: PORT
+        value: 8010
+      - key: OUTLINER_URL
+        value: https://flowernet-outliner.onrender.com
+      - key: GENERATOR_URL
+        value: https://flowernet-generator.onrender.com
+      - key: REQUEST_TIMEOUT
+        value: "1200"
+      - key: NO_PROXY
+        value: "localhost,127.0.0.1"
+    healthCheckPath: /health
     
   # ==========================================
   # Service 3-7: 未来服务模板（取消注释即可启用）
