@@ -55,11 +55,17 @@ class DocumentGenerationOrchestrator:
         self.max_iterations = max_iterations
         self.history_manager = history_manager
         self.session = requests.Session()
+        self.session.trust_env = False
         
         # 用于本地 HTTP 调用优化
         self._local_generator = None
         self._local_verifier = None
         self._local_controller = None
+
+    def set_local_generator(self, generator):
+        """设置本地Generator实例，避免HTTP自调用"""
+        self._local_generator = generator
+        print("✅ Orchestrator已绑定本地Generator实例")
     
     def generate_document(
         self,
@@ -423,7 +429,13 @@ class DocumentGenerationOrchestrator:
         return enhanced.strip()
     
     def _call_generator(self, prompt: str) -> Dict[str, Any]:
-        """调用 Generator API"""
+        """调用 Generator API（优先使用本地实例）"""
+        if self._local_generator is not None:
+            try:
+                return self._local_generator.generate_draft(prompt=prompt, max_tokens=800)
+            except Exception as e:
+                print(f"⚠️ 本地Generator调用失败: {e}，回退到HTTP调用")
+
         try:
             response = self.session.post(
                 f"{self.generator_url}/generate",
@@ -467,7 +479,9 @@ class DocumentGenerationOrchestrator:
             )
             
             if response.status_code == 200:
-                return response.json()
+                result = response.json()
+                result["success"] = True
+                return result
             else:
                 return {
                     "success": False,

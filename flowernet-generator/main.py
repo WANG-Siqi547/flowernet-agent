@@ -9,8 +9,9 @@ from typing import List, Optional, Dict, Any
 import uvicorn
 import os
 import sys
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.append(project_root)
 
 from generator import FlowerNetGenerator, FlowerNetOrchestrator
 from flowernet_orchestrator import DocumentGenerationOrchestrator
@@ -178,6 +179,10 @@ def get_document_generation_orchestrator():
             max_iterations=max_iterations,
             history_manager=history_manager
         )
+        
+        # 绑定本地Generator实例，避免HTTP自调用死锁
+        if generator is not None:
+            document_orchestrator.set_local_generator(generator)
         
         print(f"✅ DocumentGenerationOrchestrator 已初始化")
     

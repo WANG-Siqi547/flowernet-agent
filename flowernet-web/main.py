@@ -2,6 +2,7 @@ from datetime import datetime
 from io import BytesIO
 import os
 from typing import Any, Dict, List
+from urllib.parse import quote
 
 import requests
 from docx import Document
@@ -12,7 +13,7 @@ from pydantic import BaseModel, Field
 
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
 GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "300"))
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "1200"))  # 20分钟超时，适配Ollama慢速生成
 
 
 class GenerateDocRequest(BaseModel):
@@ -171,12 +172,17 @@ def generate_document(req: GenerateDocRequest) -> Dict[str, Any]:
 @app.post("/api/download-docx")
 def download_docx(req: DownloadDocxRequest):
     stream = markdown_to_docx(req.title, req.content)
-    filename = f"{req.title[:40].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    safe_title = (req.title or "flowernet_document").strip()[:40]
+    ascii_fallback = "flowernet_document"
+    encoded = quote(f"{safe_title}_{ts}.docx")
 
     return StreamingResponse(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={
+            "Content-Disposition": f"attachment; filename={ascii_fallback}_{ts}.docx; filename*=UTF-8''{encoded}"
+        },
     )
 
 
