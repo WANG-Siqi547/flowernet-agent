@@ -63,16 +63,6 @@ class GenerateDocumentRequest(BaseModel):
     red_threshold: float = 0.7
 
 
-class GenerateDocumentRequest(BaseModel):
-    """生成完整文档的请求"""
-    document_id: str
-    title: str
-    outline_list: List[Dict[str, Any]]  # 现在接受完整的层级结构
-    system_prompt: str = ""
-    rel_threshold: float = 0.6
-    red_threshold: float = 0.7
-
-
 # ============ 全局对象 ============
 
 app = FastAPI(title="FlowerNet Generator API")

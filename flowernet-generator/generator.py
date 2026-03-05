@@ -203,28 +203,21 @@ class FlowerNetGenerator:
                     "temperature": 0.7
                 }
             }
-            cmd = [
-                "curl", "-s", "-X", "POST", f"{self.ollama_url}/api/generate",
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps(payload, ensure_ascii=False)
-            ]
-            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json=payload,
+                timeout=300
+            )
+            response.raise_for_status()
 
-            if completed.returncode != 0:
-                return {
-                    "success": False,
-                    "error": f"Ollama curl 执行失败: {completed.stderr.strip()}",
-                    "draft": ""
-                }
-
-            if not completed.stdout.strip():
+            if not response.text.strip():
                 return {
                     "success": False,
                     "error": "Ollama 返回空响应",
                     "draft": ""
                 }
 
-            result = json.loads(completed.stdout)
+            result = response.json()
             draft_text = result.get('response', '')
             
             return {

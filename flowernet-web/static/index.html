@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FlowerNet 文档生成器</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f7f8fb; color: #1f2937; }
+    .wrap { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+    .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: 1fr 160px 160px; gap: 12px; }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+    label { font-size: 13px; color: #374151; display: block; margin-bottom: 6px; }
+    input, textarea, button { width: 100%; box-sizing: border-box; border-radius: 8px; border: 1px solid #d1d5db; padding: 10px; font-size: 14px; }
+    textarea { min-height: 90px; resize: vertical; }
+    button { border: none; cursor: pointer; font-weight: 600; }
+    #startBtn { background: #2563eb; color: #fff; }
+    #startBtn:disabled { opacity: .6; cursor: not-allowed; }
+    #downloadBtn { background: #059669; color: #fff; }
+    .status { margin-top: 10px; font-size: 14px; }
+    .ok { color: #047857; }
+    .err { color: #b91c1c; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #f3f4f6; padding: 12px; border-radius: 8px; max-height: 520px; overflow: auto; }
+    .meta { font-size: 13px; color: #4b5563; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h2>🌸 FlowerNet 文档生成器</h2>
+      <div class="grid">
+        <div>
+          <label for="topic">主题</label>
+          <input id="topic" placeholder="例如：人工智能在医疗行业的应用" />
+        </div>
+        <div>
+          <label for="chapterCount">章节数</label>
+          <input id="chapterCount" type="number" min="1" max="10" value="5" />
+        </div>
+        <div>
+          <label for="subCount">每章子章节数</label>
+          <input id="subCount" type="number" min="1" max="8" value="3" />
+        </div>
+      </div>
+
+      <div style="margin-top: 12px;">
+        <label for="background">用户背景</label>
+        <textarea id="background" placeholder="例如：我是计算机专业研究生，已有机器学习基础">普通读者</textarea>
+      </div>
+
+      <div style="margin-top: 12px;">
+        <label for="extra">附加要求（可选）</label>
+        <textarea id="extra" placeholder="例如：语言风格专业、包含案例分析、控制在8000字左右"></textarea>
+      </div>
+
+      <div style="margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <button id="startBtn">开始生成</button>
+        <button id="downloadBtn" disabled>下载 DOCX</button>
+      </div>
+
+      <div id="status" class="status"></div>
+    </div>
+
+    <div class="card">
+      <div id="meta" class="meta"></div>
+      <pre id="result">生成结果会显示在这里...</pre>
+    </div>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const statusEl = document.getElementById('status');
+    const resultEl = document.getElementById('result');
+    const metaEl = document.getElementById('meta');
+
+    let currentTitle = '';
+    let currentContent = '';
+
+    function setStatus(text, type = '') {
+      statusEl.className = 'status ' + type;
+      statusEl.textContent = text;
+    }
+
+    startBtn.addEventListener('click', async () => {
+      const topic = document.getElementById('topic').value.trim();
+      const chapterCount = Number(document.getElementById('chapterCount').value);
+      const subsectionCount = Number(document.getElementById('subCount').value);
+      const userBackground = document.getElementById('background').value.trim() || '普通读者';
+      const extraRequirements = document.getElementById('extra').value.trim();
+
+      if (!topic) {
+        setStatus('请先输入主题。', 'err');
+        return;
+      }
+
+      startBtn.disabled = true;
+      downloadBtn.disabled = true;
+      setStatus('正在生成中，请等待（可能需要 1-5 分钟）...');
+      resultEl.textContent = '';
+      metaEl.textContent = '';
+
+      try {
+        const resp = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic,
+            chapter_count: chapterCount,
+            subsection_count: subsectionCount,
+            user_background: userBackground,
+            extra_requirements: extraRequirements
+          })
+        });
+
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+          throw new Error(data.detail || JSON.stringify(data));
+        }
+
+        currentTitle = data.title;
+        currentContent = data.content;
+
+        resultEl.textContent = data.content;
+        metaEl.textContent = `文档ID: ${data.document_id} | 标题: ${data.title} | 通过小节: ${data.stats.passed_subsections} | 迭代次数: ${data.stats.total_iterations} | 耗时: ${data.stats.generation_time}`;
+        setStatus('生成成功，可以下载 DOCX。', 'ok');
+        downloadBtn.disabled = false;
+      } catch (err) {
+        setStatus('生成失败：' + err.message, 'err');
+        resultEl.textContent = '';
+      } finally {
+        startBtn.disabled = false;
+      }
+    });
+
+    downloadBtn.addEventListener('click', async () => {
+      if (!currentTitle || !currentContent) return;
+      setStatus('正在生成 DOCX 文件...');
+
+      try {
+        const resp = await fetch('/api/download-docx', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: currentTitle, content: currentContent })
+        });
+
+        if (!resp.ok) {
+          const err = await resp.text();
+          throw new Error(err);
+        }
+
+        const blob = await resp.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${currentTitle}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        setStatus('DOCX 下载完成。', 'ok');
+      } catch (err) {
+        setStatus('下载失败：' + err.message, 'err');
+      }
+    });
+  </script>
+</body>
+</html>

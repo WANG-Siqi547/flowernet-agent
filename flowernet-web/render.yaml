@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: flowernet-web
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OUTLINER_URL
+        value: https://flowernet-outliner.onrender.com
+      - key: GENERATOR_URL
+        value: https://flowernet-generator.onrender.com
+      - key: REQUEST_TIMEOUT
+        value: "300"
+    healthCheckPath: /health

@@ -7,7 +7,6 @@ FlowerNet Outliner - 文档大纲生成与内容提示词管理
 import os
 import json
 import requests
-import subprocess
 from typing import Optional, Dict, Any, List
 
 try:
@@ -364,20 +363,17 @@ class FlowerNetOutliner:
                     "temperature": 0.7
                 }
             }
-            cmd = [
-                "curl", "-s", "-X", "POST", f"{self.ollama_url}/api/generate",
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps(payload, ensure_ascii=False)
-            ]
-            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json=payload,
+                timeout=300
+            )
+            response.raise_for_status()
 
-            if completed.returncode != 0:
-                raise Exception(f"Ollama curl 执行失败: {completed.stderr.strip()}")
-
-            if not completed.stdout.strip():
+            if not response.text.strip():
                 raise Exception("Ollama 返回空响应")
 
-            result = json.loads(completed.stdout)
+            result = response.json()
             return result.get('response', '')
             
         except Exception as e:
