@@ -106,9 +106,10 @@ class FlowerNetOutliner:
 
 **任务要求**:
 1. 生成一个清晰的文档标题
-2. 将文档分为 {max_sections} 个左右的主要章节（Section）
-3. 每个章节包含 {max_subsections_per_section} 个左右的子章节（Subsection）
+2. 将文档分为 {max_sections} 个主要章节（Section）- 必须恰好是 {max_sections} 个！
+3. 每个章节包含 {max_subsections_per_section} 个子章节（Subsection）- 每个章节都必须恰好是 {max_subsections_per_section} 个！
 4. 每个子章节需要有标题和简短描述（1-2句话说明该段应该写什么）
+5. 总共应该生成：{max_sections * max_subsections_per_section} 个小节
 
 **输出格式**（严格按照 JSON 格式）:
 {{
@@ -170,9 +171,52 @@ class FlowerNetOutliner:
             
             structure = json.loads(structure_text.strip())
             
+            # 验证结构是否符合要求
+            sections = structure.get('sections', [])
+            actual_section_count = len(sections)
+            
+            # 检查章节数量
+            if actual_section_count != max_sections:
+                print(f"⚠️  警告: 大纲的章节数 ({actual_section_count}) 与要求不符 ({max_sections})")
+                # 如果太少，补充空章节
+                while actual_section_count < max_sections:
+                    actual_section_count += 1
+                    sections.append({
+                        "id": f"section_{actual_section_count}",
+                        "title": f"第{actual_section_count}章 (自动生成)",
+                        "subsections": [
+                            {
+                                "id": f"subsection_{actual_section_count}_{j}",
+                                "title": f"第{j}小节",
+                                "description": "补充内容"
+                            }
+                            for j in range(1, max_subsections_per_section + 1)
+                        ]
+                    })
+                structure['sections'] = sections
+            
+            # 检查每个章节的小节数量
+            for section in sections:
+                subsections = section.get('subsections', [])
+                actual_subsection_count = len(subsections)
+                if actual_subsection_count != max_subsections_per_section:
+                    print(f"⚠️  警告: 章节 '{section.get('title')}' 的小节数 ({actual_subsection_count}) 与要求不符 ({max_subsections_per_section})")
+                    # 补充缺少的小节
+                    while actual_subsection_count < max_subsections_per_section:
+                        actual_subsection_count += 1
+                        subsections.append({
+                            "id": f"{section.get('id')}_{actual_subsection_count}",
+                            "title": f"第{actual_subsection_count}小节 (自动生成)",
+                            "description": "补充内容"
+                        })
+                    section['subsections'] = subsections
+            
+            total_subsections = sum(len(s.get('subsections', [])) for s in sections)
+            
             print(f"✅ 文档大纲生成成功:")
             print(f"  - 标题: {structure.get('title', 'N/A')}")
             print(f"  - Sections: {len(structure.get('sections', []))}")
+            print(f"  - 总小节数: {total_subsections} (预期: {max_sections * max_subsections_per_section})")
             
             metadata = {"model": self.model, "provider": self.provider}
             if self.provider == "gemini" and 'response' in locals():

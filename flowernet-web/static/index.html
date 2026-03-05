@@ -138,13 +138,22 @@
               appendLog(`\n=== 最终文档 ===\n`);
               appendLog(result.content);
               
-              metaEl.textContent = `文档ID: ${result.document_id} | 标题: ${result.title} | 通过小节: ${result.stats.passed_subsections} | 迭代次数: ${result.stats.total_iterations} | 耗时: ${result.stats.generation_time}`;
+              const stats = result.stats;
+              const expected = stats.expected_subsections || 0;
+              const passed = stats.passed_subsections || 0;
+              const failed = stats.failed_subsections || 0;
+              const generated = stats.total_generated || (passed + failed);
+              const statusStr = expected > 0 ? `${generated}/${expected}` : `${passed}`;
+              
+              metaEl.textContent = `文档ID: ${result.document_id} | 标题: ${result.title} | 小节: ${statusStr} (通过: ${passed}, 失败: ${failed}) | 迭代: ${stats.total_iterations} | 耗时: ${stats.generation_time}`;
               setStatus('生成成功，可以下载 DOCX。', 'ok');
               downloadBtn.disabled = false;
+              startBtn.disabled = false;
               eventSource.close();
             } else if (data.type === 'error') {
               appendLog(`[错误] ${data.message}`);
               setStatus('生成失败：' + data.message, 'err');
+              startBtn.disabled = false;
               eventSource.close();
             }
           } catch (err) {

@@ -137,11 +137,12 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         }
         
         try:
-            outline_resp = requests.post(
+            outline_http_resp = requests.post(
                 f"{OUTLINER_URL}/generate-outline",
                 json=outline_payload,
                 timeout=REQUEST_TIMEOUT
-            ).json()
+            )
+            outline_resp = outline_http_resp.json()
         except Exception as e:
             msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {str(e)}'})
             yield f"data: {msg}\n\n"
@@ -155,7 +156,12 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             return
         
         if not outline_resp.get("success"):
-            msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {outline_resp.get("error", "未知错误")}'})
+            raw_error = str(outline_resp.get("error", "未知错误"))
+            if "localhost:11434" in raw_error or "Connection refused" in raw_error:
+                user_error = "大纲生成失败：当前服务正在 Render 上运行，但 OLLAMA_URL 指向 localhost:11434（容器内不可用）。请将 OLLAMA_URL 改为可公网访问的 Ollama 地址。"
+            else:
+                user_error = f"大纲生成失败: {raw_error}"
+            msg = json.dumps({'type': 'error', 'message': user_error})
             yield f"data: {msg}\n\n"
             return
 
@@ -258,14 +264,22 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
 
         markdown_content = build_markdown_document(title, structure, history_items)
         
+        # 计算统计数据
+        expected_subsections = req.chapter_count * req.subsection_count
+        passed = gen_resp.get("passed_subsections", 0)
+        failed = len(gen_resp.get("failed_subsections", []))
+        total_generated = passed + failed
+        
         result = {
             "success": True,
             "document_id": document_id,
             "title": title,
             "content": markdown_content,
             "stats": {
-                "passed_subsections": gen_resp.get("passed_subsections", 0),
-                "failed_subsections": len(gen_resp.get("failed_subsections", [])),
+                "expected_subsections": expected_subsections,
+                "passed_subsections": passed,
+                "failed_subsections": failed,
+                "total_generated": total_generated,
                 "total_iterations": gen_resp.get("total_iterations", 0),
                 "generation_time": gen_resp.get("generation_time", ""),
             },

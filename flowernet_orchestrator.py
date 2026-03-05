@@ -234,8 +234,20 @@ class DocumentGenerationOrchestrator:
             elapsed = (datetime.now() - start_time).total_seconds()
             document_result["generation_time"] = f"{elapsed:.2f}s"
             
+            # 计算总小节数
+            total_subsections_expected = sum(
+                len(section.get("subsections", []))
+                for section in structure.get("sections", [])
+            )
+            total_subsections_generated = (
+                document_result["passed_subsections"] + 
+                len(document_result["failed_subsections"])
+            )
+            
             print(f"\n{'='*70}")
             print(f"✅ 文档生成完成！")
+            print(f"   - 预期小节数: {total_subsections_expected}")
+            print(f"   - 实际生成: {total_subsections_generated}")
             print(f"   - 通过: {document_result['passed_subsections']}")
             print(f"   - 失败: {len(document_result['failed_subsections'])}")
             print(f"   - 总迭代: {document_result['total_iterations']} 次")
