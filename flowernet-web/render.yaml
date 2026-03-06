@@ -11,5 +11,5 @@ services:
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
       - key: REQUEST_TIMEOUT
-        value: "300"
+        value: "3600"
     healthCheckPath: /health

@@ -261,15 +261,25 @@ class DocumentGenerationOrchestrator:
                 document_result["passed_subsections"] + 
                 len(document_result["failed_subsections"])
             )
+
+            # 严格判定：必须达到预期小节数且全部通过，才算成功
+            if document_result["passed_subsections"] < total_subsections_expected:
+                document_result["success"] = False
+                document_result["error"] = (
+                    f"生成未达到目标小节数: 通过 {document_result['passed_subsections']}/{total_subsections_expected}, "
+                    f"失败 {len(document_result['failed_subsections'])}"
+                )
             
             print(f"\n{'='*70}")
-            print(f"✅ 文档生成完成！")
+            print(f"{'✅' if document_result['success'] else '❌'} 文档生成完成！")
             print(f"   - 预期小节数: {total_subsections_expected}")
             print(f"   - 实际生成: {total_subsections_generated}")
             print(f"   - 通过: {document_result['passed_subsections']}")
             print(f"   - 失败: {len(document_result['failed_subsections'])}")
             print(f"   - 总迭代: {document_result['total_iterations']} 次")
             print(f"   - 耗时: {document_result['generation_time']}")
+            if not document_result["success"]:
+                print(f"   - 错误: {document_result.get('error', '生成未满足严格要求')}")
             print(f"{'='*70}")
             
             return document_result

@@ -16,4 +16,4 @@ uvicorn main:app --reload --port 8010
 
 - `OUTLINER_URL`：Outliner 服务地址（默认 `http://localhost:8003`）
 - `GENERATOR_URL`：Generator 服务地址（默认 `http://localhost:8002`）
-- `REQUEST_TIMEOUT`：下游请求超时秒数（默认 `300`）
+- `REQUEST_TIMEOUT`：下游请求超时秒数（默认 `3600`）

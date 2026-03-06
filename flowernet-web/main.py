@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
 GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "1200"))  # 20分钟超时，适配Ollama慢速生成
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "3600"))  # 1小时超时，适配Ollama耗时生成
 
 
 class GenerateDocRequest(BaseModel):
@@ -82,6 +82,93 @@ def build_markdown_document(title: str, structure: Dict[str, Any], history: List
             lines.append("")
 
     return "\n".join(lines).strip()
+
+
+def ensure_exact_structure_and_prompts(
+    title: str,
+    structure: Dict[str, Any],
+    content_prompts: List[Dict[str, Any]],
+    chapter_count: int,
+    subsection_count: int,
+) -> tuple[Dict[str, Any], List[Dict[str, Any]], int, int]:
+    """强制将结构和 prompts 对齐到用户要求的精确章节/小节数量。"""
+    safe_structure: Dict[str, Any] = dict(structure or {})
+    source_sections = safe_structure.get("sections", [])
+    if not isinstance(source_sections, list):
+        source_sections = []
+
+    source_total = 0
+    for src_sec in source_sections:
+        if isinstance(src_sec, dict):
+            subs = src_sec.get("subsections", [])
+            source_total += len(subs) if isinstance(subs, list) else 0
+
+    prompt_map: Dict[str, Dict[str, Any]] = {}
+    for cp in content_prompts or []:
+        if not isinstance(cp, dict):
+            continue
+        sec_id = str(cp.get("section_id", "")).strip()
+        sub_id = str(cp.get("subsection_id", "")).strip()
+        if sec_id and sub_id:
+            prompt_map[f"{sec_id}::{sub_id}"] = cp
+
+    normalized_sections: List[Dict[str, Any]] = []
+    normalized_prompts: List[Dict[str, Any]] = []
+
+    for sec_idx in range(chapter_count):
+        source_section = source_sections[sec_idx] if sec_idx < len(source_sections) and isinstance(source_sections[sec_idx], dict) else {}
+
+        section_id = str(source_section.get("id") or f"sec_{sec_idx + 1}")
+        section_title = str(source_section.get("title") or f"第{sec_idx + 1}章")
+        section_desc = str(source_section.get("description") or "")
+
+        source_subs = source_section.get("subsections", [])
+        if not isinstance(source_subs, list):
+            source_subs = []
+
+        normalized_subsections: List[Dict[str, Any]] = []
+        for sub_idx in range(subsection_count):
+            source_sub = source_subs[sub_idx] if sub_idx < len(source_subs) and isinstance(source_subs[sub_idx], dict) else {}
+
+            subsection_id = str(source_sub.get("id") or f"{section_id}_sub_{sub_idx + 1}")
+            subsection_title = str(source_sub.get("title") or f"{section_title} - 第{sub_idx + 1}节")
+            subsection_desc = str(source_sub.get("description") or f"围绕主题“{title}”展开：{subsection_title}")
+
+            normalized_subsections.append({
+                "id": subsection_id,
+                "title": subsection_title,
+                "description": subsection_desc,
+            })
+
+            prompt_key = f"{section_id}::{subsection_id}"
+            source_prompt = prompt_map.get(prompt_key, {})
+            content_prompt = str(source_prompt.get("content_prompt") or "").strip()
+            if not content_prompt:
+                content_prompt = (
+                    f"请撰写《{title}》中“{section_title} > {subsection_title}”的小节内容。\n"
+                    f"小节说明：{subsection_desc}\n"
+                    "要求：内容准确、结构清晰、与前文衔接并避免重复。"
+                )
+
+            normalized_prompts.append({
+                "section_id": section_id,
+                "subsection_id": subsection_id,
+                "section_title": section_title,
+                "subsection_title": subsection_title,
+                "subsection_description": subsection_desc,
+                "content_prompt": content_prompt,
+            })
+
+        normalized_sections.append({
+            "id": section_id,
+            "title": section_title,
+            "description": section_desc,
+            "subsections": normalized_subsections,
+        })
+
+    safe_structure["sections"] = normalized_sections
+    normalized_total = chapter_count * subsection_count
+    return safe_structure, normalized_prompts, source_total, normalized_total
 
 
 def markdown_to_docx(title: str, content: str) -> BytesIO:
@@ -170,9 +257,20 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         yield f"data: {msg}\n\n"
 
         title = outline_resp.get("document_title") or f"{req.topic} 文档"
-        structure = outline_resp.get("structure", {})
-        content_prompts = outline_resp.get("content_prompts", [])
-        total_subsections = req.chapter_count * req.subsection_count
+        structure, content_prompts, source_total, total_subsections = ensure_exact_structure_and_prompts(
+            title=title,
+            structure=outline_resp.get("structure", {}),
+            content_prompts=outline_resp.get("content_prompts", []),
+            chapter_count=req.chapter_count,
+            subsection_count=req.subsection_count,
+        )
+
+        if source_total != total_subsections:
+            msg = json.dumps({
+                'type': 'progress',
+                'message': f'⚠️ 大纲小节数为 {source_total}，已自动修正为 {total_subsections}（严格按用户设置）'
+            })
+            yield f"data: {msg}\n\n"
 
         # 第2步：生成文档内容（异步启动）
         msg = json.dumps({'type': 'progress', 'message': f'🚀 开始生成内容（共{total_subsections}个小节）...'})
@@ -303,6 +401,14 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         passed = gen_resp.get("passed_subsections", 0)
         failed = len(gen_resp.get("failed_subsections", []))
         total_generated = passed + failed
+
+        if passed < expected_subsections:
+            msg = json.dumps({
+                'type': 'error',
+                'message': f'生成未达到目标小节数：通过 {passed}/{expected_subsections}，失败 {failed}。请重试或检查下游服务。'
+            })
+            yield f"data: {msg}\n\n"
+            return
         
         result = {
             "success": True,
@@ -375,8 +481,13 @@ def generate_document(req: GenerateDocRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"大纲生成失败: {outline_resp}")
 
     title = outline_resp.get("document_title") or f"{req.topic} 文档"
-    structure = outline_resp.get("structure", {})
-    content_prompts = outline_resp.get("content_prompts", [])
+    structure, content_prompts, _, _ = ensure_exact_structure_and_prompts(
+        title=title,
+        structure=outline_resp.get("structure", {}),
+        content_prompts=outline_resp.get("content_prompts", []),
+        chapter_count=req.chapter_count,
+        subsection_count=req.subsection_count,
+    )
 
     generate_payload = {
         "document_id": document_id,
@@ -393,6 +504,15 @@ def generate_document(req: GenerateDocRequest) -> Dict[str, Any]:
     if not gen_resp.get("success"):
         raise HTTPException(status_code=500, detail=f"文档生成失败: {gen_resp}")
 
+    expected_subsections = req.chapter_count * req.subsection_count
+    passed = gen_resp.get("passed_subsections", 0)
+    failed = len(gen_resp.get("failed_subsections", []))
+    if passed < expected_subsections:
+        raise HTTPException(
+            status_code=500,
+            detail=f"文档生成未达到目标小节数: 通过 {passed}/{expected_subsections}, 失败 {failed}"
+        )
+
     history_resp = post_json(f"{OUTLINER_URL}/history/get", {"document_id": document_id})
     history_items = history_resp.get("history", []) if history_resp.get("success") else []
 
@@ -404,6 +524,7 @@ def generate_document(req: GenerateDocRequest) -> Dict[str, Any]:
         "title": title,
         "content": markdown_content,
         "stats": {
+            "expected_subsections": expected_subsections,
             "passed_subsections": gen_resp.get("passed_subsections", 0),
             "failed_subsections": len(gen_resp.get("failed_subsections", [])),
             "total_iterations": gen_resp.get("total_iterations", 0),
