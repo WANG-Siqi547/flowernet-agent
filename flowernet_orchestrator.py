@@ -46,7 +46,9 @@ class DocumentGenerationOrchestrator:
         controller_url: str = "http://localhost:8001",
         outliner_url: str = "http://localhost:8003",
         max_iterations: int = 5,
-        history_manager: Optional[Any] = None
+        history_manager: Optional[Any] = None,
+        history_window_size: int = 5,  # 历史窗口大小：只使用最近N个小节
+        max_forced_iterations: int = 15  # 强制通过阈值：超过此次数强制通过
     ):
         """初始化编排器"""
         self.generator_url = generator_url
@@ -55,6 +57,8 @@ class DocumentGenerationOrchestrator:
         self.outliner_url = outliner_url
         self.max_iterations = max_iterations
         self.history_manager = history_manager
+        self.history_window_size = history_window_size
+        self.max_forced_iterations = max_forced_iterations
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -400,20 +404,60 @@ class DocumentGenerationOrchestrator:
         iterations = 0
         all_drafts = []
         
+        # 应用历史窗口：只使用最近N个小节（避免历史过长导致冗余度计算失真）
+        windowed_history = passed_history[-self.history_window_size:] if passed_history else []
+        
         # 构建历史文本
-        if passed_history:
-            history_text = "\n\n---\n\n".join([h["content"] for h in passed_history])
+        if windowed_history:
+            history_text = "\n\n---\n\n".join([h["content"] for h in windowed_history])
         else:
             history_text = ""
         
-        print(f"   📜 已通过的前置内容数: {len(passed_history)}")
+        total_history_count = len(passed_history)
+        windowed_count = len(windowed_history)
+        print(f"   📜 已通过的前置内容数: {total_history_count} (使用最近 {windowed_count} 个小节)")
         
         while True:
             iterations += 1
             if iterations <= self.max_iterations:
                 print(f"\n      尝试 {iterations}/{self.max_iterations}")
+            elif iterations <= self.max_forced_iterations:
+                print(f"\n      尝试 {iterations}（超过配置上限，继续重试；达到 {self.max_forced_iterations} 次后将强制通过）")
             else:
-                print(f"\n      尝试 {iterations}（超过配置上限，继续重试直到通过）")
+                print(f"\n      ⚠️  已达到最大尝试次数 {self.max_forced_iterations}，强制通过当前小节")
+                # 强制通过机制：避免无限循环
+                draft_to_save = all_drafts[-1] if all_drafts else ""
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="subsection_forced_pass",
+                    message=f"达到最大迭代次数 {self.max_forced_iterations}，强制通过",
+                    metadata={"iteration": iterations, "forced": True},
+                )
+                if self.history_manager:
+                    self.history_manager.update_subsection_content(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        generated_content=draft_to_save,
+                        relevancy_index=0.0,
+                        redundancy_index=1.0,
+                        is_passed=False,  # 标记为强制通过
+                        iteration_count=iterations
+                    )
+                return {
+                    "success": True,
+                    "draft": draft_to_save,
+                    "iterations": iterations,
+                    "verification": {
+                        "relevancy_index": 0.0,
+                        "redundancy_index": 1.0,
+                        "feedback": "强制通过（达到最大迭代次数）",
+                        "forced": True
+                    },
+                    "all_drafts": all_drafts
+                }
             
             # 第二步：Generator 生成内容
             print(f"         🎯 调用 Generator...")
@@ -454,7 +498,7 @@ class DocumentGenerationOrchestrator:
             all_drafts.append(draft)
             print(f"         ✅ 生成 {len(draft)} 字符")
             
-            # Verifier 验证（使用已通过历史）
+            # Verifier 验证（使用窗口化的已通过历史）
             print(f"         🔍 调用 Verifier...")
             self._emit_progress_event(
                 document_id=document_id,
@@ -467,7 +511,7 @@ class DocumentGenerationOrchestrator:
             verify_result = self._call_verifier(
                 draft=draft,
                 outline=current_outline,
-                history=[h["content"] for h in passed_history],
+                history=[h["content"] for h in windowed_history],  # 使用窗口化历史
                 rel_threshold=rel_threshold,
                 red_threshold=red_threshold
             )
