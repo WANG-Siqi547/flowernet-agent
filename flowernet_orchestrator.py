@@ -151,78 +151,96 @@ class DocumentGenerationOrchestrator:
                     print(f"\n📖 生成 Section: {section_title} > Subsection: {subsection_title}")
                     print(f"   (顺序: {subsection_index + 1}/{len(subsection_list)})")
                     
-                    # 调用生成和验证循环
-                    subsection_gen_result = self._generate_and_verify_subsection(
-                        document_id=document_id,
-                        section_id=section_id,
-                        subsection_id=subsection_id,
-                        outline=subsection_desc,
-                        initial_prompt=content_prompt or f"请你作为专家，写作关于\"{subsection_title}\"的内容。\n\n要求：{subsection_desc}",
-                        passed_history=passed_history,  # 传递已通过的历史
-                        rel_threshold=rel_threshold,
-                        red_threshold=red_threshold
-                    )
+                    try:
+                        # 调用生成和验证循环
+                        subsection_gen_result = self._generate_and_verify_subsection(
+                            document_id=document_id,
+                            section_id=section_id,
+                            subsection_id=subsection_id,
+                            outline=subsection_desc,
+                            initial_prompt=content_prompt or f"请你作为专家，写作关于\"{subsection_title}\"的内容。\n\n要求：{subsection_desc}",
+                            passed_history=passed_history,  # 传递已通过的历史
+                            rel_threshold=rel_threshold,
+                            red_threshold=red_threshold
+                        )
+                        
+                        document_result["total_iterations"] += subsection_gen_result.get("iterations", 0)
+                        
+                        if subsection_gen_result.get("success"):
+                            # 这个 subsection 通过了
+                            generated_content = subsection_gen_result.get("draft", "")
+                            
+                            # 添加到已通过历史
+                            history_order = len(passed_history)
+                            passed_history.append({
+                                "section_id": section_id,
+                                "subsection_id": subsection_id,
+                                "content": generated_content
+                            })
+                            
+                            # 保存到数据库（两个表）
+                            if self.history_manager:
+                                # 1. 保存到 history 表（用于 Web 显示）
+                                self.history_manager.add_entry(
+                                    document_id=document_id,
+                                    section_id=section_id,
+                                    subsection_id=subsection_id,
+                                    content=generated_content,
+                                    metadata={
+                                        "iterations": subsection_gen_result.get("iterations", 0),
+                                        "verification": subsection_gen_result.get("verification", {})
+                                    }
+                                )
+                                # 2. 保存到 passed_history 表（用于后续 subsection 的上下文）
+                                self.history_manager.add_passed_history(
+                                    document_id=document_id,
+                                    section_id=section_id,
+                                    subsection_id=subsection_id,
+                                    content=generated_content,
+                                    order_index=history_order
+                                )
+                            
+                            document_result["passed_subsections"] += 1
+                            
+                            section_result["subsections"].append({
+                                "subsection_id": subsection_id,
+                                "subsection_title": subsection_title,
+                                "success": True,
+                                "iterations": subsection_gen_result.get("iterations", 0),
+                                "verification": subsection_gen_result.get("verification", {}),
+                                "length": len(generated_content)
+                            })
+                            
+                        else:
+                            # 这个 subsection 失败了
+                            document_result["failed_subsections"].append({
+                                "section_id": section_id,
+                                "subsection_id": subsection_id,
+                                "error": subsection_gen_result.get("error", "Unknown error")
+                            })
+                            
+                            section_result["subsections"].append({
+                                "subsection_id": subsection_id,
+                                "subsection_title": subsection_title,
+                                "success": False,
+                                "error": subsection_gen_result.get("error", "Unknown error")
+                            })
                     
-                    document_result["total_iterations"] += subsection_gen_result.get("iterations", 0)
-                    
-                    if subsection_gen_result.get("success"):
-                        # 这个 subsection 通过了
-                        generated_content = subsection_gen_result.get("draft", "")
-                        
-                        # 添加到已通过历史
-                        history_order = len(passed_history)
-                        passed_history.append({
-                            "section_id": section_id,
-                            "subsection_id": subsection_id,
-                            "content": generated_content
-                        })
-                        
-                        # 保存到数据库（两个表）
-                        if self.history_manager:
-                            # 1. 保存到 history 表（用于 Web 显示）
-                            self.history_manager.add_entry(
-                                document_id=document_id,
-                                section_id=section_id,
-                                subsection_id=subsection_id,
-                                content=generated_content,
-                                metadata={
-                                    "iterations": subsection_gen_result.get("iterations", 0),
-                                    "verification": subsection_gen_result.get("verification", {})
-                                }
-                            )
-                            # 2. 保存到 passed_history 表（用于后续 subsection 的上下文）
-                            self.history_manager.add_passed_history(
-                                document_id=document_id,
-                                section_id=section_id,
-                                subsection_id=subsection_id,
-                                content=generated_content,
-                                order_index=history_order
-                            )
-                        
-                        document_result["passed_subsections"] += 1
-                        
-                        section_result["subsections"].append({
-                            "subsection_id": subsection_id,
-                            "subsection_title": subsection_title,
-                            "success": True,
-                            "iterations": subsection_gen_result.get("iterations", 0),
-                            "verification": subsection_gen_result.get("verification", {}),
-                            "length": len(generated_content)
-                        })
-                        
-                    else:
-                        # 这个 subsection 失败了
+                    except Exception as e:
+                        # 即使单个小节生成异常，也继续处理下一个
+                        print(f"⚠️  小节生成异常: {e}")
+                        error_str = str(e)[:200]
                         document_result["failed_subsections"].append({
                             "section_id": section_id,
                             "subsection_id": subsection_id,
-                            "error": subsection_gen_result.get("error", "Unknown error")
+                            "error": f"异常: {error_str}"
                         })
                         
                         section_result["subsections"].append({
                             "subsection_id": subsection_id,
                             "subsection_title": subsection_title,
                             "success": False,
-                            "error": subsection_gen_result.get("error", "Unknown error")
+                            "error": f"异常: {error_str}"
                         })
                 
                 document_result["sections"].append(section_result)
@@ -461,23 +479,33 @@ class DocumentGenerationOrchestrator:
                 print(f"⚠️ 本地Generator调用失败: {e}，回退到HTTP调用")
 
         try:
+            print(f"      [Generator] 发起HTTP请求...")
             response = self.session.post(
                 f"{self.generator_url}/generate",
                 json={"prompt": prompt, "max_tokens": 800},
                 timeout=120
             )
             
+            print(f"      [Generator] 收到响应 (status={response.status_code}, size={len(response.text)})")
             if response.status_code == 200:
-                return response.json()
+                result = response.json()
+                print(f"      [Generator] 解析成功: success={result.get('success')}")
+                return result
             else:
                 return {
                     "success": False,
-                    "error": f"HTTP {response.status_code}"
+                    "error": f"HTTP {response.status_code}: {response.text[:200]}"
                 }
-        except Exception as e:
+        except requests.Timeout:
             return {
                 "success": False,
-                "error": str(e)
+                "error": "Generator 响应超时 (120秒)"
+            }
+        except Exception as e:
+            print(f"      [Generator] 异常: {type(e).__name__}: {str(e)[:100]}")
+            return {
+                "success": False,
+                "error": f"{type(e).__name__}: {str(e)[:100]}"
             }
     
     def _call_verifier(

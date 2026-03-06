@@ -212,6 +212,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         # 定期检查生成进度
         last_count = 0
         timeout = time.time() + REQUEST_TIMEOUT
+        last_progress_update = time.time()
         
         while gen_thread.is_alive() and time.time() < timeout:
             try:
@@ -225,22 +226,55 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                     history = history_resp.json().get("history", [])
                     current_count = len(history)
                     
-                    if current_count > last_count:
+                    # 每次进度变化或30秒都推送一次进度
+                    if current_count > last_count or time.time() - last_progress_update > 30:
                         progress = min(100, int(current_count / total_subsections * 100)) if total_subsections > 0 else 0
                         msg = json.dumps({'type': 'progress', 'message': f'进度: {current_count}/{total_subsections} 小节已完成 ({progress}%)'})
                         yield f"data: {msg}\n\n"
                         last_count = current_count
-            except:
-                pass
+                        last_progress_update = time.time()
+            except Exception as e:
+                print(f"查询进度异常: {e}")
             
             time.sleep(2)  # 每2秒检查一次
         
+        # 等待线程结束（最多等待10秒）
         gen_thread.join(timeout=10)
         
-        if error_occurred or gen_resp is None:
-            msg = json.dumps({'type': 'error', 'message': '文档生成失败或超时'})
+        if error_occurred:
+            msg = json.dumps({'type': 'error', 'message': '生成服务连接失败'})
             yield f"data: {msg}\n\n"
             return
+        
+        if gen_resp is None:
+            # 线程仍在运行但超时 - 尝试从数据库恢复
+            try:
+                history_resp = requests.post(
+                    f"{OUTLINER_URL}/history/get",
+                    json={"document_id": document_id},
+                    timeout=10
+                )
+                if history_resp.status_code == 200:
+                    history_items = history_resp.json().get("history", [])
+                    if len(history_items) > 0:
+                        # 有部分小节生成成功，返回部分结果
+                        msg = json.dumps({'type': 'progress', 'message': '⚠️ 生成超时，返回已完成的部分内容...'})
+                        yield f"data: {msg}\n\n"
+                        gen_resp = {
+                            "success": True,
+                            "passed_subsections": len(history_items),
+                            "failed_subsections": [],
+                            "total_iterations": 0,
+                            "generation_time": f"{time.time() - (timeout - REQUEST_TIMEOUT):.2f}s"
+                        }
+                    else:
+                        msg = json.dumps({'type': 'error', 'message': '生成未能开始，请检查生成服务'})
+                        yield f"data: {msg}\n\n"
+                        return
+            except:
+                msg = json.dumps({'type': 'error', 'message': '生成超时且无法恢复'})
+                yield f"data: {msg}\n\n"
+                return
         
         if not gen_resp.get("success"):
             err_msg = gen_resp.get('error', '文档生成失败')
