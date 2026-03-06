@@ -10,8 +10,9 @@ import uvicorn
 import os
 import sys
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.append(project_root)
+if project_root in sys.path:
+    sys.path.remove(project_root)
+sys.path.insert(0, project_root)
 
 from generator import FlowerNetGenerator, FlowerNetOrchestrator
 from flowernet_orchestrator import DocumentGenerationOrchestrator
