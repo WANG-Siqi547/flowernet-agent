@@ -45,6 +45,13 @@ class HistoryQuery(BaseModel):
     document_id: str = Field(..., description="文档 ID")
 
 
+class ProgressQuery(BaseModel):
+    """查询流程事件的请求"""
+    document_id: str = Field(..., description="文档 ID")
+    after_id: int = Field(default=0, ge=0, description="仅返回该 ID 之后的事件")
+    limit: int = Field(default=100, ge=1, le=500, description="单次返回上限")
+
+
 class SaveOutlineRequest(BaseModel):
     """保存大纲的请求"""
     document_id: str = Field(..., description="文档 ID")
@@ -333,6 +340,30 @@ async def get_statistics(query: HistoryQuery):
             "statistics": stats
         }
         
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/history/progress")
+async def get_progress_events(query: ProgressQuery):
+    """
+    获取文档流程事件（增量），用于前端实时展示生成细节。
+    """
+    try:
+        events = history_manager.get_progress_events(
+            document_id=query.document_id,
+            after_id=query.after_id,
+            limit=query.limit,
+        )
+        last_id = events[-1]["id"] if events else query.after_id
+
+        return {
+            "success": True,
+            "document_id": query.document_id,
+            "events": events,
+            "last_id": last_id,
+            "count": len(events),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

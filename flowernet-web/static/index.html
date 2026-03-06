@@ -9,43 +9,57 @@
     
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: radial-gradient(1200px 600px at 15% -10%, #1f3b8f22 0%, transparent 60%), #f4f7fb;
       min-height: 100vh;
-      padding: 20px;
-      color: #1f2937;
+      padding: 28px;
+      color: #111827;
     }
     
     .container {
-      max-width: 1000px;
+      max-width: 1080px;
       margin: 0 auto;
     }
     
     .header {
-      text-align: center;
-      margin-bottom: 40px;
-      color: white;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 24px;
+      color: #0f172a;
+      gap: 12px;
     }
     
     .header h1 {
-      font-size: 42px;
-      font-weight: 700;
-      margin-bottom: 8px;
-      text-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      font-size: 34px;
+      font-weight: 750;
+      margin-bottom: 4px;
+      letter-spacing: -0.4px;
     }
     
     .header p {
-      font-size: 16px;
-      opacity: 0.95;
-      font-weight: 300;
+      font-size: 14px;
+      color: #475569;
+      font-weight: 500;
+      max-width: 520px;
+    }
+
+    .badge {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
     }
     
     .card {
-      background: white;
-      border-radius: 16px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
       padding: 32px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
-      margin-bottom: 24px;
-      backdrop-filter: blur(10px);
+      box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+      margin-bottom: 18px;
     }
     
     .form-group {
@@ -54,12 +68,12 @@
     
     .form-group label {
       display: block;
-      font-size: 14px;
-      font-weight: 600;
-      color: #374151;
+      font-size: 12px;
+      font-weight: 700;
+      color: #334155;
       margin-bottom: 8px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.65px;
     }
     
     .form-row {
@@ -76,19 +90,20 @@
     input, textarea {
       width: 100%;
       padding: 12px 16px;
-      border: 2px solid #e5e7eb;
-      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 9px;
       font-size: 14px;
       font-family: inherit;
-      transition: all 0.3s ease;
-      background: #f9fafb;
+      transition: all 0.2s ease;
+      background: #f8fafc;
+      color: #0f172a;
     }
     
     input:focus, textarea:focus {
       outline: none;
-      border-color: #667eea;
+      border-color: #1d4ed8;
       background: white;
-      box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+      box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.14);
     }
     
     textarea {
@@ -106,24 +121,24 @@
     button {
       padding: 14px 24px;
       border: none;
-      border-radius: 10px;
-      font-size: 15px;
+      border-radius: 9px;
+      font-size: 14px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.3s ease;
+      transition: all 0.2s ease;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+      letter-spacing: 0.6px;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
     }
     
     #startBtn {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
       color: white;
     }
     
     #startBtn:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px rgba(30, 64, 175, 0.3);
     }
     
     #startBtn:disabled {
@@ -133,13 +148,13 @@
     }
     
     #downloadBtn {
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      background: linear-gradient(135deg, #0f766e 0%, #0e7490 100%);
       color: white;
     }
     
     #downloadBtn:hover:not(:disabled) {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(16, 185, 129, 0.4);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px rgba(15, 118, 110, 0.28);
     }
     
     #downloadBtn:disabled {
@@ -149,10 +164,13 @@
     
     .status {
       margin-top: 16px;
-      padding: 12px 16px;
+      padding: 11px 14px;
       border-radius: 8px;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 500;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
     }
     
     .status.ok {
@@ -169,18 +187,19 @@
     
     .meta {
       font-size: 12px;
-      color: #6b7280;
+      color: #475569;
       margin-bottom: 16px;
       padding: 12px;
-      background: #f3f4f6;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
       border-radius: 8px;
       line-height: 1.6;
       word-break: break-all;
     }
     
     pre {
-      background: #1f2937;
-      color: #e5e7eb;
+      background: #0b1220;
+      color: #dbe7ff;
       padding: 20px;
       border-radius: 12px;
       max-height: 600px;
@@ -190,7 +209,8 @@
       white-space: pre-wrap;
       word-break: break-word;
       scrollbar-width: thin;
-      scrollbar-color: #667eea #e5e7eb;
+      scrollbar-color: #2563eb #1e293b;
+      border: 1px solid #1e293b;
     }
     
     pre::-webkit-scrollbar {
@@ -198,40 +218,51 @@
     }
     
     pre::-webkit-scrollbar-track {
-      background: #374151;
+      background: #1e293b;
     }
     
     pre::-webkit-scrollbar-thumb {
-      background: #667eea;
+      background: #2563eb;
       border-radius: 4px;
     }
     
     .result-label {
       font-size: 12px;
-      font-weight: 600;
-      color: #6b7280;
+      font-weight: 700;
+      color: #334155;
       margin-bottom: 8px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.7px;
     }
     
     h2 {
-      color: #1f2937;
+      color: #0f172a;
       margin-bottom: 24px;
       font-size: 24px;
-      font-weight: 700;
+      font-weight: 750;
+      letter-spacing: -0.2px;
+    }
+
+    @media (max-width: 768px) {
+      body { padding: 16px; }
+      .header { flex-direction: column; align-items: flex-start; }
+      .header h1 { font-size: 28px; }
+      .card { padding: 20px; }
     }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>🌸 FlowerNet</h1>
-      <p>智能文档生成平台 - 为您快速生成高质量长文档</p>
+      <div>
+        <h1>FlowerNet</h1>
+        <p>文档生成工作台 · 稳定、可追踪、面向长文档场景</p>
+      </div>
+      <div class="badge">Production Ready UI</div>
     </div>
 
     <div class="card">
-      <h2>📝 生成参数</h2>
+      <h2>生成参数</h2>
       
       <div class="form-row">
         <div class="form-group">
@@ -249,25 +280,25 @@
       </div>
 
       <div class="form-group">
-        <label for="background">🎯 用户背景</label>
+        <label for="background">用户背景</label>
         <textarea id="background" placeholder="例如：我是研究生，具有哲学、宗教学背景，希望了解当代青年群体的精神需求">普通读者</textarea>
       </div>
 
       <div class="form-group">
-        <label for="extra">✨ 附加要求（可选）</label>
+        <label for="extra">附加要求（可选）</label>
         <textarea id="extra" placeholder="例如：提供案例分析、对比不同宗教观点、结合实际数据、8000-12000字"></textarea>
       </div>
 
       <div class="button-group">
-        <button id="startBtn">🚀 开始生成</button>
-        <button id="downloadBtn" disabled>📥 下载 DOCX</button>
+        <button id="startBtn">开始生成</button>
+        <button id="downloadBtn" disabled>下载 DOCX</button>
       </div>
 
       <div id="status" class="status"></div>
     </div>
 
     <div class="card">
-      <div class="result-label">📄 生成结果</div>
+      <div class="result-label">生成结果</div>
       <div id="meta" class="meta"></div>
       <pre id="result">生成结果会显示在这里...</pre>
     </div>
@@ -284,14 +315,47 @@
     let currentContent = '';
     let eventSource = null;
 
+    function stripEmojis(text) {
+      if (!text) return '';
+      return text
+        .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')
+        .replace(/[\u{2600}-\u{27BF}]/gu, '')
+        .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
+        .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }
+
     function setStatus(text, type = '') {
       statusEl.className = 'status ' + type;
       statusEl.textContent = text;
     }
 
     function appendLog(text) {
-      resultEl.textContent += text + '\n';
+      const cleanText = stripEmojis(text);
+      resultEl.textContent += cleanText + '\n';
       resultEl.scrollTop = resultEl.scrollHeight;
+    }
+
+    function mapStageLabel(stage) {
+      const stageMap = {
+        document_start: '文档',
+        subsection_start: '小节开始',
+        generator_start: '生成器',
+        generator_error: '生成器错误',
+        verifier_start: '校验器',
+        verifier_passed: '校验通过',
+        verifier_failed: '校验未通过',
+        verifier_error: '校验异常',
+        controller_start: '控制器',
+        controller_success: '控制器完成',
+        controller_error: '控制器重试',
+        subsection_passed: '小节完成',
+        subsection_failed: '小节失败',
+        subsection_exception: '小节异常',
+        document_complete: '文档完成'
+      };
+      return stageMap[stage] || '流程';
     }
 
     startBtn.addEventListener('click', async () => {
@@ -335,12 +399,15 @@
               appendLog(`[进度] ${data.message}`);
             } else if (data.type === 'outline') {
               appendLog(`[大纲] ${data.message}`);
+            } else if (data.type === 'detail') {
+              const stageLabel = mapStageLabel(data.stage || '');
+              appendLog(`[${stageLabel}] ${data.message || ''}`);
             } else if (data.type === 'complete') {
               const result = data.result;
               currentTitle = result.title;
               currentContent = result.content;
               
-              appendLog('\n[完成] ✅ 文档生成成功！\n');
+              appendLog('\n[完成] 文档生成成功\n');
               appendLog(`\n=== 最终文档 ===\n`);
               appendLog(result.content);
               

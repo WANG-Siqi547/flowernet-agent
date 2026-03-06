@@ -309,6 +309,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         
         # 定期检查生成进度
         last_count = 0
+        last_event_id = 0
         timeout = time.time() + REQUEST_TIMEOUT
         last_progress_update = time.time()
         
@@ -331,6 +332,27 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         yield f"data: {msg}\n\n"
                         last_count = current_count
                         last_progress_update = time.time()
+
+                # 查询流程细节事件
+                events_resp = requests.post(
+                    f"{OUTLINER_URL}/history/progress",
+                    json={"document_id": document_id, "after_id": last_event_id, "limit": 200},
+                    timeout=10,
+                )
+                if events_resp.status_code == 200:
+                    events = events_resp.json().get("events", [])
+                    for event_item in events:
+                        detail_msg = event_item.get("message", "")
+                        event_stage = event_item.get("stage", "")
+                        event_meta = event_item.get("metadata", {})
+                        msg = json.dumps({
+                            'type': 'detail',
+                            'message': detail_msg,
+                            'stage': event_stage,
+                            'metadata': event_meta,
+                        })
+                        yield f"data: {msg}\n\n"
+                        last_event_id = max(last_event_id, int(event_item.get("id", 0)))
             except Exception as e:
                 print(f"查询进度异常: {e}")
             
@@ -379,6 +401,30 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             msg = json.dumps({'type': 'error', 'message': err_msg})
             yield f"data: {msg}\n\n"
             return
+
+        # 再抓取一轮收尾事件，避免线程结束时最后几条细节日志丢失
+        try:
+            events_resp = requests.post(
+                f"{OUTLINER_URL}/history/progress",
+                json={"document_id": document_id, "after_id": last_event_id, "limit": 500},
+                timeout=10,
+            )
+            if events_resp.status_code == 200:
+                events = events_resp.json().get("events", [])
+                for event_item in events:
+                    detail_msg = event_item.get("message", "")
+                    event_stage = event_item.get("stage", "")
+                    event_meta = event_item.get("metadata", {})
+                    msg = json.dumps({
+                        'type': 'detail',
+                        'message': detail_msg,
+                        'stage': event_stage,
+                        'metadata': event_meta,
+                    })
+                    yield f"data: {msg}\n\n"
+                    last_event_id = max(last_event_id, int(event_item.get("id", 0)))
+        except Exception as e:
+            print(f"收尾事件查询异常: {e}")
         
         # 第3步：获取最终内容
         msg = json.dumps({'type': 'progress', 'message': '📦 整合文档内容...'})
@@ -400,6 +446,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         expected_subsections = req.chapter_count * req.subsection_count
         passed = gen_resp.get("passed_subsections", 0)
         failed = len(gen_resp.get("failed_subsections", []))
+        forced = len(gen_resp.get("forced_subsections", []))
         total_generated = passed + failed
 
         if passed < expected_subsections:
@@ -419,6 +466,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 "expected_subsections": expected_subsections,
                 "passed_subsections": passed,
                 "failed_subsections": failed,
+                "forced_subsections": forced,
                 "total_generated": total_generated,
                 "total_iterations": gen_resp.get("total_iterations", 0),
                 "generation_time": gen_resp.get("generation_time", ""),
@@ -507,6 +555,7 @@ def generate_document(req: GenerateDocRequest) -> Dict[str, Any]:
     expected_subsections = req.chapter_count * req.subsection_count
     passed = gen_resp.get("passed_subsections", 0)
     failed = len(gen_resp.get("failed_subsections", []))
+    forced = len(gen_resp.get("forced_subsections", []))
     if passed < expected_subsections:
         raise HTTPException(
             status_code=500,
@@ -527,6 +576,7 @@ def generate_document(req: GenerateDocRequest) -> Dict[str, Any]:
             "expected_subsections": expected_subsections,
             "passed_subsections": gen_resp.get("passed_subsections", 0),
             "failed_subsections": len(gen_resp.get("failed_subsections", [])),
+            "forced_subsections": forced,
             "total_iterations": gen_resp.get("total_iterations", 0),
             "generation_time": gen_resp.get("generation_time", ""),
         },

@@ -31,6 +31,7 @@ import requests
 import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+import time
 
 
 class DocumentGenerationOrchestrator:
@@ -66,6 +67,30 @@ class DocumentGenerationOrchestrator:
         """设置本地Generator实例，避免HTTP自调用"""
         self._local_generator = generator
         print("✅ Orchestrator已绑定本地Generator实例")
+
+    def _emit_progress_event(
+        self,
+        document_id: str,
+        stage: str,
+        message: str,
+        section_id: Optional[str] = None,
+        subsection_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """写入流程事件（用于前端可视化详细过程）。"""
+        if not self.history_manager:
+            return
+        try:
+            self.history_manager.add_progress_event(
+                document_id=document_id,
+                section_id=section_id,
+                subsection_id=subsection_id,
+                stage=stage,
+                message=message,
+                metadata=metadata or {},
+            )
+        except Exception as e:
+            print(f"⚠️  写入流程事件失败: {e}")
     
     def generate_document(
         self,
@@ -89,6 +114,11 @@ class DocumentGenerationOrchestrator:
         print(f"Document ID: {document_id}")
         print(f"Section 数: {len(structure.get('sections', []))}")
         print(f"总 Subsection 数: {len(content_prompts)}")
+        self._emit_progress_event(
+            document_id=document_id,
+            stage="document_start",
+            message=f"文档生成已启动，目标小节数: {len(content_prompts)}",
+        )
         
         document_result = {
             "success": True,
@@ -150,6 +180,19 @@ class DocumentGenerationOrchestrator:
                     
                     print(f"\n📖 生成 Section: {section_title} > Subsection: {subsection_title}")
                     print(f"   (顺序: {subsection_index + 1}/{len(subsection_list)})")
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="subsection_start",
+                        message=f"开始处理小节: {section_title} > {subsection_title}",
+                        metadata={
+                            "section_title": section_title,
+                            "subsection_title": subsection_title,
+                            "subsection_order": subsection_index + 1,
+                            "section_subsection_total": len(subsection_list),
+                        },
+                    )
                     
                     try:
                         # 调用生成和验证循环
@@ -201,6 +244,17 @@ class DocumentGenerationOrchestrator:
                                 )
                             
                             document_result["passed_subsections"] += 1
+                            self._emit_progress_event(
+                                document_id=document_id,
+                                section_id=section_id,
+                                subsection_id=subsection_id,
+                                stage="subsection_passed",
+                                message=f"小节通过验证: {section_title} > {subsection_title}",
+                                metadata={
+                                    "iterations": subsection_gen_result.get("iterations", 0),
+                                    "verification": subsection_gen_result.get("verification", {}),
+                                },
+                            )
                             
                             section_result["subsections"].append({
                                 "subsection_id": subsection_id,
@@ -212,36 +266,47 @@ class DocumentGenerationOrchestrator:
                             })
                             
                         else:
-                            # 这个 subsection 失败了
+                            err = subsection_gen_result.get("error", "Unknown error")
+                            print(f"❌ 当前小节生成失败且未通过闭环: {err}")
                             document_result["failed_subsections"].append({
                                 "section_id": section_id,
                                 "subsection_id": subsection_id,
-                                "error": subsection_gen_result.get("error", "Unknown error")
+                                "error": err
                             })
-                            
-                            section_result["subsections"].append({
-                                "subsection_id": subsection_id,
-                                "subsection_title": subsection_title,
-                                "success": False,
-                                "error": subsection_gen_result.get("error", "Unknown error")
-                            })
+                            document_result["success"] = False
+                            document_result["error"] = f"小节未通过且无法完成闭环: {section_title} > {subsection_title}"
+                            document_result["sections"].append(section_result)
+                            self._emit_progress_event(
+                                document_id=document_id,
+                                section_id=section_id,
+                                subsection_id=subsection_id,
+                                stage="subsection_failed",
+                                message=f"小节未能完成闭环: {section_title} > {subsection_title}",
+                                metadata={"error": err},
+                            )
+                            return document_result
                     
                     except Exception as e:
-                        # 即使单个小节生成异常，也继续处理下一个
-                        print(f"⚠️  小节生成异常: {e}")
+                        # 异常时不可跳过到下一小节，直接中断返回失败
+                        print(f"❌ 小节生成异常，中断文档流程: {e}")
                         error_str = str(e)[:200]
                         document_result["failed_subsections"].append({
                             "section_id": section_id,
                             "subsection_id": subsection_id,
                             "error": f"异常: {error_str}"
                         })
-                        
-                        section_result["subsections"].append({
-                            "subsection_id": subsection_id,
-                            "subsection_title": subsection_title,
-                            "success": False,
-                            "error": f"异常: {error_str}"
-                        })
+                        document_result["success"] = False
+                        document_result["error"] = f"小节异常中断: {section_title} > {subsection_title}"
+                        document_result["sections"].append(section_result)
+                        self._emit_progress_event(
+                            document_id=document_id,
+                            section_id=section_id,
+                            subsection_id=subsection_id,
+                            stage="subsection_exception",
+                            message=f"小节异常中断: {section_title} > {subsection_title}",
+                            metadata={"error": error_str},
+                        )
+                        return document_result
                 
                 document_result["sections"].append(section_result)
             
@@ -262,7 +327,7 @@ class DocumentGenerationOrchestrator:
                 len(document_result["failed_subsections"])
             )
 
-            # 严格判定：必须达到预期小节数且全部通过，才算成功
+            # 严格判定：必须达到预期小节数，且所有小节都已有结果（正常通过或强制补齐）
             if document_result["passed_subsections"] < total_subsections_expected:
                 document_result["success"] = False
                 document_result["error"] = (
@@ -281,6 +346,20 @@ class DocumentGenerationOrchestrator:
             if not document_result["success"]:
                 print(f"   - 错误: {document_result.get('error', '生成未满足严格要求')}")
             print(f"{'='*70}")
+            self._emit_progress_event(
+                document_id=document_id,
+                stage="document_complete",
+                message=(
+                    f"文档流程结束：通过 {document_result['passed_subsections']}，"
+                    f"失败 {len(document_result['failed_subsections'])}"
+                ),
+                metadata={
+                    "success": document_result["success"],
+                    "passed_subsections": document_result["passed_subsections"],
+                    "failed_subsections": len(document_result["failed_subsections"]),
+                    "total_iterations": document_result["total_iterations"],
+                },
+            )
             
             return document_result
             
@@ -329,28 +408,47 @@ class DocumentGenerationOrchestrator:
         
         print(f"   📜 已通过的前置内容数: {len(passed_history)}")
         
-        while iterations < self.max_iterations:
+        while True:
             iterations += 1
-            print(f"\n      尝试 {iterations}/{self.max_iterations}")
+            if iterations <= self.max_iterations:
+                print(f"\n      尝试 {iterations}/{self.max_iterations}")
+            else:
+                print(f"\n      尝试 {iterations}（超过配置上限，继续重试直到通过）")
             
             # 第二步：Generator 生成内容
             print(f"         🎯 调用 Generator...")
+            self._emit_progress_event(
+                document_id=document_id,
+                section_id=section_id,
+                subsection_id=subsection_id,
+                stage="generator_start",
+                message=f"第 {iterations} 轮：进入 Generator 生成",
+                metadata={"iteration": iterations},
+            )
             
             # 增强 prompt 以利用大纲和历史
             enhanced_prompt = self._build_enhanced_prompt(
                 original_prompt=current_prompt,
                 outline=current_outline,
-                history_text=history_text
+                history_text=history_text,
+                rel_threshold=rel_threshold,
+                red_threshold=red_threshold,
             )
             
             gen_result = self._call_generator(enhanced_prompt)
             
             if not gen_result.get("success"):
-                return {
-                    "success": False,
-                    "error": f"Generator 错误: {gen_result.get('error')}",
-                    "iterations": iterations
-                }
+                print(f"         ⚠️ Generator 错误，继续重试当前小节: {gen_result.get('error')}")
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="generator_error",
+                    message=f"第 {iterations} 轮：Generator 失败，准备重试",
+                    metadata={"iteration": iterations, "error": gen_result.get("error", "unknown")},
+                )
+                time.sleep(1)
+                continue
             
             draft = gen_result.get("draft", "")
             all_drafts.append(draft)
@@ -358,6 +456,14 @@ class DocumentGenerationOrchestrator:
             
             # Verifier 验证（使用已通过历史）
             print(f"         🔍 调用 Verifier...")
+            self._emit_progress_event(
+                document_id=document_id,
+                section_id=section_id,
+                subsection_id=subsection_id,
+                stage="verifier_start",
+                message=f"第 {iterations} 轮：进入 Verifier 检测",
+                metadata={"iteration": iterations},
+            )
             verify_result = self._call_verifier(
                 draft=draft,
                 outline=current_outline,
@@ -367,11 +473,17 @@ class DocumentGenerationOrchestrator:
             )
             
             if not verify_result.get("success"):
-                return {
-                    "success": False,
-                    "error": f"Verifier 错误",
-                    "iterations": iterations
-                }
+                print(f"         ⚠️ Verifier 错误，继续重试当前小节")
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="verifier_error",
+                    message=f"第 {iterations} 轮：Verifier 调用失败，准备重试",
+                    metadata={"iteration": iterations},
+                )
+                time.sleep(1)
+                continue
             
             is_passed = verify_result.get("is_passed", False)
             rel_score = verify_result.get("relevancy_index", 0)
@@ -383,6 +495,18 @@ class DocumentGenerationOrchestrator:
             # 如果通过，返回成功
             if is_passed:
                 print(f"         ✨ 验证通过!")
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="verifier_passed",
+                    message=f"第 {iterations} 轮：Verifier 判定通过",
+                    metadata={
+                        "iteration": iterations,
+                        "relevancy_index": rel_score,
+                        "redundancy_index": red_score,
+                    },
+                )
                 
                 # 更新数据库的 subsection 追踪
                 if self.history_manager:
@@ -411,42 +535,68 @@ class DocumentGenerationOrchestrator:
             
             # 如果没有通过，调用 Controller 修改大纲
             print(f"         🔧 调用 Controller...")
-            controller_result = self._call_controller(
-                old_outline=current_outline,
-                failed_draft=draft,
-                feedback=verify_result,
-                outline=outline  # 原始大纲
+            self._emit_progress_event(
+                document_id=document_id,
+                section_id=section_id,
+                subsection_id=subsection_id,
+                stage="verifier_failed",
+                message=f"第 {iterations} 轮：Verifier 判定不通过，进入 Controller",
+                metadata={
+                    "iteration": iterations,
+                    "relevancy_index": rel_score,
+                    "redundancy_index": red_score,
+                },
             )
-            
-            if controller_result.get("success"):
-                current_outline = controller_result.get("improved_outline", current_outline)
-                print(f"         ✅ 大纲已改进")
-            else:
-                print(f"         ⚠️  Controller 返回失败")
-        
-        # 达到最大迭代次数
-        print(f"         ⚠️  达到最大迭代次数")
-        
-        if all_drafts:
-            # 返回最后一个 draft 作为降级方案
-            return {
-                "success": True,
-                "draft": all_drafts[-1],
-                "iterations": iterations,
-                "warning": "达到最大迭代次数，内容可能不完全符合要求"
-            }
-        
-        return {
-            "success": False,
-            "error": "无法生成满足要求的内容",
-            "iterations": iterations
-        }
+            controller_retry = 0
+            while True:
+                controller_retry += 1
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="controller_start",
+                    message=f"第 {iterations} 轮：Controller 第 {controller_retry} 次尝试改纲",
+                    metadata={"iteration": iterations, "controller_retry": controller_retry},
+                )
+                controller_result = self._call_controller(
+                    old_outline=current_outline,
+                    failed_draft=draft,
+                    feedback=verify_result,
+                    outline=outline  # 原始大纲
+                )
+
+                improved_outline = str(controller_result.get("improved_outline", "")).strip()
+                if controller_result.get("success") and improved_outline:
+                    current_outline = improved_outline
+                    print(f"         ✅ 大纲已改进（controller重试 {controller_retry} 次）")
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="controller_success",
+                        message=f"第 {iterations} 轮：Controller 改纲成功，返回 Generator",
+                        metadata={"iteration": iterations, "controller_retry": controller_retry},
+                    )
+                    break
+
+                print(f"         ⚠️  Controller 失败，继续重试（第 {controller_retry} 次）")
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="controller_error",
+                    message=f"第 {iterations} 轮：Controller 改纲失败，继续重试",
+                    metadata={"iteration": iterations, "controller_retry": controller_retry},
+                )
+                time.sleep(1)
     
     def _build_enhanced_prompt(
         self,
         original_prompt: str,
         outline: str,
-        history_text: str
+        history_text: str,
+        rel_threshold: float,
+        red_threshold: float,
     ) -> str:
         """
         构建增强的生成提示，包含大纲和历史context
@@ -464,10 +614,20 @@ class DocumentGenerationOrchestrator:
 {history_text}
 
 【生成要求】
+- 明确目标：输出需具备 high relevancy 和 low redundancy
+- 量化约束：relevancy_index >= {rel_threshold:.2f}，redundancy_index <= {red_threshold:.2f}
 - 基于上述大纲，生成新的内容
 - 与前面的内容保持逻辑连贯
 - 避免与前面内容重复或冗余
 - 确保内容与大纲高度相关
+- 字数控制在 300-500 字
+
+"""
+        else:
+            enhanced += f"""【生成要求】
+- 明确目标：输出需具备 high relevancy 和 low redundancy
+- 量化约束：relevancy_index >= {rel_threshold:.2f}，redundancy_index <= {red_threshold:.2f}
+- 严格围绕当前大纲，不写无关内容
 - 字数控制在 300-500 字
 
 """

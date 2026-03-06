@@ -98,6 +98,22 @@ class HistoryManager:
             """
         )
 
+        # 新表：流程事件（用于前端展示生成细节）
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS progress_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id TEXT NOT NULL,
+                section_id TEXT,
+                subsection_id TEXT,
+                stage TEXT NOT NULL,
+                message TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                metadata TEXT
+            )
+            """
+        )
+
         # 创建索引
         cursor.execute(
             """
@@ -124,6 +140,13 @@ class HistoryManager:
             """
             CREATE INDEX IF NOT EXISTS idx_passed_history
             ON passed_history(document_id)
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_progress_document
+            ON progress_events(document_id, id)
             """
         )
 
@@ -532,3 +555,90 @@ class HistoryManager:
             conn.commit()
             conn.close()
             print(f"✅ 已清空文档 {document_id} 的已通过历史链 (Database)")
+
+    # ============ 新增方法：流程事件管理 ============
+
+    def add_progress_event(
+        self,
+        document_id: str,
+        stage: str,
+        message: str,
+        section_id: Optional[str] = None,
+        subsection_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[int]:
+        """记录一条流程事件，用于前端展示详细生成过程。"""
+        timestamp = datetime.now().isoformat()
+
+        if self.use_database:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO progress_events (document_id, section_id, subsection_id, stage, message, timestamp, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document_id,
+                    section_id,
+                    subsection_id,
+                    stage,
+                    message,
+                    timestamp,
+                    json.dumps(metadata or {}),
+                ),
+            )
+            event_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            return event_id
+
+        return None
+
+    def get_progress_events(
+        self,
+        document_id: str,
+        after_id: int = 0,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """获取某文档的流程事件，支持增量拉取。"""
+        if self.use_database:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, document_id, section_id, subsection_id, stage, message, timestamp, metadata
+                FROM progress_events
+                WHERE document_id = ? AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (document_id, max(0, int(after_id)), max(1, int(limit))),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+
+            return [
+                {
+                    "id": row[0],
+                    "document_id": row[1],
+                    "section_id": row[2],
+                    "subsection_id": row[3],
+                    "stage": row[4],
+                    "message": row[5],
+                    "timestamp": row[6],
+                    "metadata": json.loads(row[7]) if row[7] else {},
+                }
+                for row in rows
+            ]
+
+        return []
+
+    def clear_progress_events(self, document_id: str):
+        """清空某文档的流程事件。"""
+        if self.use_database:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM progress_events WHERE document_id = ?", (document_id,))
+            conn.commit()
+            conn.close()
