@@ -27,8 +27,8 @@ class OutlineRequest(BaseModel):
     """生成大纲的请求"""
     user_background: str = Field(..., description="用户背景信息")
     user_requirements: str = Field(..., description="用户需求描述")
-    max_sections: int = Field(default=5, ge=2, le=10, description="最大 Section 数量")
-    max_subsections_per_section: int = Field(default=4, ge=2, le=8, description="每个 Section 最大 Subsection 数量")
+    max_sections: int = Field(default=5, ge=1, le=10, description="最大 Section 数量")
+    max_subsections_per_section: int = Field(default=4, ge=1, le=8, description="每个 Section 最大 Subsection 数量")
 
 
 class HistoryEntry(BaseModel):
@@ -75,8 +75,8 @@ class GenerateAndSaveOutlineRequest(BaseModel):
     document_id: str = Field(..., description="文档 ID")
     user_background: str = Field(..., description="用户背景信息")
     user_requirements: str = Field(..., description="用户需求描述")
-    max_sections: int = Field(default=5, ge=2, le=10)
-    max_subsections_per_section: int = Field(default=4, ge=2, le=8)
+    max_sections: int = Field(default=5, ge=1, le=10)
+    max_subsections_per_section: int = Field(default=4, ge=1, le=8)
 
 
 # ============ FastAPI App ============

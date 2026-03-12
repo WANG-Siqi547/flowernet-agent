@@ -224,6 +224,95 @@ python3 test_flowernet_e2e.py
 
 ## ☁️ 云端部署（Render）
 
+### Poffices 集成（公网 HTTPS + 统一入口）
+
+如果你要在 Poffices 的 Block 中输入 `query` 后直接自动出文档，建议使用 `flowernet-web` 提供的统一入口：
+
+- `POST /api/poffices/generate`
+- `POST /api/poffices/task-status`（异步轮询）
+- `POST /api/download-docx`（下载 docx）
+
+#### 1) 暴露公网 HTTPS API
+
+推荐使用 Render 部署 `flowernet-web`，部署后你会得到 HTTPS 域名，例如：
+
+`https://your-flowernet-web.onrender.com`
+
+同时配置以下环境变量：
+
+```bash
+OUTLINER_URL=https://flowernet-outliner.onrender.com
+GENERATOR_URL=https://flowernet-generator.onrender.com
+REQUEST_TIMEOUT=3600
+DOWNSTREAM_RETRIES=3
+DOWNSTREAM_BACKOFF=1.0
+
+# 鉴权（建议开启）
+API_AUTH_ENABLED=true
+FLOWERNET_API_KEY=your-strong-api-key
+# 或者使用 Bearer
+FLOWERNET_BEARER_TOKEN=your-strong-bearer-token
+
+# 用于返回下载地址（可选）
+PUBLIC_BASE_URL=https://your-flowernet-web.onrender.com
+```
+
+#### 2) Poffices Block 请求映射
+
+在 Poffices Block 中，将用户输入的 `query` 映射到 FlowerNet 的 `topic`（以及 `user_requirements` 语义）：
+
+- `query -> topic`
+- `query + extra_requirements -> user_requirements`（由后端自动组装）
+
+推荐请求体（同步，等待结果）：
+
+```json
+{
+  "query": "介绍猫咪不同品种的特点和饲养建议",
+  "chapter_count": 5,
+  "subsection_count": 3,
+  "user_background": "普通读者",
+  "extra_requirements": "风格简洁、可执行",
+  "async_mode": false,
+  "timeout_seconds": 1200
+}
+```
+
+如果你的平台超时较短，改为异步：
+
+```json
+{
+  "query": "介绍猫咪不同品种的特点和饲养建议",
+  "async_mode": true,
+  "timeout_seconds": 1200
+}
+```
+
+然后轮询：
+
+```json
+{
+  "task_id": "task_xxx"
+}
+```
+
+#### 3) 鉴权、重试与错误处理
+
+- 请求头传 `X-API-Key: <your-api-key>` 或 `Authorization: Bearer <token>`
+- 下游调用（outliner/generator）已内置重试：`DOWNSTREAM_RETRIES` + `DOWNSTREAM_BACKOFF`
+- 返回值包含清晰 `success/status/error/message` 字段，便于 Poffices 显示失败原因
+
+#### 4) 统一入口返回结构
+
+`/api/poffices/generate` 在同步完成后会直接返回：
+
+- `title`
+- `content`（markdown 文本）
+- `stats`
+- `download`（包含 `url + body`，可直接调用 `/api/download-docx`）
+
+这样 Poffices 只需对接一个主入口接口即可完成参数转换、生成和下载链路。
+
 ### Generator 部署
 
 1. **创建服务**

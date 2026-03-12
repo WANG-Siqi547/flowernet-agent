@@ -6,10 +6,11 @@ import time
 from typing import Any, Dict, List, Generator
 from urllib.parse import quote
 import json
+from uuid import uuid4
 
 import requests
 from docx import Document
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -17,6 +18,15 @@ from pydantic import BaseModel, Field
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
 GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "3600"))  # 1小时超时，适配Ollama耗时生成
+DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "3"))
+DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
+API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
+API_KEY = os.getenv("FLOWERNET_API_KEY", "")
+BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
+
+POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
+POFFICES_TASKS_LOCK = threading.Lock()
 
 
 class GenerateDocRequest(BaseModel):
@@ -34,16 +44,154 @@ class DownloadDocxRequest(BaseModel):
     content: str
 
 
+class PofficesGenerateRequest(BaseModel):
+    query: str = Field(..., min_length=2, description="用户输入查询")
+    chapter_count: int = Field(default=5, ge=1, le=10)
+    subsection_count: int = Field(default=3, ge=1, le=8)
+    user_background: str = Field(default="普通读者")
+    extra_requirements: str = Field(default="")
+    rel_threshold: float = Field(default=0.6, ge=0, le=1)
+    red_threshold: float = Field(default=0.7, ge=0, le=1)
+    async_mode: bool = Field(default=False, description="true=异步任务，false=同步等待结果")
+    timeout_seconds: int = Field(default=1200, ge=60, le=7200, description="同步模式超时秒数")
+
+
+class PofficesTaskStatusRequest(BaseModel):
+    task_id: str
+
+
 app = FastAPI(title="FlowerNet Web UI", version="1.0.0")
 
 
+def verify_auth(
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    authorization: str = Header(default="", alias="Authorization"),
+):
+    if not API_AUTH_ENABLED:
+        return
+
+    api_ok = bool(API_KEY) and x_api_key == API_KEY
+    bearer_ok = bool(BEARER_TOKEN) and authorization == f"Bearer {BEARER_TOKEN}"
+    if not (api_ok or bearer_ok):
+        raise HTTPException(status_code=401, detail="Unauthorized: invalid API key or bearer token")
+
+
+def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+    last_error: str = ""
+    for attempt in range(1, DOWNSTREAM_RETRIES + 1):
+        try:
+            response = requests.post(url, json=payload, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_error = str(exc)
+            if attempt < DOWNSTREAM_RETRIES:
+                time.sleep(DOWNSTREAM_BACKOFF * attempt)
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"下游服务请求失败(重试{DOWNSTREAM_RETRIES}次): {url}, 错误: {last_error}",
+    )
+
+
 def post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail=f"下游服务请求失败: {url}, 错误: {exc}")
+    return post_json_with_retry(url=url, payload=payload, timeout=REQUEST_TIMEOUT)
+
+
+def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, Any]:
+    document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    user_requirements = build_requirements_text(req)
+
+    outline_payload = {
+        "user_background": req.user_background,
+        "user_requirements": user_requirements,
+        "max_sections": req.chapter_count,
+        "max_subsections_per_section": req.subsection_count,
+    }
+    outline_resp = post_json_with_retry(f"{OUTLINER_URL}/generate-outline", outline_payload, timeout_seconds)
+
+    if not outline_resp.get("success"):
+        raise HTTPException(status_code=500, detail=f"大纲生成失败: {outline_resp}")
+
+    title = outline_resp.get("document_title") or f"{req.topic} 文档"
+    structure, content_prompts, _, _ = ensure_exact_structure_and_prompts(
+        title=title,
+        structure=outline_resp.get("structure", {}),
+        content_prompts=outline_resp.get("content_prompts", []),
+        chapter_count=req.chapter_count,
+        subsection_count=req.subsection_count,
+    )
+
+    generate_payload = {
+        "document_id": document_id,
+        "title": title,
+        "structure": structure,
+        "content_prompts": content_prompts,
+        "user_background": req.user_background,
+        "user_requirements": user_requirements,
+        "rel_threshold": req.rel_threshold,
+        "red_threshold": req.red_threshold,
+    }
+    gen_resp = post_json_with_retry(f"{GENERATOR_URL}/generate_document", generate_payload, timeout_seconds)
+
+    if not gen_resp.get("success"):
+        raise HTTPException(status_code=500, detail=f"文档生成失败: {gen_resp}")
+
+    expected_subsections = req.chapter_count * req.subsection_count
+    passed = gen_resp.get("passed_subsections", 0)
+    failed = len(gen_resp.get("failed_subsections", []))
+    forced = len(gen_resp.get("forced_subsections", []))
+    if passed < expected_subsections:
+        raise HTTPException(
+            status_code=500,
+            detail=f"文档生成未达到目标小节数: 通过 {passed}/{expected_subsections}, 失败 {failed}",
+        )
+
+    history_resp = post_json_with_retry(f"{OUTLINER_URL}/history/get", {"document_id": document_id}, 60)
+    history_items = history_resp.get("history", []) if history_resp.get("success") else []
+    markdown_content = build_markdown_document(title, structure, history_items)
+
+    return {
+        "success": True,
+        "document_id": document_id,
+        "title": title,
+        "content": markdown_content,
+        "stats": {
+            "expected_subsections": expected_subsections,
+            "passed_subsections": passed,
+            "failed_subsections": failed,
+            "forced_subsections": forced,
+            "total_iterations": gen_resp.get("total_iterations", 0),
+            "generation_time": gen_resp.get("generation_time", ""),
+        },
+    }
+
+
+def _build_download_url(request: Request) -> str:
+    if PUBLIC_BASE_URL:
+        return f"{PUBLIC_BASE_URL.rstrip('/')}/api/download-docx"
+    return str(request.url_for("download_docx")).rstrip("/")
+
+
+def _build_poffices_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
+    download_url = _build_download_url(request)
+    return {
+        "success": True,
+        "task_status": "completed",
+        "document_id": result.get("document_id", ""),
+        "title": result.get("title", ""),
+        "content": result.get("content", ""),
+        "stats": result.get("stats", {}),
+        "download": {
+            "method": "POST",
+            "url": download_url,
+            "body": {
+                "title": result.get("title", ""),
+                "content": result.get("content", ""),
+            },
+            "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        },
+    }
 
 
 def build_requirements_text(req: GenerateDocRequest) -> str:
@@ -490,8 +638,11 @@ async def generate_stream_endpoint(
     extra_requirements: str = "",
     rel_threshold: float = 0.6,
     red_threshold: float = 0.7,
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    authorization: str = Header(default="", alias="Authorization"),
 ):
     """SSE 端点：实时推送文档生成进度"""
+    verify_auth(x_api_key=x_api_key, authorization=authorization)
     req = GenerateDocRequest(
         topic=topic,
         chapter_count=chapter_count,
@@ -513,78 +664,22 @@ async def generate_stream_endpoint(
 
 
 @app.post("/api/generate")
-def generate_document(req: GenerateDocRequest) -> Dict[str, Any]:
-    document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    user_requirements = build_requirements_text(req)
-
-    outline_payload = {
-        "user_background": req.user_background,
-        "user_requirements": user_requirements,
-        "max_sections": req.chapter_count,
-        "max_subsections_per_section": req.subsection_count,
-    }
-    outline_resp = post_json(f"{OUTLINER_URL}/generate-outline", outline_payload)
-
-    if not outline_resp.get("success"):
-        raise HTTPException(status_code=500, detail=f"大纲生成失败: {outline_resp}")
-
-    title = outline_resp.get("document_title") or f"{req.topic} 文档"
-    structure, content_prompts, _, _ = ensure_exact_structure_and_prompts(
-        title=title,
-        structure=outline_resp.get("structure", {}),
-        content_prompts=outline_resp.get("content_prompts", []),
-        chapter_count=req.chapter_count,
-        subsection_count=req.subsection_count,
-    )
-
-    generate_payload = {
-        "document_id": document_id,
-        "title": title,
-        "structure": structure,
-        "content_prompts": content_prompts,
-        "user_background": req.user_background,
-        "user_requirements": user_requirements,
-        "rel_threshold": req.rel_threshold,
-        "red_threshold": req.red_threshold,
-    }
-    gen_resp = post_json(f"{GENERATOR_URL}/generate_document", generate_payload)
-
-    if not gen_resp.get("success"):
-        raise HTTPException(status_code=500, detail=f"文档生成失败: {gen_resp}")
-
-    expected_subsections = req.chapter_count * req.subsection_count
-    passed = gen_resp.get("passed_subsections", 0)
-    failed = len(gen_resp.get("failed_subsections", []))
-    forced = len(gen_resp.get("forced_subsections", []))
-    if passed < expected_subsections:
-        raise HTTPException(
-            status_code=500,
-            detail=f"文档生成未达到目标小节数: 通过 {passed}/{expected_subsections}, 失败 {failed}"
-        )
-
-    history_resp = post_json(f"{OUTLINER_URL}/history/get", {"document_id": document_id})
-    history_items = history_resp.get("history", []) if history_resp.get("success") else []
-
-    markdown_content = build_markdown_document(title, structure, history_items)
-
-    return {
-        "success": True,
-        "document_id": document_id,
-        "title": title,
-        "content": markdown_content,
-        "stats": {
-            "expected_subsections": expected_subsections,
-            "passed_subsections": gen_resp.get("passed_subsections", 0),
-            "failed_subsections": len(gen_resp.get("failed_subsections", [])),
-            "forced_subsections": forced,
-            "total_iterations": gen_resp.get("total_iterations", 0),
-            "generation_time": gen_resp.get("generation_time", ""),
-        },
-    }
+def generate_document(
+    req: GenerateDocRequest,
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    authorization: str = Header(default="", alias="Authorization"),
+) -> Dict[str, Any]:
+    verify_auth(x_api_key=x_api_key, authorization=authorization)
+    return _build_document(req=req, timeout_seconds=REQUEST_TIMEOUT)
 
 
 @app.post("/api/download-docx")
-def download_docx(req: DownloadDocxRequest):
+def download_docx(
+    req: DownloadDocxRequest,
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    authorization: str = Header(default="", alias="Authorization"),
+):
+    verify_auth(x_api_key=x_api_key, authorization=authorization)
     stream = markdown_to_docx(req.title, req.content)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     safe_title = (req.title or "flowernet_document").strip()[:40]
@@ -598,6 +693,113 @@ def download_docx(req: DownloadDocxRequest):
             "Content-Disposition": f"attachment; filename={ascii_fallback}_{ts}.docx; filename*=UTF-8''{encoded}"
         },
     )
+
+
+def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
+    try:
+        with POFFICES_TASKS_LOCK:
+            POFFICES_TASKS[task_id]["status"] = "running"
+            POFFICES_TASKS[task_id]["message"] = "任务运行中"
+
+        doc_req = GenerateDocRequest(
+            topic=req.query,
+            chapter_count=req.chapter_count,
+            subsection_count=req.subsection_count,
+            user_background=req.user_background,
+            extra_requirements=req.extra_requirements,
+            rel_threshold=req.rel_threshold,
+            red_threshold=req.red_threshold,
+        )
+        result = _build_document(req=doc_req, timeout_seconds=req.timeout_seconds)
+
+        with POFFICES_TASKS_LOCK:
+            POFFICES_TASKS[task_id]["status"] = "completed"
+            POFFICES_TASKS[task_id]["result"] = result
+            POFFICES_TASKS[task_id]["message"] = "任务完成"
+    except Exception as exc:
+        with POFFICES_TASKS_LOCK:
+            POFFICES_TASKS[task_id]["status"] = "failed"
+            POFFICES_TASKS[task_id]["error"] = str(exc)
+            POFFICES_TASKS[task_id]["message"] = "任务失败"
+
+
+@app.post("/api/poffices/generate")
+def poffices_generate(
+    req: PofficesGenerateRequest,
+    request: Request,
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    authorization: str = Header(default="", alias="Authorization"),
+):
+    verify_auth(x_api_key=x_api_key, authorization=authorization)
+
+    if req.async_mode:
+        task_id = f"task_{uuid4().hex}"
+        with POFFICES_TASKS_LOCK:
+            POFFICES_TASKS[task_id] = {
+                "status": "queued",
+                "message": "任务已入队",
+                "created_at": datetime.now().isoformat(),
+                "request": req.model_dump(),
+            }
+
+        th = threading.Thread(target=_run_poffices_task, args=(task_id, req), daemon=True)
+        th.start()
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": "queued",
+            "poll_url": str(request.url_for("poffices_task_status")),
+            "message": "异步任务已创建，请轮询 task status",
+        }
+
+    doc_req = GenerateDocRequest(
+        topic=req.query,
+        chapter_count=req.chapter_count,
+        subsection_count=req.subsection_count,
+        user_background=req.user_background,
+        extra_requirements=req.extra_requirements,
+        rel_threshold=req.rel_threshold,
+        red_threshold=req.red_threshold,
+    )
+    result = _build_document(req=doc_req, timeout_seconds=req.timeout_seconds)
+    return _build_poffices_result(request=request, result=result)
+
+
+@app.post("/api/poffices/task-status", name="poffices_task_status")
+def poffices_task_status(
+    req: PofficesTaskStatusRequest,
+    request: Request,
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    authorization: str = Header(default="", alias="Authorization"),
+):
+    verify_auth(x_api_key=x_api_key, authorization=authorization)
+
+    with POFFICES_TASKS_LOCK:
+        task = POFFICES_TASKS.get(req.task_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="task_id not found")
+
+    status = task.get("status", "unknown")
+    if status == "completed":
+        result = task.get("result", {})
+        return _build_poffices_result(request=request, result=result)
+
+    if status == "failed":
+        return {
+            "success": False,
+            "task_id": req.task_id,
+            "status": "failed",
+            "error": task.get("error", "unknown error"),
+            "message": task.get("message", "任务失败"),
+        }
+
+    return {
+        "success": True,
+        "task_id": req.task_id,
+        "status": status,
+        "message": task.get("message", "处理中"),
+    }
 
 
 if __name__ == "__main__":
