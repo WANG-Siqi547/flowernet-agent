@@ -203,9 +203,14 @@ class FlowerNetGenerator:
                     "temperature": 0.7
                 }
             }
+            headers = {
+                "ngrok-skip-browser-warning": "true",
+                "User-Agent": "FlowerNet-Generator/1.0"
+            }
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json=payload,
+                headers=headers,
                 timeout=300
             )
             response.raise_for_status()
