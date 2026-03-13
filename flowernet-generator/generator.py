@@ -8,6 +8,7 @@ import os
 import requests
 import json
 import subprocess
+import time
 from typing import Optional, Dict, Any, List
 
 try:
@@ -48,6 +49,9 @@ class FlowerNetGenerator:
         self.model = model
         self.public_url = os.getenv('GENERATOR_PUBLIC_URL', 'http://localhost:8002')
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+        self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
+        self.ollama_backoff = float(os.getenv('OLLAMA_BACKOFF', '2.0'))
+        self.ollama_max_backoff = float(os.getenv('OLLAMA_MAX_BACKOFF', '45.0'))
         
         # 根据提供商初始化
         if self.provider == "gemini":
@@ -207,13 +211,29 @@ class FlowerNetGenerator:
                 "ngrok-skip-browser-warning": "true",
                 "User-Agent": "FlowerNet-Generator/1.0"
             }
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json=payload,
-                headers=headers,
-                timeout=300
-            )
-            response.raise_for_status()
+            response = None
+            for attempt in range(1, self.ollama_retries + 1):
+                try:
+                    response = requests.post(
+                        f"{self.ollama_url}/api/generate",
+                        json=payload,
+                        headers=headers,
+                        timeout=300
+                    )
+                    response.raise_for_status()
+                    break
+                except requests.RequestException as exc:
+                    if attempt >= self.ollama_retries:
+                        raise
+                    retry_delay = min(self.ollama_backoff * attempt, self.ollama_max_backoff)
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status_code == 429:
+                        retry_after = getattr(exc.response, "headers", {}).get("Retry-After", "")
+                        try:
+                            retry_delay = max(retry_delay, float(retry_after))
+                        except (TypeError, ValueError):
+                            pass
+                    time.sleep(retry_delay)
 
             if not response.text.strip():
                 return {

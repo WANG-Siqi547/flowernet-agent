@@ -6,6 +6,7 @@ FlowerNet Outliner - 文档大纲生成与内容提示词管理
 
 import os
 import json
+import time
 import requests
 from typing import Optional, Dict, Any, List
 
@@ -39,6 +40,9 @@ class FlowerNetOutliner:
         self.provider = provider.lower()
         self.model = model
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+        self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
+        self.ollama_backoff = float(os.getenv('OLLAMA_BACKOFF', '2.0'))
+        self.ollama_max_backoff = float(os.getenv('OLLAMA_MAX_BACKOFF', '45.0'))
         
         if self.provider == "ollama":
             self.client = None  # Ollama 使用 HTTP API
@@ -411,13 +415,31 @@ class FlowerNetOutliner:
                 "ngrok-skip-browser-warning": "true",
                 "User-Agent": "FlowerNet-Outliner/1.0"
             }
-            response = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json=payload,
-                headers=headers,
-                timeout=300
-            )
-            response.raise_for_status()
+            response = None
+            last_error = ""
+            for attempt in range(1, self.ollama_retries + 1):
+                try:
+                    response = requests.post(
+                        f"{self.ollama_url}/api/generate",
+                        json=payload,
+                        headers=headers,
+                        timeout=300
+                    )
+                    response.raise_for_status()
+                    break
+                except requests.RequestException as exc:
+                    last_error = str(exc)
+                    if attempt >= self.ollama_retries:
+                        raise Exception(last_error)
+                    retry_delay = min(self.ollama_backoff * attempt, self.ollama_max_backoff)
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status_code == 429:
+                        retry_after = getattr(exc.response, "headers", {}).get("Retry-After", "")
+                        try:
+                            retry_delay = max(retry_delay, float(retry_after))
+                        except (TypeError, ValueError):
+                            pass
+                    time.sleep(retry_delay)
 
             if not response.text.strip():
                 raise Exception("Ollama 返回空响应")

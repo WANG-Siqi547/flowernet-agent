@@ -20,6 +20,7 @@ GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "3600"))  # 1小时超时，适配Ollama耗时生成
 DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "3"))
 DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
+DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
@@ -86,7 +87,16 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
         except requests.RequestException as exc:
             last_error = str(exc)
             if attempt < DOWNSTREAM_RETRIES:
-                time.sleep(DOWNSTREAM_BACKOFF * attempt)
+                retry_delay = DOWNSTREAM_BACKOFF * attempt
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code == 429:
+                    retry_after = getattr(exc.response, "headers", {}).get("Retry-After", "")
+                    try:
+                        retry_delay = max(retry_delay, float(retry_after))
+                    except (TypeError, ValueError):
+                        pass
+                retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
+                time.sleep(retry_delay)
 
     raise HTTPException(
         status_code=502,
