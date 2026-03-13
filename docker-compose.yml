@@ -1,43 +1,112 @@
 services:
-  # 1. 验证层 (Verifier) - 负责内容验证
+  ollama:
+    image: ollama/ollama:latest
+    container_name: flower-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - flowernet
+
   verifier-app:
     build: ./flowernet-verifier
     container_name: flower-verifier
-    ports:
-      - "8000:8000"
+    restart: unless-stopped
     environment:
-      - LOG_LEVEL=INFO
-    restart: always
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - PORT=8000
+      - USE_DATABASE=true
+      - DATABASE_PATH=/data/flowernet_history.db
+    volumes:
+      - shared_data:/data
+      - verifier_cache:/root/.cache
     networks:
       - flowernet
-    volumes:
-      - verifier_cache:/root/.cache
 
-  # 2. 控制层 (Controller) - 总控制中心
   controller-app:
     build: ./flowernet-controler
     container_name: flower-controller
-    ports:
-      - "8001:8001"
-    environment:
-      - VERIFIER_URL=http://verifier-app:8000
-      - LOG_LEVEL=INFO
+    restart: unless-stopped
     depends_on:
-      verifier-app:
-        condition: service_healthy
-    restart: always
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      - verifier-app
+    environment:
+      - PORT=8001
+      - VERIFIER_URL=http://verifier-app:8000
+      - USE_DATABASE=true
+      - DATABASE_PATH=/data/flowernet_history.db
+    volumes:
+      - shared_data:/data
+    networks:
+      - flowernet
+
+  outliner-app:
+    build: ./flowernet-outliner
+    container_name: flower-outliner
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    environment:
+      - PORT=8003
+      - OUTLINER_PROVIDER=ollama
+      - OUTLINER_MODEL=qwen2.5:7b
+      - OLLAMA_URL=http://ollama:11434
+      - USE_DATABASE=true
+      - DATABASE_PATH=/data/flowernet_history.db
+      - OLLAMA_RETRIES=6
+      - OLLAMA_BACKOFF=3
+      - OLLAMA_MAX_BACKOFF=60
+    volumes:
+      - shared_data:/data
+    networks:
+      - flowernet
+
+  generator-app:
+    build: ./flowernet-generator
+    container_name: flower-generator
+    restart: unless-stopped
+    depends_on:
+      - ollama
+      - verifier-app
+      - controller-app
+      - outliner-app
+    environment:
+      - PORT=8002
+      - GENERATOR_PROVIDER=ollama
+      - GENERATOR_MODEL=qwen2.5:7b
+      - OLLAMA_URL=http://ollama:11434
+      - VERIFIER_URL=http://verifier-app:8000
+      - CONTROLLER_URL=http://controller-app:8001
+      - OUTLINER_URL=http://outliner-app:8003
+      - USE_DATABASE=true
+      - DATABASE_PATH=/data/flowernet_history.db
+      - OLLAMA_RETRIES=6
+      - OLLAMA_BACKOFF=3
+      - OLLAMA_MAX_BACKOFF=60
+    volumes:
+      - shared_data:/data
+    networks:
+      - flowernet
+
+  web-app:
+    build: ./flowernet-web
+    container_name: flower-web
+    restart: unless-stopped
+    depends_on:
+      - outliner-app
+      - generator-app
+    ports:
+      - "8010:8010"
+    environment:
+      - OUTLINER_URL=http://outliner-app:8003
+      - GENERATOR_URL=http://generator-app:8002
+      - REQUEST_TIMEOUT=3600
+      - API_AUTH_ENABLED=false
+      - DOWNSTREAM_RETRIES=6
+      - DOWNSTREAM_BACKOFF=2
+      - DOWNSTREAM_MAX_BACKOFF=60
+    volumes:
+      - shared_data:/data
     networks:
       - flowernet
 
@@ -46,5 +115,9 @@ networks:
     driver: bridge
 
 volumes:
+  ollama_data:
+    driver: local
+  shared_data:
+    driver: local
   verifier_cache:
     driver: local
