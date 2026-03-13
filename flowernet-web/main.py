@@ -53,8 +53,8 @@ class PofficesGenerateRequest(BaseModel):
     extra_requirements: str = Field(default="")
     rel_threshold: float = Field(default=0.6, ge=0, le=1)
     red_threshold: float = Field(default=0.7, ge=0, le=1)
-    async_mode: bool = Field(default=False, description="true=异步任务，false=同步等待结果")
-    timeout_seconds: int = Field(default=1200, ge=60, le=7200, description="同步模式超时秒数")
+    async_mode: bool = Field(default=True, description="true=异步任务，false=同步等待结果")
+    timeout_seconds: int = Field(default=600, ge=60, le=7200, description="同步模式超时秒数")
 
 
 class PofficesTaskStatusRequest(BaseModel):
@@ -109,7 +109,7 @@ def post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, Any]:
-    document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
     user_requirements = build_requirements_text(req)
 
     outline_payload = {
@@ -370,7 +370,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         msg = json.dumps({'type': 'start', 'message': '开始生成大纲...'})
         yield f"data: {msg}\n\n"
         
-        document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
         user_requirements = build_requirements_text(req)
 
         # 第1步：生成大纲
@@ -710,6 +710,9 @@ def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
         with POFFICES_TASKS_LOCK:
             POFFICES_TASKS[task_id]["status"] = "running"
             POFFICES_TASKS[task_id]["message"] = "任务运行中"
+            POFFICES_TASKS[task_id]["started_at"] = datetime.now().isoformat()
+
+        start_time = time.time()
 
         doc_req = GenerateDocRequest(
             topic=req.query,
@@ -722,10 +725,19 @@ def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
         )
         result = _build_document(req=doc_req, timeout_seconds=req.timeout_seconds)
 
+        elapsed = time.time() - start_time
+        if elapsed > req.timeout_seconds:
+            raise TimeoutError(f"任务超时: {elapsed:.1f}s > {req.timeout_seconds}s")
+
         with POFFICES_TASKS_LOCK:
             POFFICES_TASKS[task_id]["status"] = "completed"
             POFFICES_TASKS[task_id]["result"] = result
             POFFICES_TASKS[task_id]["message"] = "任务完成"
+    except HTTPException as exc:
+        with POFFICES_TASKS_LOCK:
+            POFFICES_TASKS[task_id]["status"] = "failed"
+            POFFICES_TASKS[task_id]["error"] = str(exc.detail)
+            POFFICES_TASKS[task_id]["message"] = "任务失败"
     except Exception as exc:
         with POFFICES_TASKS_LOCK:
             POFFICES_TASKS[task_id]["status"] = "failed"
@@ -749,6 +761,8 @@ def poffices_generate(
                 "status": "queued",
                 "message": "任务已入队",
                 "created_at": datetime.now().isoformat(),
+                "started_at": None,
+                "timeout_seconds": req.timeout_seconds,
                 "request": req.model_dump(),
             }
 
@@ -771,8 +785,23 @@ def poffices_generate(
         rel_threshold=req.rel_threshold,
         red_threshold=req.red_threshold,
     )
-    result = _build_document(req=doc_req, timeout_seconds=req.timeout_seconds)
-    return _build_poffices_result(request=request, result=result)
+    try:
+        result = _build_document(req=doc_req, timeout_seconds=req.timeout_seconds)
+        return _build_poffices_result(request=request, result=result)
+    except HTTPException as exc:
+        return {
+            "success": False,
+            "task_status": "failed",
+            "error": str(exc.detail),
+            "message": "文档生成失败",
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "task_status": "failed",
+            "error": str(exc),
+            "message": "文档生成异常",
+        }
 
 
 @app.post("/api/poffices/task-status", name="poffices_task_status")
@@ -791,6 +820,24 @@ def poffices_task_status(
         raise HTTPException(status_code=404, detail="task_id not found")
 
     status = task.get("status", "unknown")
+
+    if status in {"queued", "running"}:
+        started_at = task.get("started_at") or task.get("created_at")
+        timeout_seconds = int(task.get("timeout_seconds") or 0)
+        if started_at and timeout_seconds > 0:
+            try:
+                elapsed = (datetime.now() - datetime.fromisoformat(started_at)).total_seconds()
+                if elapsed > timeout_seconds + 30:
+                    with POFFICES_TASKS_LOCK:
+                        if req.task_id in POFFICES_TASKS and POFFICES_TASKS[req.task_id].get("status") in {"queued", "running"}:
+                            POFFICES_TASKS[req.task_id]["status"] = "failed"
+                            POFFICES_TASKS[req.task_id]["error"] = f"任务超时: {int(elapsed)}s"
+                            POFFICES_TASKS[req.task_id]["message"] = "任务超时"
+                    status = "failed"
+                    task = POFFICES_TASKS.get(req.task_id, task)
+            except ValueError:
+                pass
+
     if status == "completed":
         result = task.get("result", {})
         return _build_poffices_result(request=request, result=result)
