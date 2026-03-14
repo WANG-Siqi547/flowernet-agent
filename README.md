@@ -279,6 +279,8 @@ python3 show_ollama_url.py
 
 项目代码已经内置了 ngrok 所需请求头，因此通过该 HTTPS 地址访问 Ollama 时不会再触发常见的浏览器警告拦截。
 
+默认会自动启动一个本地桥接，将 `localhost(IPv6)` 转发到真正的 `127.0.0.1:11434`，这样 ngrok 能稳定连到本机上速度更快的 Ollama 进程。
+
 #### 2) Poffices Block 请求映射
 
 在 Poffices Block 中，将用户输入的 `query` 映射到 FlowerNet 的 `topic`（以及 `user_requirements` 语义）：
@@ -351,7 +353,7 @@ python3 show_ollama_url.py
 3. **环境变量**
    ```
   GENERATOR_PROVIDER=ollama
-  GENERATOR_MODEL=qwen2.5:7b
+  GENERATOR_MODEL=qwen2.5:3b
   OLLAMA_URL=https://你的-ollama-ngrok地址.ngrok-free.dev
    ```
 
@@ -371,7 +373,7 @@ python3 show_ollama_url.py
 **Outliner 环境变量**:
 ```
 OUTLINER_PROVIDER=ollama
-OUTLINER_MODEL=qwen2.5:7b
+OUTLINER_MODEL=qwen2.5:3b
 OLLAMA_URL=https://你的-ollama-ngrok地址.ngrok-free.dev
 USE_DATABASE=false
 DATABASE_PATH=flowernet_history.db

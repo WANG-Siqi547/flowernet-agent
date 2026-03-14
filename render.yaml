@@ -67,7 +67,7 @@ services:
       - key: OUTLINER_PROVIDER
         value: ollama
       - key: OUTLINER_MODEL
-        value: qwen2.5:7b
+        value: qwen2.5:3b
       - key: OLLAMA_URL
         value: https://unhomogenized-trismic-sarina.ngrok-free.dev
       - key: OLLAMA_RETRIES
@@ -98,7 +98,7 @@ services:
       - key: GENERATOR_PROVIDER
         value: ollama
       - key: GENERATOR_MODEL
-        value: qwen2.5:7b
+        value: qwen2.5:3b
       - key: OLLAMA_URL
         value: https://unhomogenized-trismic-sarina.ngrok-free.dev
       - key: OLLAMA_RETRIES
