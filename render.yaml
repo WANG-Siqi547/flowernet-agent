@@ -69,7 +69,13 @@ services:
       - key: OUTLINER_MODEL
         value: qwen2.5:7b
       - key: OLLAMA_URL
-        value: http://localhost:11434
+        value: https://unhomogenized-trismic-sarina.ngrok-free.dev
+      - key: OLLAMA_RETRIES
+        value: "6"
+      - key: OLLAMA_BACKOFF
+        value: "3.0"
+      - key: OLLAMA_MAX_BACKOFF
+        value: "45.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -94,7 +100,13 @@ services:
       - key: GENERATOR_MODEL
         value: qwen2.5:7b
       - key: OLLAMA_URL
-        value: http://localhost:11434
+        value: https://unhomogenized-trismic-sarina.ngrok-free.dev
+      - key: OLLAMA_RETRIES
+        value: "6"
+      - key: OLLAMA_BACKOFF
+        value: "3.0"
+      - key: OLLAMA_MAX_BACKOFF
+        value: "45.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -126,8 +138,16 @@ services:
         value: https://flowernet-outliner.onrender.com
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
+      - key: PUBLIC_BASE_URL
+        value: https://flowernet-web.onrender.com
       - key: REQUEST_TIMEOUT
         value: "3600"
+      - key: DOWNSTREAM_RETRIES
+        value: "3"
+      - key: DOWNSTREAM_BACKOFF
+        value: "2.0"
+      - key: DOWNSTREAM_MAX_BACKOFF
+        value: "30.0"
       - key: NO_PROXY
         value: "localhost,127.0.0.1"
     healthCheckPath: /health

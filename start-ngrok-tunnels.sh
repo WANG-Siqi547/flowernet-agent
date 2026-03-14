@@ -8,7 +8,18 @@
 #
 # 使用方法：./start-ngrok-tunnels.sh
 
-NGROK_TOKEN="38bwDJs8sMknK17RpFvQYzbje6A_4n2bZFtn2gao8U4qCf7gR"
+resolve_ngrok() {
+    for candidate in /usr/local/bin/ngrok /opt/homebrew/bin/ngrok "$(command -v ngrok 2>/dev/null)"; do
+        if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" version >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+NGROK_BIN="$(resolve_ngrok)"
+NGROK_TOKEN="${NGROK_AUTHTOKEN:-${NGROK_TOKEN:-}}"
 
 # 颜色定义
 GREEN='\033[0;32m'
@@ -21,7 +32,7 @@ echo -e "${BLUE}═════════════════════�
 echo ""
 
 # 检查 ngrok 是否安装
-if ! command -v ngrok &> /dev/null; then
+if [ -z "$NGROK_BIN" ]; then
     echo "❌ ngrok 未安装"
     echo ""
     echo "安装方法 (macOS):"
@@ -31,15 +42,16 @@ if ! command -v ngrok &> /dev/null; then
     exit 1
 fi
 
-echo -e "${GREEN}✓${NC} ngrok 已安装: $(ngrok --version)"
+echo -e "${GREEN}✓${NC} ngrok 已安装: $($NGROK_BIN version)"
 echo ""
 
 # 启动 Controller 隧道
 echo "启动 Controller 隧道 (本地端口 8001)..."
-ngrok authtoken "$NGROK_TOKEN" --log=stdout > /dev/null 2>&1
+if [ -n "$NGROK_TOKEN" ]; then
+    "$NGROK_BIN" config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1 || true
+fi
 
-ngrok http 8001 \
-    --authtoken="$NGROK_TOKEN" \
+"$NGROK_BIN" http 8001 \
     --region=us \
     --log=stdout \
     --log-format=json \
@@ -50,8 +62,7 @@ CONTROLLER_PID=$!
 echo "启动 Verifier 隧道 (本地端口 8000)..."
 sleep 2
 
-ngrok http 8000 \
-    --authtoken="$NGROK_TOKEN" \
+"$NGROK_BIN" http 8000 \
     --region=us \
     --log=stdout \
     --log-format=json \

@@ -10,6 +10,22 @@ import time
 import requests
 from typing import Optional, Dict, Any, List
 
+
+def _is_render_runtime() -> bool:
+    return any(os.getenv(key) for key in ("RENDER", "RENDER_SERVICE_ID", "RENDER_EXTERNAL_HOSTNAME"))
+
+
+def _is_local_ollama_url(url: str) -> bool:
+    normalized = (url or "").strip().lower()
+    return (
+        normalized.startswith("http://localhost")
+        or normalized.startswith("https://localhost")
+        or normalized.startswith("http://127.0.0.1")
+        or normalized.startswith("https://127.0.0.1")
+        or normalized.startswith("http://0.0.0.0")
+        or normalized.startswith("https://0.0.0.0")
+    )
+
 try:
     from google import genai
     from google.genai import types
@@ -39,12 +55,17 @@ class FlowerNetOutliner:
         """
         self.provider = provider.lower()
         self.model = model
-        self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+        self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434').rstrip('/')
         self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
         self.ollama_backoff = float(os.getenv('OLLAMA_BACKOFF', '2.0'))
         self.ollama_max_backoff = float(os.getenv('OLLAMA_MAX_BACKOFF', '45.0'))
         
         if self.provider == "ollama":
+            if _is_render_runtime() and _is_local_ollama_url(self.ollama_url):
+                raise ValueError(
+                    "Render 环境下 OLLAMA_URL 不能指向 localhost/127.0.0.1。"
+                    "请先运行 ./start-ollama-ngrok.sh，然后把生成的公网地址配置到 OLLAMA_URL。"
+                )
             self.client = None  # Ollama 使用 HTTP API
             print(f"✅ Outliner 初始化成功 (Ollama - 本地):")
             print(f"  - Model: {self.model}")

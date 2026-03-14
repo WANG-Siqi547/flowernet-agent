@@ -77,6 +77,26 @@ def verify_auth(
         raise HTTPException(status_code=401, detail="Unauthorized: invalid API key or bearer token")
 
 
+def _extract_response_error(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            detail = payload.get("detail")
+            error = payload.get("error")
+            message = payload.get("message")
+            if isinstance(detail, list):
+                return json.dumps(detail, ensure_ascii=False)
+            if detail:
+                return str(detail)
+            if error:
+                return str(error)
+            if message:
+                return str(message)
+        return json.dumps(payload, ensure_ascii=False)[:800]
+    except ValueError:
+        return response.text[:800]
+
+
 def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     last_error: str = ""
     for attempt in range(1, DOWNSTREAM_RETRIES + 1):
@@ -85,7 +105,12 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
             response.raise_for_status()
             return response.json()
         except requests.RequestException as exc:
-            last_error = str(exc)
+            response = getattr(exc, "response", None)
+            if response is not None:
+                response_body = _extract_response_error(response)
+                last_error = f"HTTP {response.status_code} from {url}: {response_body}"
+            else:
+                last_error = str(exc)
             if attempt < DOWNSTREAM_RETRIES:
                 retry_delay = DOWNSTREAM_BACKOFF * attempt
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)

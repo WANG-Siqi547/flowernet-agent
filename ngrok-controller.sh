@@ -2,7 +2,18 @@
 # Controller Ngrok 隧道
 # 用法: ./ngrok-controller.sh
 
-NGROK_TOKEN="38bwDJs8sMknK17RpFvQYzbje6A_4n2bZFtn2gao8U4qCf7gR"
+resolve_ngrok() {
+    for candidate in /usr/local/bin/ngrok /opt/homebrew/bin/ngrok "$(command -v ngrok 2>/dev/null)"; do
+        if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" version >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+NGROK_BIN="$(resolve_ngrok)"
+NGROK_TOKEN="${NGROK_AUTHTOKEN:-${NGROK_TOKEN:-}}"
 
 echo "🚀 启动 Controller 隧道 (端口 8001)..."
 echo ""
@@ -12,8 +23,11 @@ echo "  - 按 Ctrl+C 停止隧道"
 echo ""
 
 # 尝试直接执行 ngrok (如果已安装)
-if command -v ngrok &> /dev/null; then
-    exec ngrok http 8001 --authtoken="$NGROK_TOKEN" --region=us
+if [ -n "$NGROK_BIN" ]; then
+    if [ -n "$NGROK_TOKEN" ]; then
+        "$NGROK_BIN" config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1 || true
+    fi
+    exec "$NGROK_BIN" http 8001 --region=us
 else
     echo "❌ ngrok 未找到"
     echo ""

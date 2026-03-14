@@ -257,6 +257,28 @@ FLOWERNET_BEARER_TOKEN=your-strong-bearer-token
 PUBLIC_BASE_URL=https://your-flowernet-web.onrender.com
 ```
 
+#### 1.1) 如果你坚持在 Render 上继续使用本地 Ollama
+
+`flowernet-outliner` 和 `flowernet-generator` 绝对不能继续使用：
+
+```bash
+OLLAMA_URL=http://localhost:11434
+```
+
+必须先在你的电脑上把本地 Ollama 暴露为公网 HTTPS 地址，再把该地址填入 Render：
+
+```bash
+./start-ollama-ngrok.sh
+python3 show_ollama_url.py
+```
+
+然后把输出的 `OLLAMA_URL=https://xxx.ngrok-free.dev` 同时配置到：
+
+- `flowernet-outliner`
+- `flowernet-generator`
+
+项目代码已经内置了 ngrok 所需请求头，因此通过该 HTTPS 地址访问 Ollama 时不会再触发常见的浏览器警告拦截。
+
 #### 2) Poffices Block 请求映射
 
 在 Poffices Block 中，将用户输入的 `query` 映射到 FlowerNet 的 `topic`（以及 `user_requirements` 语义）：
@@ -328,9 +350,9 @@ PUBLIC_BASE_URL=https://your-flowernet-web.onrender.com
 
 3. **环境变量**
    ```
-   GOOGLE_API_KEY=你的密钥
-   GENERATOR_PROVIDER=gemini
-   GENERATOR_MODEL=models/gemini-2.5-flash
+  GENERATOR_PROVIDER=ollama
+  GENERATOR_MODEL=qwen2.5:7b
+  OLLAMA_URL=https://你的-ollama-ngrok地址.ngrok-free.dev
    ```
 
 4. **验证**
@@ -348,8 +370,9 @@ PUBLIC_BASE_URL=https://your-flowernet-web.onrender.com
 
 **Outliner 环境变量**:
 ```
-GOOGLE_API_KEY=你的密钥
-OUTLINER_MODEL=models/gemini-2.5-flash
+OUTLINER_PROVIDER=ollama
+OUTLINER_MODEL=qwen2.5:7b
+OLLAMA_URL=https://你的-ollama-ngrok地址.ngrok-free.dev
 USE_DATABASE=false
 DATABASE_PATH=flowernet_history.db
 ```

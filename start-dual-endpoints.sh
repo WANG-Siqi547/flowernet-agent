@@ -6,7 +6,18 @@
 
 set -e
 
-NGROK_TOKEN="38bwDJs8sMknK17RpFvQYzbje6A_4n2bZFtn2gao8U4qCf7gR"
+resolve_ngrok() {
+    for candidate in /usr/local/bin/ngrok /opt/homebrew/bin/ngrok "$(command -v ngrok 2>/dev/null)"; do
+        if [ -n "$candidate" ] && [ -x "$candidate" ] && "$candidate" version >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+NGROK_BIN="$(resolve_ngrok || true)"
+NGROK_TOKEN="${NGROK_AUTHTOKEN:-${NGROK_TOKEN:-}}"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -50,7 +61,7 @@ fi
 
 # 步骤 2: 检查/安装 Ngrok
 print_info "检查 Ngrok..."
-if ! command -v ngrok &> /dev/null; then
+if [ -z "$NGROK_BIN" ]; then
     print_error "Ngrok 未安装，现在安装..."
     
     # 检查是否有 Homebrew
@@ -67,14 +78,18 @@ if ! command -v ngrok &> /dev/null; then
         exit 1
     fi
 else
-    NGROK_VERSION=$(ngrok --version 2>&1 | head -1)
+    NGROK_VERSION=$($NGROK_BIN version 2>&1 | head -1)
     print_success "Ngrok 已安装: $NGROK_VERSION"
 fi
 
 # 步骤 3: 配置 Ngrok Token
-print_info "配置 Ngrok Token..."
-ngrok config add-authtoken "$NGROK_TOKEN" 2>/dev/null || true
-print_success "Ngrok Token 已配置"
+if [ -n "$NGROK_TOKEN" ]; then
+    print_info "配置 Ngrok Token..."
+    "$NGROK_BIN" config add-authtoken "$NGROK_TOKEN" 2>/dev/null || true
+    print_success "Ngrok Token 已配置"
+else
+    print_info "未显式提供 NGROK_AUTHTOKEN，使用现有 ngrok 本地配置"
+fi
 
 # 步骤 4: 检查 Docker 服务
 print_info "检查 Docker 服务..."
