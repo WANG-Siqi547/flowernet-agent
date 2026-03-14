@@ -46,7 +46,7 @@ class DownloadDocxRequest(BaseModel):
 
 
 class PofficesGenerateRequest(BaseModel):
-    query: str = Field(..., min_length=2, description="用户输入查询")
+    query: str = Field(default="", description="用户输入查询")
     chapter_count: int = Field(default=5, ge=1, le=10)
     subsection_count: int = Field(default=3, ge=1, le=8)
     user_background: str = Field(default="普通读者")
@@ -753,6 +753,17 @@ def poffices_generate(
     authorization: str = Header(default="", alias="Authorization"),
 ):
     verify_auth(x_api_key=x_api_key, authorization=authorization)
+
+    normalized_query = (req.query or "").strip()
+    if len(normalized_query) < 2:
+        return {
+            "success": False,
+            "task_status": "failed",
+            "error": "query 不能为空且至少 2 个字符",
+            "message": "请求参数无效",
+        }
+
+    req = req.model_copy(update={"query": normalized_query})
 
     if req.async_mode:
         task_id = f"task_{uuid4().hex}"
