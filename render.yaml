@@ -41,8 +41,6 @@ services:
     dockerfilePath: ./flowernet-controler/Dockerfile
     dockerContext: ./flowernet-controler
     envVars:
-      - key: PORT
-        value: 8001
       - key: CONTROLLER_PUBLIC_URL
         value: https://flowernet-controller.onrender.com
       - key: VERIFIER_URL
