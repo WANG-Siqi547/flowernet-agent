@@ -9,7 +9,10 @@ import requests
 import json
 import subprocess
 import time
-from typing import Optional, Dict, Any, List
+import random
+from typing import Optional, Dict, Any, List, Tuple
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 
 def _is_render_runtime() -> bool:
@@ -49,7 +52,7 @@ class FlowerNetGenerator:
     - Ollama (本地运行，完全免费无限制)
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "qwen2.5:7b", provider: str = "ollama"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "models/gemini-2.5-flash-lite", provider: str = "gemini,openrouter"):
         """
         初始化生成器
         
@@ -59,62 +62,91 @@ class FlowerNetGenerator:
                 - Claude: "claude-3-5-sonnet-20241022"
                 - Gemini: "models/gemini-2.5-flash" (免费, 最新), "models/gemini-2.5-pro" (免费但有限制)
                 - Ollama: "qwen2.5:7b", "llama3.1:8b", "mistral:7b" 等
-            provider: LLM 提供商 ("claude", "gemini", 或 "ollama")
+            provider: LLM 提供商，支持单个或链式（如 "gemini,openrouter"）
         """
-        self.provider = provider.lower()
+        requested_provider = provider or os.getenv("GENERATOR_PROVIDER_CHAIN", "gemini,openrouter")
+        parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
+        self.provider_chain = parsed_chain or ["gemini", "openrouter"]
+
         self.model = model
+        self.gemini_model = os.getenv("GENERATOR_GEMINI_MODEL", model or "models/gemini-2.5-flash-lite")
+        self.openrouter_model = os.getenv("GENERATOR_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-32b:free"))
+        self.ollama_model = os.getenv("GENERATOR_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
+        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        self.openrouter_api_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions").rstrip("/")
+        self.openrouter_referrer = os.getenv("OPENROUTER_HTTP_REFERER", os.getenv("PUBLIC_BASE_URL", "https://flowernet-web.onrender.com"))
+        self.openrouter_app_name = os.getenv("OPENROUTER_APP_NAME", "FlowerNet")
         self.public_url = os.getenv('GENERATOR_PUBLIC_URL', 'http://localhost:8002')
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434').rstrip('/')
         self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
         self.ollama_backoff = float(os.getenv('OLLAMA_BACKOFF', '2.0'))
         self.ollama_max_backoff = float(os.getenv('OLLAMA_MAX_BACKOFF', '45.0'))
-        
-        # 根据提供商初始化
-        if self.provider == "gemini":
-            if not GEMINI_AVAILABLE:
-                raise ImportError("需要安装 google-genai: pip install google-genai")
-            
-            self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
-            if not self.api_key:
-                raise ValueError("请设置 GOOGLE_API_KEY 环境变量或传入 api_key 参数")
-            
-            self.client = genai.Client(api_key=self.api_key)
-            
-            print(f"✅ Generator 初始化 (Google Gemini - 免费):")
-            print(f"  - Model: {self.model}")
-            print(f"  - Provider: Google Gemini")
-            print(f"  - Public URL: {self.public_url}")
-            
-        elif self.provider == "claude":
-            if not ANTHROPIC_AVAILABLE:
-                raise ImportError("需要安装 anthropic: pip install anthropic")
-            
-            self.api_key = api_key or os.getenv('ANTHROPIC_API_KEY', '')
-            if not self.api_key:
-                raise ValueError("请设置 ANTHROPIC_API_KEY 环境变量或传入 api_key 参数")
-            
-            self.client = anthropic.Anthropic(api_key=self.api_key)
-            
-            print(f"✅ Generator 初始化 (Anthropic Claude):")
-            print(f"  - Model: {self.model}")
-            print(f"  - Provider: Anthropic Claude")
-            print(f"  - Public URL: {self.public_url}")
-            
-        elif self.provider == "ollama":
-            if _is_render_runtime() and _is_local_ollama_url(self.ollama_url):
-                raise ValueError(
-                    "Render 环境下 OLLAMA_URL 不能指向 localhost/127.0.0.1。"
-                    "请先运行 ./start-ollama-ngrok.sh，然后把生成的公网地址配置到 OLLAMA_URL。"
-                )
-            self.client = None  # Ollama 使用HTTP API，不需要SDK客户端
-            
-            print(f"✅ Generator 初始化 (Ollama - 本地免费):")
-            print(f"  - Model: {self.model}")
-            print(f"  - Provider: Ollama (本地)")
-            print(f"  - Ollama URL: {self.ollama_url}")
-            print(f"  - Public URL: {self.public_url}")
-        else:
-            raise ValueError(f"不支持的提供商: {provider}。请使用 'claude', 'gemini', 或 'ollama'")
+        self.provider_retries = int(os.getenv('PROVIDER_RETRIES', '4'))
+        self.provider_backoff = float(os.getenv('PROVIDER_BACKOFF', '2.0'))
+        self.provider_max_backoff = float(os.getenv('PROVIDER_MAX_BACKOFF', '90.0'))
+        self.provider_jitter = float(os.getenv('PROVIDER_JITTER', '0.35'))
+        self.provider_min_interval = float(os.getenv('PROVIDER_MIN_INTERVAL', '1.0'))
+        self._provider_next_allowed: Dict[str, float] = {}
+
+        self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
+        self.client = genai.Client(api_key=self.api_key) if (self.api_key and GEMINI_AVAILABLE) else None
+        self.claude_api_key = os.getenv('ANTHROPIC_API_KEY', '')
+        self.claude_client = anthropic.Anthropic(api_key=self.claude_api_key) if (self.claude_api_key and ANTHROPIC_AVAILABLE) else None
+        self.last_provider_used = ""
+
+        print("✅ Generator 初始化:")
+        print(f"  - Provider chain: {self.provider_chain}")
+        print(f"  - Gemini model: {self.gemini_model}")
+        print(f"  - OpenRouter model: {self.openrouter_model}")
+        print(f"  - Ollama model: {self.ollama_model}")
+        print(f"  - Ollama URL: {self.ollama_url}")
+        print(f"  - Public URL: {self.public_url}")
+
+    @staticmethod
+    def _is_transient_provider_error(message: str) -> bool:
+        text = (message or "").lower()
+        transient_tokens = [
+            "429", "rate", "resource_exhausted", "quota", "too many requests",
+            "timeout", "timed out", "temporarily", "503", "502", "504", "connection"
+        ]
+        return any(token in text for token in transient_tokens)
+
+    @staticmethod
+    def _parse_retry_after_seconds(retry_after: Any) -> Optional[float]:
+        if retry_after is None:
+            return None
+        value = str(retry_after).strip()
+        if not value:
+            return None
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            pass
+        try:
+            dt = parsedate_to_datetime(value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            return max(0.0, (dt - now).total_seconds())
+        except Exception:
+            return None
+
+    def _compute_retry_delay(self, attempt: int, retry_after: Optional[float] = None) -> float:
+        base = self.provider_backoff * (2 ** max(0, attempt - 1))
+        jitter = random.uniform(0, self.provider_jitter)
+        delay = min(base + jitter, self.provider_max_backoff)
+        if retry_after is not None:
+            delay = max(delay, min(float(retry_after), self.provider_max_backoff))
+        return delay
+
+    def _wait_for_provider_slot(self, provider: str):
+        next_allowed_at = self._provider_next_allowed.get(provider, 0.0)
+        now = time.time()
+        if next_allowed_at > now:
+            time.sleep(next_allowed_at - now)
+
+    def _mark_provider_slot(self, provider: str, extra_delay: float = 0.0):
+        self._provider_next_allowed[provider] = time.time() + max(self.provider_min_interval, extra_delay)
 
     def generate_draft(self, prompt: str, max_tokens: int = 2000) -> Dict[str, Any]:
         """
@@ -128,14 +160,49 @@ class FlowerNetGenerator:
             包含生成文本和元数据的字典
         """
         try:
-            if self.provider == "gemini":
-                return self._generate_with_gemini(prompt, max_tokens)
-            elif self.provider == "claude":
-                return self._generate_with_claude(prompt, max_tokens)
-            elif self.provider == "ollama":
-                return self._generate_with_ollama(prompt, max_tokens)
-            else:
-                raise ValueError(f"未知的提供商: {self.provider}")
+            errors: List[str] = []
+            for provider in self.provider_chain:
+                provider_errors: List[str] = []
+                for attempt in range(1, self.provider_retries + 1):
+                    self._wait_for_provider_slot(provider)
+
+                    if provider == "gemini":
+                        result = self._generate_with_gemini(prompt, max_tokens)
+                    elif provider == "openrouter":
+                        result = self._generate_with_openrouter(prompt, max_tokens)
+                    elif provider == "claude":
+                        result = self._generate_with_claude(prompt, max_tokens)
+                    elif provider == "ollama":
+                        result = self._generate_with_ollama(prompt, max_tokens)
+                    else:
+                        result = {"success": False, "error": f"Unknown provider: {provider}", "draft": ""}
+
+                    if result.get("success"):
+                        self._mark_provider_slot(provider)
+                        self.last_provider_used = provider
+                        meta = result.get("metadata") or {}
+                        if "fallback_chain" not in meta:
+                            meta["fallback_chain"] = self.provider_chain
+                        result["metadata"] = meta
+                        return result
+
+                    error_message = result.get("error", "unknown error")
+                    provider_errors.append(str(error_message))
+                    should_retry = self._is_transient_provider_error(str(error_message)) and attempt < self.provider_retries
+                    if should_retry:
+                        retry_delay = self._compute_retry_delay(attempt, retry_after=result.get("retry_after"))
+                        self._mark_provider_slot(provider, extra_delay=retry_delay)
+                        time.sleep(retry_delay)
+                        continue
+                    break
+
+                errors.append(f"{provider}: {' | '.join(provider_errors)}")
+
+            return {
+                "success": False,
+                "error": "All providers failed: " + " | ".join(errors),
+                "draft": ""
+            }
         except Exception as e:
             return {
                 "success": False,
@@ -146,6 +213,21 @@ class FlowerNetGenerator:
     def _generate_with_gemini(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
         """使用 Google Gemini 生成内容"""
         try:
+            if not GEMINI_AVAILABLE:
+                return {
+                    "success": False,
+                    "error": "google-genai not installed",
+                    "draft": ""
+                }
+            if not self.api_key:
+                return {
+                    "success": False,
+                    "error": "GOOGLE_API_KEY not set",
+                    "draft": ""
+                }
+            if self.client is None:
+                self.client = genai.Client(api_key=self.api_key)
+
             # Gemini 的 max_output_tokens 限制会导致输出过短
             # 如果 max_tokens < 4000，不设置限制让模型自由发挥
             # 如果 max_tokens >= 4000，则设置限制
@@ -157,7 +239,7 @@ class FlowerNetGenerator:
                 config_params["max_output_tokens"] = max_tokens
             
             response = self.client.models.generate_content(
-                model=self.model,
+                model=self.gemini_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(**config_params)
             )
@@ -169,6 +251,7 @@ class FlowerNetGenerator:
                 "draft": draft_text,
                 "metadata": {
                     "model": self.model,
+                    "actual_model": self.gemini_model,
                     "provider": "gemini",
                     "prompt_tokens": response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0,
                     "output_tokens": response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0,
@@ -178,14 +261,94 @@ class FlowerNetGenerator:
         except Exception as e:
             return {
                 "success": False,
-                "error": f"猫咪报错🐱 ：Gemini API Error: {str(e)}， 错了咪！",
+                "error": f"Gemini API Error: {str(e)}",
+                "draft": ""
+            }
+
+    def _generate_with_openrouter(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
+        """使用 OpenRouter（OpenAI-compatible）生成内容"""
+        try:
+            if not self.openrouter_api_key:
+                return {
+                    "success": False,
+                    "error": "OPENROUTER_API_KEY not set",
+                    "draft": ""
+                }
+
+            payload = {
+                "model": self.openrouter_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": max_tokens,
+            }
+            headers = {
+                "Authorization": f"Bearer {self.openrouter_api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": self.openrouter_referrer,
+                "X-Title": self.openrouter_app_name,
+            }
+
+            response = requests.post(self.openrouter_api_url, json=payload, headers=headers, timeout=120)
+            response.raise_for_status()
+            data = response.json()
+            choice = ((data.get("choices") or [{}])[0] or {})
+            msg = choice.get("message") or {}
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
+                content = "".join(parts)
+            draft_text = str(content).strip()
+            if not draft_text:
+                return {
+                    "success": False,
+                    "error": "OpenRouter empty response",
+                    "draft": ""
+                }
+
+            usage = data.get("usage") or {}
+            return {
+                "success": True,
+                "draft": draft_text,
+                "metadata": {
+                    "model": self.openrouter_model,
+                    "provider": "openrouter",
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+            }
+        except requests.RequestException as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            retry_after = self._parse_retry_after_seconds(
+                getattr(getattr(e, "response", None), "headers", {}).get("Retry-After", "")
+            )
+            error_message = f"OpenRouter API Error: {str(e)}"
+            if status_code is not None:
+                error_message = f"OpenRouter HTTP {status_code}: {str(e)}"
+            return {
+                "success": False,
+                "error": error_message,
+                "draft": "",
+                "status_code": status_code,
+                "retry_after": retry_after,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"OpenRouter API Error: {str(e)}",
                 "draft": ""
             }
     
     def _generate_with_claude(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
         """使用 Anthropic Claude 生成内容"""
         try:
-            message = self.client.messages.create(
+            if self.claude_client is None:
+                return {
+                    "success": False,
+                    "error": "ANTHROPIC_API_KEY not set or anthropic sdk not installed",
+                    "draft": ""
+                }
+            message = self.claude_client.messages.create(
                 model=self.model,
                 max_tokens=max_tokens,
                 messages=[
@@ -219,8 +382,14 @@ class FlowerNetGenerator:
     def _generate_with_ollama(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
         """使用 Ollama 本地生成内容"""
         try:
+            if _is_render_runtime() and _is_local_ollama_url(self.ollama_url):
+                return {
+                    "success": False,
+                    "error": "Render 环境 OLLAMA_URL 不能是 localhost/127.0.0.1",
+                    "draft": ""
+                }
             payload = {
-                "model": self.model,
+                "model": self.ollama_model,
                 "prompt": prompt,
                 "stream": False,
                 "options": {
@@ -270,7 +439,7 @@ class FlowerNetGenerator:
                 "success": True,
                 "draft": draft_text,
                 "metadata": {
-                    "model": self.model,
+                    "model": self.ollama_model,
                     "provider": "ollama",
                     "prompt_tokens": result.get('prompt_eval_count', 0),
                     "output_tokens": result.get('eval_count', 0),
@@ -350,6 +519,9 @@ class FlowerNetOrchestrator:
         self.max_iterations = max_iterations
         self.history_manager = history_manager
         self.session = requests.Session()
+        self.generator_retries = int(os.getenv('ORCH_GENERATOR_RETRIES', '4'))
+        self.generator_backoff = float(os.getenv('ORCH_GENERATOR_BACKOFF', '2.0'))
+        self.generator_max_backoff = float(os.getenv('ORCH_GENERATOR_MAX_BACKOFF', '60.0'))
         
         print(f"🌸 FlowerNet 编排器初始化:")
         print(f"  - Generator URL: {generator_url}")
@@ -539,37 +711,67 @@ class FlowerNetOrchestrator:
         注意：这里假设编排器在同一进程中有 generator 对象
         如果 generator_url 是本地的，直接使用本地 generator
         """
+        def is_transient_error(text: str) -> bool:
+            lowered = (text or "").lower()
+            return any(token in lowered for token in ["429", "rate", "timeout", "temporarily", "503", "502", "504", "connection"])
+
         # 如果有本地 generator 对象，直接使用它（避免 HTTP 循环）
         if hasattr(self, '_local_generator') and self._local_generator:
-            return self._local_generator.generate_draft(prompt)
+            for attempt in range(1, self.generator_retries + 1):
+                result = self._local_generator.generate_draft(prompt)
+                if result.get("success"):
+                    return result
+                error_message = str(result.get("error", "unknown error"))
+                if attempt < self.generator_retries and is_transient_error(error_message):
+                    retry_delay = min(self.generator_backoff * (2 ** (attempt - 1)), self.generator_max_backoff)
+                    time.sleep(retry_delay)
+                    continue
+                return result
         
         # 否则使用 HTTP 调用
-        try:
-            print(f"🔗 [Orchestrator] 调用 Generator API: {self.generator_url}/generate")
-            response = self.session.post(
-                f"{self.generator_url}/generate",
-                json={"prompt": prompt},
-                timeout=120
-            )
-            print(f"   响应状态: {response.status_code}")
-            print(f"   响应长度: {len(response.text)}")
-            
-            if response.status_code != 200:
-                print(f"   ❌ 非 200 状态码!")
+        last_error = ""
+        for attempt in range(1, self.generator_retries + 1):
+            try:
+                print(f"🔗 [Orchestrator] 调用 Generator API: {self.generator_url}/generate (attempt {attempt}/{self.generator_retries})")
+                response = self.session.post(
+                    f"{self.generator_url}/generate",
+                    json={"prompt": prompt},
+                    timeout=120
+                )
+                print(f"   响应状态: {response.status_code}")
+                print(f"   响应长度: {len(response.text)}")
+
+                if response.status_code != 200:
+                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                    if attempt < self.generator_retries and is_transient_error(last_error):
+                        retry_delay = min(self.generator_backoff * (2 ** (attempt - 1)), self.generator_max_backoff)
+                        time.sleep(retry_delay)
+                        continue
+                    print(f"   ❌ 非 200 状态码!")
+                    return {
+                        "success": False,
+                        "error": last_error
+                    }
+
+                result = response.json()
+                print(f"   ✅ 获得有效响应")
+                return result
+            except Exception as e:
+                last_error = str(e)
+                print(f"   ❌ 异常: {type(e).__name__}: {last_error}")
+                if attempt < self.generator_retries and is_transient_error(last_error):
+                    retry_delay = min(self.generator_backoff * (2 ** (attempt - 1)), self.generator_max_backoff)
+                    time.sleep(retry_delay)
+                    continue
                 return {
                     "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text[:100]}"
+                    "error": last_error
                 }
-            
-            result = response.json()
-            print(f"   ✅ 获得有效响应")
-            return result
-        except Exception as e:
-            print(f"   ❌ 异常: {type(e).__name__}: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+
+        return {
+            "success": False,
+            "error": last_error or "Generator 调用失败"
+        }
 
     def _call_verifier(
         self,

@@ -10,6 +10,18 @@ services:
         value: https://flowernet-outliner.onrender.com
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
+      - key: PUBLIC_BASE_URL
+        value: https://flowernet-web.onrender.com
       - key: REQUEST_TIMEOUT
         value: "3600"
+      - key: DOWNSTREAM_RETRIES
+        value: "5"
+      - key: DOWNSTREAM_BACKOFF
+        value: "2.0"
+      - key: DOWNSTREAM_MAX_BACKOFF
+        value: "60.0"
+      - key: DOWNSTREAM_JITTER
+        value: "0.4"
+      - key: NO_PROXY
+        value: "localhost,127.0.0.1"
     healthCheckPath: /health

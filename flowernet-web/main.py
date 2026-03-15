@@ -3,10 +3,13 @@ from io import BytesIO
 import os
 import threading
 import time
+import random
 from typing import Any, Dict, List, Generator
 from urllib.parse import quote
 import json
 from uuid import uuid4
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 
 import requests
 from docx import Document
@@ -21,6 +24,7 @@ REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "3600"))  # 1小时超时，�
 DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "3"))
 DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
 DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
+DOWNSTREAM_JITTER = float(os.getenv("DOWNSTREAM_JITTER", "0.35"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
@@ -97,6 +101,24 @@ def _extract_response_error(response: requests.Response) -> str:
         return response.text[:800]
 
 
+def _parse_retry_after_seconds(retry_after: str) -> float | None:
+    value = (retry_after or "").strip()
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+    try:
+        dt = parsedate_to_datetime(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        return max(0.0, (dt - now).total_seconds())
+    except Exception:
+        return None
+
+
 def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     last_error: str = ""
     for attempt in range(1, DOWNSTREAM_RETRIES + 1):
@@ -112,14 +134,14 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
             else:
                 last_error = str(exc)
             if attempt < DOWNSTREAM_RETRIES:
-                retry_delay = DOWNSTREAM_BACKOFF * attempt
+                retry_delay = DOWNSTREAM_BACKOFF * (2 ** max(0, attempt - 1))
+                retry_delay += random.uniform(0, DOWNSTREAM_JITTER)
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
                 if status_code == 429:
                     retry_after = getattr(exc.response, "headers", {}).get("Retry-After", "")
-                    try:
-                        retry_delay = max(retry_delay, float(retry_after))
-                    except (TypeError, ValueError):
-                        pass
+                    retry_after_seconds = _parse_retry_after_seconds(retry_after)
+                    if retry_after_seconds is not None:
+                        retry_delay = max(retry_delay, retry_after_seconds)
                 retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
                 time.sleep(retry_delay)
 

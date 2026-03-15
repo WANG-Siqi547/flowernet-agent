@@ -22,15 +22,10 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# 检查必要的环境变量
-if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo -e "${YELLOW}⚠️  警告：ANTHROPIC_API_KEY 环境变量未设置${NC}"
-    echo -e "${YELLOW}   请设置: export ANTHROPIC_API_KEY='your-key'${NC}"
-    read -p "继续吗? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
+# 检查推荐环境变量（Gemini 主 + OpenRouter 备）
+if [ -z "$GOOGLE_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ]; then
+    echo -e "${YELLOW}⚠️  警告：未检测到 GOOGLE_API_KEY / OPENROUTER_API_KEY${NC}"
+    echo -e "${YELLOW}   建议至少配置其中一个以确保生成能力${NC}"
 fi
 
 # 获取脚本所在目录

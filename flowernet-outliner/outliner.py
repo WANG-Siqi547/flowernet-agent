@@ -7,8 +7,11 @@ FlowerNet Outliner - 文档大纲生成与内容提示词管理
 import os
 import json
 import time
+import random
 import requests
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 
 def _is_render_runtime() -> bool:
@@ -42,7 +45,7 @@ class FlowerNetOutliner:
     - 支持 Ollama (本地) 和 Google Gemini
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "qwen2.5:7b", provider: str = "ollama"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "models/gemini-2.5-flash-lite", provider: str = "gemini,openrouter"):
         """
         初始化 Outliner
         
@@ -51,41 +54,42 @@ class FlowerNetOutliner:
             model: 使用的模型名称
                 - Ollama: "qwen2.5:7b", "llama3.1:8b" 等
                 - Gemini: "models/gemini-2.5-flash"
-            provider: LLM 提供商 ("ollama" 或 "gemini")
+            provider: LLM 提供商，支持单个或链式（如 "gemini,openrouter"）
         """
-        self.provider = provider.lower()
+        requested_provider = provider or os.getenv("OUTLINER_PROVIDER_CHAIN", "gemini,openrouter")
+        parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
+        self.provider_chain = parsed_chain or ["gemini", "openrouter"]
+
         self.model = model
+        self.gemini_model = os.getenv("OUTLINER_GEMINI_MODEL", model or "models/gemini-2.5-flash-lite")
+        self.openrouter_model = os.getenv("OUTLINER_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-32b:free"))
+        self.ollama_model = os.getenv("OUTLINER_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
+        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        self.openrouter_api_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions").rstrip("/")
+        self.openrouter_referrer = os.getenv("OPENROUTER_HTTP_REFERER", os.getenv("PUBLIC_BASE_URL", "https://flowernet-web.onrender.com"))
+        self.openrouter_app_name = os.getenv("OPENROUTER_APP_NAME", "FlowerNet")
+
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434').rstrip('/')
         self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
         self.ollama_backoff = float(os.getenv('OLLAMA_BACKOFF', '2.0'))
         self.ollama_max_backoff = float(os.getenv('OLLAMA_MAX_BACKOFF', '45.0'))
-        
-        if self.provider == "ollama":
-            if _is_render_runtime() and _is_local_ollama_url(self.ollama_url):
-                raise ValueError(
-                    "Render 环境下 OLLAMA_URL 不能指向 localhost/127.0.0.1。"
-                    "请先运行 ./start-ollama-ngrok.sh，然后把生成的公网地址配置到 OLLAMA_URL。"
-                )
-            self.client = None  # Ollama 使用 HTTP API
-            print(f"✅ Outliner 初始化成功 (Ollama - 本地):")
-            print(f"  - Model: {self.model}")
-            print(f"  - Provider: Ollama (本地无限制)")
-            print(f"  - Ollama URL: {self.ollama_url}")
-            
-        elif self.provider == "gemini":
-            if not GEMINI_AVAILABLE:
-                raise ImportError("需要安装 google-genai: pip install google-genai")
-            
-            self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
-            if not self.api_key:
-                raise ValueError("请设置 GOOGLE_API_KEY 环境变量或传入 api_key 参数")
-            
-            self.client = genai.Client(api_key=self.api_key)
-            print(f"✅ Outliner 初始化成功 (Gemini):")
-            print(f"  - Model: {self.model}")
-            print(f"  - Provider: Google Gemini")
-        else:
-            raise ValueError(f"不支持的提供商: {provider}。请使用 'ollama' 或 'gemini'")
+        self.provider_retries = int(os.getenv('PROVIDER_RETRIES', '4'))
+        self.provider_backoff = float(os.getenv('PROVIDER_BACKOFF', '2.0'))
+        self.provider_max_backoff = float(os.getenv('PROVIDER_MAX_BACKOFF', '90.0'))
+        self.provider_jitter = float(os.getenv('PROVIDER_JITTER', '0.35'))
+        self.provider_min_interval = float(os.getenv('PROVIDER_MIN_INTERVAL', '1.2'))
+        self._provider_next_allowed: Dict[str, float] = {}
+
+        self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
+        self.client = genai.Client(api_key=self.api_key) if (self.api_key and GEMINI_AVAILABLE) else None
+        self.last_provider_used = ""
+
+        print("✅ Outliner 初始化成功:")
+        print(f"  - Provider chain: {self.provider_chain}")
+        print(f"  - Gemini model: {self.gemini_model}")
+        print(f"  - OpenRouter model: {self.openrouter_model}")
+        print(f"  - Ollama model: {self.ollama_model}")
+        print(f"  - Ollama URL: {self.ollama_url}")
     
     def generate_document_structure(
         self,
@@ -168,21 +172,8 @@ class FlowerNetOutliner:
 """
         
         try:
-            # 调用 LLM 生成大纲
-            if self.provider == "ollama":
-                structure_text = self._call_ollama(structure_prompt, max_tokens=4000)
-            elif self.provider == "gemini":
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=structure_prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.7,
-                        max_output_tokens=4000
-                    )
-                )
-                structure_text = response.text.strip()
-            else:
-                raise ValueError(f"未知的提供商: {self.provider}")
+            # 调用 LLM 生成大纲（自动降级）
+            structure_text, llm_metadata = self._generate_text_with_fallback(structure_prompt, max_tokens=4000)
             
             # 解析 JSON
             
@@ -243,10 +234,13 @@ class FlowerNetOutliner:
             print(f"  - Sections: {len(structure.get('sections', []))}")
             print(f"  - 总小节数: {total_subsections} (预期: {max_sections * max_subsections_per_section})")
             
-            metadata = {"model": self.model, "provider": self.provider}
-            if self.provider == "gemini" and 'response' in locals():
-                metadata["prompt_tokens"] = response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0
-                metadata["output_tokens"] = response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0
+            metadata = {
+                "provider_chain": self.provider_chain,
+                "active_provider": llm_metadata.get("provider", self.last_provider_used),
+                "model": llm_metadata.get("model", self.model),
+                "prompt_tokens": llm_metadata.get("prompt_tokens", 0),
+                "output_tokens": llm_metadata.get("output_tokens", 0),
+            }
             
             return {
                 "success": True,
@@ -268,6 +262,168 @@ class FlowerNetOutliner:
                 "success": False,
                 "error": str(e)
             }
+
+    @staticmethod
+    def _is_transient_provider_error(message: str) -> bool:
+        text = (message or "").lower()
+        transient_tokens = [
+            "429", "rate", "resource_exhausted", "quota", "too many requests",
+            "timeout", "timed out", "temporarily", "503", "502", "504", "connection"
+        ]
+        return any(token in text for token in transient_tokens)
+
+    @staticmethod
+    def _parse_retry_after_seconds(retry_after: Any) -> Optional[float]:
+        if retry_after is None:
+            return None
+        value = str(retry_after).strip()
+        if not value:
+            return None
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            pass
+        try:
+            dt = parsedate_to_datetime(value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            return max(0.0, (dt - now).total_seconds())
+        except Exception:
+            return None
+
+    def _compute_retry_delay(self, attempt: int, retry_after: Optional[float] = None) -> float:
+        base = self.provider_backoff * (2 ** max(0, attempt - 1))
+        jitter = random.uniform(0, self.provider_jitter)
+        delay = min(base + jitter, self.provider_max_backoff)
+        if retry_after is not None:
+            delay = max(delay, min(float(retry_after), self.provider_max_backoff))
+        return delay
+
+    def _wait_for_provider_slot(self, provider: str):
+        next_allowed_at = self._provider_next_allowed.get(provider, 0.0)
+        now = time.time()
+        if next_allowed_at > now:
+            time.sleep(next_allowed_at - now)
+
+    def _mark_provider_slot(self, provider: str, extra_delay: float = 0.0):
+        self._provider_next_allowed[provider] = time.time() + max(self.provider_min_interval, extra_delay)
+
+    def _generate_text_with_fallback(self, prompt: str, max_tokens: int) -> Tuple[str, Dict[str, Any]]:
+        errors: List[str] = []
+        for provider in self.provider_chain:
+            provider_errors: List[str] = []
+            for attempt in range(1, self.provider_retries + 1):
+                try:
+                    self._wait_for_provider_slot(provider)
+                    text, metadata = self._generate_text_with_provider(provider=provider, prompt=prompt, max_tokens=max_tokens)
+                    self._mark_provider_slot(provider)
+                    self.last_provider_used = provider
+                    return text, metadata
+                except Exception as exc:
+                    error_message = str(exc)
+                    provider_errors.append(error_message)
+                    retry_after = None
+                    if "retry_after=" in error_message.lower():
+                        try:
+                            retry_after = float(error_message.lower().split("retry_after=")[-1].strip())
+                        except (TypeError, ValueError):
+                            retry_after = None
+
+                    should_retry = self._is_transient_provider_error(error_message) and attempt < self.provider_retries
+                    if should_retry:
+                        retry_delay = self._compute_retry_delay(attempt, retry_after=retry_after)
+                        self._mark_provider_slot(provider, extra_delay=retry_delay)
+                        time.sleep(retry_delay)
+                        continue
+                    break
+
+            errors.append(f"{provider}: {' | '.join(provider_errors)}")
+
+        raise Exception("所有 LLM 提供商都失败: " + " | ".join(errors))
+
+    def _generate_text_with_provider(self, provider: str, prompt: str, max_tokens: int) -> Tuple[str, Dict[str, Any]]:
+        if provider == "gemini":
+            if not GEMINI_AVAILABLE:
+                raise Exception("google-genai 未安装")
+            if not self.api_key:
+                raise Exception("GOOGLE_API_KEY 未配置")
+            if self.client is None:
+                self.client = genai.Client(api_key=self.api_key)
+
+            response = self.client.models.generate_content(
+                model=self.gemini_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.7,
+                    max_output_tokens=max_tokens
+                )
+            )
+            text = (response.text or "").strip()
+            if not text:
+                raise Exception("Gemini 返回空响应")
+            return text, {
+                "provider": "gemini",
+                "model": self.gemini_model,
+                "prompt_tokens": response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0,
+                "output_tokens": response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0,
+            }
+
+        if provider == "openrouter":
+            if not self.openrouter_api_key:
+                raise Exception("OPENROUTER_API_KEY 未配置")
+            try:
+                payload = {
+                    "model": self.openrouter_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": max_tokens,
+                }
+                headers = {
+                    "Authorization": f"Bearer {self.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": self.openrouter_referrer,
+                    "X-Title": self.openrouter_app_name,
+                }
+                response = requests.post(self.openrouter_api_url, json=payload, headers=headers, timeout=120)
+                response.raise_for_status()
+                data = response.json()
+                choice = ((data.get("choices") or [{}])[0] or {})
+                msg = choice.get("message") or {}
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
+                    content = "".join(parts)
+                text = str(content).strip()
+                if not text:
+                    raise Exception("OpenRouter 返回空响应")
+                usage = data.get("usage") or {}
+                return text, {
+                    "provider": "openrouter",
+                    "model": self.openrouter_model,
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                }
+            except requests.HTTPError as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                retry_after_raw = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
+                retry_after = self._parse_retry_after_seconds(retry_after_raw)
+                if retry_after is not None:
+                    raise Exception(f"OpenRouter HTTP {status}, retry_after={retry_after}")
+                raise Exception(f"OpenRouter HTTP {status}: {str(exc)}")
+            except requests.RequestException as exc:
+                raise Exception(f"OpenRouter request error: {str(exc)}")
+
+        if provider == "ollama":
+            if _is_render_runtime() and _is_local_ollama_url(self.ollama_url):
+                raise Exception("Render 环境 OLLAMA_URL 不能是 localhost/127.0.0.1")
+            text = self._call_ollama(prompt, max_tokens=max_tokens)
+            return text, {
+                "provider": "ollama",
+                "model": self.ollama_model,
+            }
+
+        raise Exception(f"不支持的 provider: {provider}")
     
     def generate_content_prompts(
         self,
@@ -424,7 +580,7 @@ class FlowerNetOutliner:
         """调用 Ollama API 生成内容"""
         try:
             payload = {
-                "model": self.model,
+                "model": self.ollama_model,
                 "prompt": prompt,
                 "stream": False,
                 "options": {

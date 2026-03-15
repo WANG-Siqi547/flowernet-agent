@@ -8,10 +8,36 @@ services:
     envVars:
       - key: GOOGLE_API_KEY
         sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
       - key: GENERATOR_PROVIDER
-        value: gemini
+        value: gemini,openrouter
       - key: GENERATOR_MODEL
-        value: models/gemini-2.5-flash
+        value: models/gemini-2.5-flash-lite
+      - key: GENERATOR_GEMINI_MODEL
+        value: models/gemini-2.5-flash-lite
+      - key: GENERATOR_OPENROUTER_MODEL
+        value: qwen/qwen3-32b:free
+      - key: OPENROUTER_HTTP_REFERER
+        value: https://flowernet-web.onrender.com
+      - key: OPENROUTER_APP_NAME
+        value: FlowerNet
+      - key: PROVIDER_RETRIES
+        value: "4"
+      - key: PROVIDER_BACKOFF
+        value: "2.0"
+      - key: PROVIDER_MAX_BACKOFF
+        value: "90.0"
+      - key: PROVIDER_JITTER
+        value: "0.4"
+      - key: PROVIDER_MIN_INTERVAL
+        value: "1.2"
+      - key: ORCH_GENERATOR_RETRIES
+        value: "4"
+      - key: ORCH_GENERATOR_BACKOFF
+        value: "2.0"
+      - key: ORCH_GENERATOR_MAX_BACKOFF
+        value: "60.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -24,4 +50,6 @@ services:
         value: https://flowernet-controller.onrender.com
       - key: OUTLINER_URL
         value: https://flowernet-outliner.onrender.com
+      - key: NO_PROXY
+        value: "localhost,127.0.0.1"
     healthCheckPath: /health

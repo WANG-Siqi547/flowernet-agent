@@ -8,8 +8,30 @@ services:
     envVars:
       - key: GOOGLE_API_KEY
         sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OUTLINER_PROVIDER
+        value: gemini,openrouter
       - key: OUTLINER_MODEL
-        value: models/gemini-2.5-flash
+        value: models/gemini-2.5-flash-lite
+      - key: OUTLINER_GEMINI_MODEL
+        value: models/gemini-2.5-flash-lite
+      - key: OUTLINER_OPENROUTER_MODEL
+        value: qwen/qwen3-32b:free
+      - key: OPENROUTER_HTTP_REFERER
+        value: https://flowernet-web.onrender.com
+      - key: OPENROUTER_APP_NAME
+        value: FlowerNet
+      - key: PROVIDER_RETRIES
+        value: "4"
+      - key: PROVIDER_BACKOFF
+        value: "2.0"
+      - key: PROVIDER_MAX_BACKOFF
+        value: "90.0"
+      - key: PROVIDER_JITTER
+        value: "0.4"
+      - key: PROVIDER_MIN_INTERVAL
+        value: "1.2"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH

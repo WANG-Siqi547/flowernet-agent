@@ -35,10 +35,16 @@ stop_service() {
 stop_service "Generator"
 stop_service "Verifier"
 stop_service "Controller"
+stop_service "Outliner"
+stop_service "Web"
 
 # 杀死可能残留的进程
 echo -e "\n${BLUE}清理残留进程...${NC}"
 pkill -f "python.*main.py" || true
+pkill -f "uvicorn.*main:app" || true
+for port in 8000 8001 8002 8003 8010; do
+    lsof -ti tcp:$port | xargs kill -9 2>/dev/null || true
+done
 sleep 1
 
 # 验证是否全部停止

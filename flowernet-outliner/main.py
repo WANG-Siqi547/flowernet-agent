@@ -107,18 +107,11 @@ async def startup_event():
     global outliner, history_manager
     
     # 初始化 Outliner
-    provider = os.getenv('OUTLINER_PROVIDER', 'ollama')
-    model = os.getenv('OUTLINER_MODEL', 'qwen2.5:7b')
-    
-    if provider == 'ollama':
-        outliner = FlowerNetOutliner(provider=provider, model=model)
-    elif provider == 'gemini':
-        api_key = os.getenv('GOOGLE_API_KEY', '')
-        if not api_key:
-            print("❌ 警告: 未设置 GOOGLE_API_KEY 环境变量")
-        outliner = FlowerNetOutliner(api_key=api_key, model=model, provider=provider)
-    else:
-        raise ValueError(f"不支持的 Outliner provider: {provider}")
+    provider = os.getenv('OUTLINER_PROVIDER', 'gemini,openrouter')
+    model = os.getenv('OUTLINER_MODEL', 'models/gemini-2.5-flash-lite')
+
+    api_key = os.getenv('GOOGLE_API_KEY', '')
+    outliner = FlowerNetOutliner(api_key=api_key, model=model, provider=provider)
     
     # 初始化 History Manager（默认使用数据库模式）
     use_db = os.getenv('USE_DATABASE', 'true').lower() == 'true'

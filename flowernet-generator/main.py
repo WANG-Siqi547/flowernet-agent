@@ -75,25 +75,15 @@ _provider = "ollama"
 _model = None
 _init_error = None
 
-def init_generator(provider: str = "ollama", model: str = None):
-    """初始化生成器（支持 Gemini, Claude, 和 Ollama）"""
+def init_generator(provider: str = "gemini,openrouter", model: str = None):
+    """初始化生成器（支持链式降级，如 Gemini -> OpenRouter -> Ollama）"""
     global generator, _provider, _model, _init_error
     
     try:
         _provider = provider
         _model = model
         
-        if provider == "gemini":
-            model = model or "models/gemini-2.5-flash"
-            generator = FlowerNetGenerator(provider="gemini", model=model)
-        elif provider == "claude":
-            model = model or "claude-3-5-sonnet-20241022"
-            generator = FlowerNetGenerator(provider="claude", model=model)
-        elif provider == "ollama":
-            model = model or "qwen2.5:7b"
-            generator = FlowerNetGenerator(provider="ollama", model=model)
-        else:
-            raise ValueError(f"不支持的提供商: {provider}")
+        generator = FlowerNetGenerator(provider=provider, model=model)
         
         _init_error = None
         print(f"✅ Generator 已初始化 ({provider})")
@@ -140,8 +130,8 @@ def get_orchestrator():
         )
         
         # 为 orchestrator 注入本地 generator 实例，避免 HTTP 递归调用
-        # 使用与主Generator相同的provider和model配置
-        provider = os.getenv('GENERATOR_PROVIDER', 'ollama')
+        # 使用与主 Generator 相同的 provider chain 和模型配置
+        provider = os.getenv('GENERATOR_PROVIDER', 'gemini,openrouter')
         model = os.getenv('GENERATOR_MODEL', None)
         local_gen = FlowerNetGenerator(provider=provider, model=model)
         orchestrator._local_generator = local_gen
@@ -194,7 +184,7 @@ def get_document_generation_orchestrator():
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化 Generator"""
-    provider = os.getenv('GENERATOR_PROVIDER', 'ollama')
+    provider = os.getenv('GENERATOR_PROVIDER', 'gemini,openrouter')
     model = os.getenv('GENERATOR_MODEL', None)
     ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
     
@@ -411,7 +401,7 @@ async def generate_document(request: GenerateDocumentRequest):
 if __name__ == "__main__":
     # 优先使用环境变量 PORT（Render 会自动设置），否则使用命令行参数
     port = int(os.getenv("PORT", sys.argv[1] if len(sys.argv) > 1 else 8002))
-    provider = os.getenv("GENERATOR_PROVIDER", sys.argv[2] if len(sys.argv) > 2 else "ollama")
+    provider = os.getenv("GENERATOR_PROVIDER", sys.argv[2] if len(sys.argv) > 2 else "gemini,openrouter")
     model = os.getenv("GENERATOR_MODEL", sys.argv[3] if len(sys.argv) > 3 else None)
     
     # 初始化生成器

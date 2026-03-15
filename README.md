@@ -257,6 +257,36 @@ FLOWERNET_BEARER_TOKEN=your-strong-bearer-token
 PUBLIC_BASE_URL=https://your-flowernet-web.onrender.com
 ```
 
+#### 1.1) 推荐的“免费额度优先 + 自动容灾”策略（主 Gemini + 备 OpenRouter）
+
+为 `flowernet-outliner` 与 `flowernet-generator` 同时配置：
+
+```bash
+# 主 + 备（自动切换）
+OUTLINER_PROVIDER=gemini,openrouter
+GENERATOR_PROVIDER=gemini,openrouter
+
+# 主模型：Gemini Developer API 免费层
+OUTLINER_MODEL=models/gemini-2.5-flash-lite
+GENERATOR_MODEL=models/gemini-2.5-flash-lite
+GOOGLE_API_KEY=你的_google_api_key
+
+# 备模型：OpenRouter 免费模型
+OUTLINER_OPENROUTER_MODEL=qwen/qwen3-32b:free
+GENERATOR_OPENROUTER_MODEL=qwen/qwen3-32b:free
+OPENROUTER_API_KEY=你的_openrouter_api_key
+
+# 可选（用于 OpenRouter 控制台来源标识）
+OPENROUTER_HTTP_REFERER=https://your-flowernet-web.onrender.com
+OPENROUTER_APP_NAME=FlowerNet
+```
+
+工作机制：
+
+- 优先走 Gemini 免费层；
+- 遇到限流、配额不足、区域不可用或临时故障时，自动降级到 OpenRouter；
+- 所有切换都在 outliner/generator 内部完成，`flowernet-web` 和 Poffices 侧无需改 API。
+
 #### 1.1) 如果你坚持在 Render 上继续使用本地 Ollama
 
 `flowernet-outliner` 和 `flowernet-generator` 绝对不能继续使用：

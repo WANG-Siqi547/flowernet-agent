@@ -65,17 +65,31 @@ services:
       - key: PORT
         value: 8003
       - key: OUTLINER_PROVIDER
-        value: ollama
+        value: gemini,openrouter
       - key: OUTLINER_MODEL
-        value: qwen2.5:3b
-      - key: OLLAMA_URL
-        value: https://unhomogenized-trismic-sarina.ngrok-free.dev
-      - key: OLLAMA_RETRIES
-        value: "6"
-      - key: OLLAMA_BACKOFF
-        value: "3.0"
-      - key: OLLAMA_MAX_BACKOFF
-        value: "45.0"
+        value: models/gemini-2.5-flash-lite
+      - key: OUTLINER_GEMINI_MODEL
+        value: models/gemini-2.5-flash-lite
+      - key: OUTLINER_OPENROUTER_MODEL
+        value: qwen/qwen3-32b:free
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_HTTP_REFERER
+        value: https://flowernet-web.onrender.com
+      - key: OPENROUTER_APP_NAME
+        value: FlowerNet
+      - key: PROVIDER_RETRIES
+        value: "4"
+      - key: PROVIDER_BACKOFF
+        value: "2.0"
+      - key: PROVIDER_MAX_BACKOFF
+        value: "90.0"
+      - key: PROVIDER_JITTER
+        value: "0.4"
+      - key: PROVIDER_MIN_INTERVAL
+        value: "1.2"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -96,17 +110,37 @@ services:
       - key: PORT
         value: 8002
       - key: GENERATOR_PROVIDER
-        value: ollama
+        value: gemini,openrouter
       - key: GENERATOR_MODEL
-        value: qwen2.5:3b
-      - key: OLLAMA_URL
-        value: https://unhomogenized-trismic-sarina.ngrok-free.dev
-      - key: OLLAMA_RETRIES
-        value: "6"
-      - key: OLLAMA_BACKOFF
-        value: "3.0"
-      - key: OLLAMA_MAX_BACKOFF
-        value: "45.0"
+        value: models/gemini-2.5-flash-lite
+      - key: GENERATOR_GEMINI_MODEL
+        value: models/gemini-2.5-flash-lite
+      - key: GENERATOR_OPENROUTER_MODEL
+        value: qwen/qwen3-32b:free
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_HTTP_REFERER
+        value: https://flowernet-web.onrender.com
+      - key: OPENROUTER_APP_NAME
+        value: FlowerNet
+      - key: PROVIDER_RETRIES
+        value: "4"
+      - key: PROVIDER_BACKOFF
+        value: "2.0"
+      - key: PROVIDER_MAX_BACKOFF
+        value: "90.0"
+      - key: PROVIDER_JITTER
+        value: "0.4"
+      - key: PROVIDER_MIN_INTERVAL
+        value: "1.2"
+      - key: ORCH_GENERATOR_RETRIES
+        value: "4"
+      - key: ORCH_GENERATOR_BACKOFF
+        value: "2.0"
+      - key: ORCH_GENERATOR_MAX_BACKOFF
+        value: "60.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -142,12 +176,14 @@ services:
         value: https://flowernet-web.onrender.com
       - key: REQUEST_TIMEOUT
         value: "3600"
-      - key: DOWNSTREAM_RETRIES
-        value: "3"
       - key: DOWNSTREAM_BACKOFF
         value: "2.0"
       - key: DOWNSTREAM_MAX_BACKOFF
-        value: "30.0"
+        value: "60.0"
+      - key: DOWNSTREAM_JITTER
+        value: "0.4"
+      - key: DOWNSTREAM_RETRIES
+        value: "5"
       - key: NO_PROXY
         value: "localhost,127.0.0.1"
     healthCheckPath: /health
