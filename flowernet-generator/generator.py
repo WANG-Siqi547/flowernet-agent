@@ -10,6 +10,7 @@ import json
 import subprocess
 import time
 import random
+import re
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -139,6 +140,23 @@ class FlowerNetGenerator:
             delay = max(delay, min(float(retry_after), self.provider_max_backoff))
         return delay
 
+    @staticmethod
+    def _extract_retry_after_from_message(message: str) -> Optional[float]:
+        text = str(message or "")
+        patterns = [
+            r"retry_after\s*=\s*([0-9]+(?:\.[0-9]+)?)",
+            r"retry in\s*([0-9]+(?:\.[0-9]+)?)\s*s",
+            r"retrydelay[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*s",
+        ]
+        for pattern in patterns:
+            matched = re.search(pattern, text, flags=re.IGNORECASE)
+            if matched:
+                try:
+                    return max(0.0, float(matched.group(1)))
+                except (TypeError, ValueError):
+                    continue
+        return None
+
     def _wait_for_provider_slot(self, provider: str):
         next_allowed_at = self._provider_next_allowed.get(provider, 0.0)
         now = time.time()
@@ -190,7 +208,10 @@ class FlowerNetGenerator:
                     provider_errors.append(str(error_message))
                     should_retry = self._is_transient_provider_error(str(error_message)) and attempt < self.provider_retries
                     if should_retry:
-                        retry_delay = self._compute_retry_delay(attempt, retry_after=result.get("retry_after"))
+                        retry_after = result.get("retry_after")
+                        if retry_after is None:
+                            retry_after = self._extract_retry_after_from_message(str(error_message))
+                        retry_delay = self._compute_retry_delay(attempt, retry_after=retry_after)
                         self._mark_provider_slot(provider, extra_delay=retry_delay)
                         time.sleep(retry_delay)
                         continue

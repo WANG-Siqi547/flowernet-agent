@@ -8,6 +8,7 @@ import os
 import json
 import time
 import random
+import re
 import requests
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timezone
@@ -300,6 +301,23 @@ class FlowerNetOutliner:
             delay = max(delay, min(float(retry_after), self.provider_max_backoff))
         return delay
 
+    @staticmethod
+    def _extract_retry_after_from_message(message: str) -> Optional[float]:
+        text = str(message or "")
+        patterns = [
+            r"retry_after\s*=\s*([0-9]+(?:\.[0-9]+)?)",
+            r"retry in\s*([0-9]+(?:\.[0-9]+)?)\s*s",
+            r"retrydelay[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*s",
+        ]
+        for pattern in patterns:
+            matched = re.search(pattern, text, flags=re.IGNORECASE)
+            if matched:
+                try:
+                    return max(0.0, float(matched.group(1)))
+                except (TypeError, ValueError):
+                    continue
+        return None
+
     def _wait_for_provider_slot(self, provider: str):
         next_allowed_at = self._provider_next_allowed.get(provider, 0.0)
         now = time.time()
@@ -323,12 +341,7 @@ class FlowerNetOutliner:
                 except Exception as exc:
                     error_message = str(exc)
                     provider_errors.append(error_message)
-                    retry_after = None
-                    if "retry_after=" in error_message.lower():
-                        try:
-                            retry_after = float(error_message.lower().split("retry_after=")[-1].strip())
-                        except (TypeError, ValueError):
-                            retry_after = None
+                    retry_after = self._extract_retry_after_from_message(error_message)
 
                     should_retry = self._is_transient_provider_error(error_message) and attempt < self.provider_retries
                     if should_retry:
