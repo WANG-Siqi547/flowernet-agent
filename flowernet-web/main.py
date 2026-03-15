@@ -119,29 +119,52 @@ def _parse_retry_after_seconds(retry_after: str) -> float | None:
         return None
 
 
+def _is_transient_downstream_payload(payload: Dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("success") is not False:
+        return False
+    message = str(payload.get("error") or payload.get("message") or "").lower()
+    transient_tokens = [
+        "429", "too many requests", "resource_exhausted", "quota", "rate",
+        "timeout", "timed out", "temporarily", "503", "502", "504", "retry",
+    ]
+    return any(token in message for token in transient_tokens)
+
+
 def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     last_error: str = ""
     for attempt in range(1, DOWNSTREAM_RETRIES + 1):
+        retry_delay = DOWNSTREAM_BACKOFF * (2 ** max(0, attempt - 1))
+        retry_delay += random.uniform(0, DOWNSTREAM_JITTER)
+        retry_after_seconds = None
+
         try:
             response = requests.post(url, json=payload, timeout=timeout)
             response.raise_for_status()
-            return response.json()
+            body = response.json()
+
+            if _is_transient_downstream_payload(body) and attempt < DOWNSTREAM_RETRIES:
+                last_error = f"下游返回可重试失败: {body}"
+                retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
+                time.sleep(retry_delay)
+                continue
+
+            return body
         except requests.RequestException as exc:
             response = getattr(exc, "response", None)
             if response is not None:
                 response_body = _extract_response_error(response)
                 last_error = f"HTTP {response.status_code} from {url}: {response_body}"
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After", "")
+                    retry_after_seconds = _parse_retry_after_seconds(retry_after)
             else:
                 last_error = str(exc)
+
             if attempt < DOWNSTREAM_RETRIES:
-                retry_delay = DOWNSTREAM_BACKOFF * (2 ** max(0, attempt - 1))
-                retry_delay += random.uniform(0, DOWNSTREAM_JITTER)
-                status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                if status_code == 429:
-                    retry_after = getattr(exc.response, "headers", {}).get("Retry-After", "")
-                    retry_after_seconds = _parse_retry_after_seconds(retry_after)
-                    if retry_after_seconds is not None:
-                        retry_delay = max(retry_delay, retry_after_seconds)
+                if retry_after_seconds is not None:
+                    retry_delay = max(retry_delay, retry_after_seconds)
                 retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
                 time.sleep(retry_delay)
 
