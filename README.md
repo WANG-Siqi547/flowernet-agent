@@ -272,8 +272,8 @@ GENERATOR_MODEL=models/gemini-2.5-flash-lite
 GOOGLE_API_KEY=你的_google_api_key
 
 # 备模型：OpenRouter 免费模型
-OUTLINER_OPENROUTER_MODEL=qwen/qwen3-32b:free
-GENERATOR_OPENROUTER_MODEL=qwen/qwen3-32b:free
+OUTLINER_OPENROUTER_MODEL=qwen/qwen3-coder:free
+GENERATOR_OPENROUTER_MODEL=qwen/qwen3-coder:free
 OPENROUTER_API_KEY=你的_openrouter_api_key
 
 # 可选（用于 OpenRouter 控制台来源标识）

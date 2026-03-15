@@ -71,7 +71,7 @@ services:
       - key: OUTLINER_GEMINI_MODEL
         value: models/gemini-2.5-flash-lite
       - key: OUTLINER_OPENROUTER_MODEL
-        value: qwen/qwen3-32b:free
+        value: qwen/qwen3-coder:free
       - key: GOOGLE_API_KEY
         sync: false
       - key: OPENROUTER_API_KEY
@@ -116,7 +116,7 @@ services:
       - key: GENERATOR_GEMINI_MODEL
         value: models/gemini-2.5-flash-lite
       - key: GENERATOR_OPENROUTER_MODEL
-        value: qwen/qwen3-32b:free
+        value: qwen/qwen3-coder:free
       - key: GOOGLE_API_KEY
         sync: false
       - key: OPENROUTER_API_KEY

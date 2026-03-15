@@ -62,7 +62,7 @@ class FlowerNetOutliner:
 
         self.model = model
         self.gemini_model = os.getenv("OUTLINER_GEMINI_MODEL", model or "models/gemini-2.5-flash-lite")
-        self.openrouter_model = os.getenv("OUTLINER_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-32b:free"))
+        self.openrouter_model = os.getenv("OUTLINER_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
         self.ollama_model = os.getenv("OUTLINER_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
         self.openrouter_api_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions").rstrip("/")
