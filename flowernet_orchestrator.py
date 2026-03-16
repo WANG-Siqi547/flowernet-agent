@@ -228,6 +228,7 @@ class DocumentGenerationOrchestrator:
                 subsection_list = section.get("subsections", [])
                 
                 for subsection_index, subsection in enumerate(subsection_list):
+                    global_subsection_order = document_result["passed_subsections"] + len(document_result["failed_subsections"]) + 1
                     subsection_id = subsection["id"]
                     subsection_title = subsection["title"]
                     prompt_info = content_prompt_map.get(f"{section_id}::{subsection_id}", {})
@@ -260,6 +261,21 @@ class DocumentGenerationOrchestrator:
                             "subsection_title": subsection_title,
                             "subsection_order": subsection_index + 1,
                             "section_subsection_total": len(subsection_list),
+                            "global_subsection_order": global_subsection_order,
+                            "global_subsection_total": len(content_prompts),
+                        },
+                    )
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="subsection_outline_ready",
+                        message=f"第 {global_subsection_order} 小节大纲已就绪，准备生成",
+                        metadata={
+                            "section_title": section_title,
+                            "subsection_title": subsection_title,
+                            "global_subsection_order": global_subsection_order,
+                            "global_subsection_total": len(content_prompts),
                         },
                     )
                     
@@ -272,6 +288,8 @@ class DocumentGenerationOrchestrator:
                             outline=subsection_outline,
                             initial_prompt=content_prompt,
                             passed_history=passed_history,
+                            subsection_order=global_subsection_order,
+                            total_subsections=len(content_prompts),
                             rel_threshold=rel_threshold,
                             red_threshold=red_threshold
                         )
@@ -302,6 +320,18 @@ class DocumentGenerationOrchestrator:
                                     content=generated_content,
                                     order_index=history_order
                                 )
+                            self._emit_progress_event(
+                                document_id=document_id,
+                                section_id=section_id,
+                                subsection_id=subsection_id,
+                                stage="history_saved",
+                                message=f"第 {global_subsection_order} 小节已写入历史上下文（history）",
+                                metadata={
+                                    "global_subsection_order": global_subsection_order,
+                                    "global_subsection_total": len(content_prompts),
+                                    "history_order": history_order,
+                                },
+                            )
                             
                             document_result["passed_subsections"] += 1
                             self._emit_progress_event(
@@ -439,6 +469,8 @@ class DocumentGenerationOrchestrator:
         outline: str,
         initial_prompt: str,
         passed_history: List[Dict[str, str]],
+        subsection_order: int = 0,
+        total_subsections: int = 0,
         rel_threshold: float = 0.6,
         red_threshold: float = 0.7
     ) -> Dict[str, Any]:
@@ -469,6 +501,19 @@ class DocumentGenerationOrchestrator:
         total_history_count = len(passed_history)
         windowed_count = len(windowed_history)
         print(f"   📜 已通过的前置内容数: {total_history_count} (使用最近 {windowed_count} 个小节)")
+        self._emit_progress_event(
+            document_id=document_id,
+            section_id=section_id,
+            subsection_id=subsection_id,
+            stage="history_loaded",
+            message=f"第 {subsection_order} 小节读取 history：累计 {total_history_count} 条，窗口 {windowed_count} 条",
+            metadata={
+                "subsection_order": subsection_order,
+                "total_subsections": total_subsections,
+                "history_total": total_history_count,
+                "history_window": windowed_count,
+            },
+        )
         
         while True:
             iterations += 1
@@ -519,8 +564,13 @@ class DocumentGenerationOrchestrator:
                 section_id=section_id,
                 subsection_id=subsection_id,
                 stage="generator_start",
-                message=f"第 {iterations} 轮：进入 Generator 生成",
-                metadata={"iteration": iterations},
+                message=(f"第 {subsection_order} 小节第 {iterations} 轮：Generator 生成" if iterations == 1 else f"第 {subsection_order} 小节第 {iterations} 轮：按新大纲重新生成"),
+                metadata={
+                    "iteration": iterations,
+                    "subsection_order": subsection_order,
+                    "total_subsections": total_subsections,
+                    "is_regeneration": iterations > 1,
+                },
             )
             
             enhanced_prompt = self._build_enhanced_prompt(
@@ -556,8 +606,12 @@ class DocumentGenerationOrchestrator:
                 section_id=section_id,
                 subsection_id=subsection_id,
                 stage="verifier_start",
-                message=f"第 {iterations} 轮：进入 Verifier 检测",
-                metadata={"iteration": iterations},
+                message=f"第 {subsection_order} 小节第 {iterations} 轮：Verifier 检测",
+                metadata={
+                    "iteration": iterations,
+                    "subsection_order": subsection_order,
+                    "total_subsections": total_subsections,
+                },
             )
             verify_result = self._call_verifier(
                 draft=draft,
@@ -594,9 +648,11 @@ class DocumentGenerationOrchestrator:
                     section_id=section_id,
                     subsection_id=subsection_id,
                     stage="verifier_passed",
-                    message=f"第 {iterations} 轮：Verifier 判定通过",
+                    message=f"第 {subsection_order} 小节第 {iterations} 轮：Verifier 判定通过",
                     metadata={
                         "iteration": iterations,
+                        "subsection_order": subsection_order,
+                        "total_subsections": total_subsections,
                         "relevancy_index": rel_score,
                         "redundancy_index": red_score,
                     },
@@ -634,9 +690,11 @@ class DocumentGenerationOrchestrator:
                 section_id=section_id,
                 subsection_id=subsection_id,
                 stage="verifier_failed",
-                message=f"第 {iterations} 轮：Verifier 判定不通过，进入 Controller",
+                message=f"第 {subsection_order} 小节第 {iterations} 轮：Verifier 不通过，进入 Controller 改纲",
                 metadata={
                     "iteration": iterations,
+                    "subsection_order": subsection_order,
+                    "total_subsections": total_subsections,
                     "relevancy_index": rel_score,
                     "redundancy_index": red_score,
                 },
@@ -649,8 +707,13 @@ class DocumentGenerationOrchestrator:
                     section_id=section_id,
                     subsection_id=subsection_id,
                     stage="controller_start",
-                    message=f"第 {iterations} 轮：Controller 第 {controller_retry} 次尝试改纲",
-                    metadata={"iteration": iterations, "controller_retry": controller_retry},
+                    message=f"第 {subsection_order} 小节第 {iterations} 轮：Controller 第 {controller_retry} 次改纲",
+                    metadata={
+                        "iteration": iterations,
+                        "subsection_order": subsection_order,
+                        "total_subsections": total_subsections,
+                        "controller_retry": controller_retry,
+                    },
                 )
                 controller_result = self._call_controller(
                     old_outline=current_outline,
@@ -683,8 +746,13 @@ class DocumentGenerationOrchestrator:
                         section_id=section_id,
                         subsection_id=subsection_id,
                         stage="controller_success",
-                        message=f"第 {iterations} 轮：Controller 改纲成功，返回 Generator",
-                        metadata={"iteration": iterations, "controller_retry": controller_retry},
+                        message=f"第 {subsection_order} 小节第 {iterations} 轮：Controller 改纲成功，准备重新生成",
+                        metadata={
+                            "iteration": iterations,
+                            "subsection_order": subsection_order,
+                            "total_subsections": total_subsections,
+                            "controller_retry": controller_retry,
+                        },
                     )
                     break
 

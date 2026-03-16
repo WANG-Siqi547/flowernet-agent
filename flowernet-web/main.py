@@ -183,24 +183,27 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
     user_requirements = build_requirements_text(req)
 
     outline_payload = {
+        "document_id": document_id,
         "user_background": req.user_background,
         "user_requirements": user_requirements,
         "max_sections": req.chapter_count,
         "max_subsections_per_section": req.subsection_count,
     }
-    outline_resp = post_json_with_retry(f"{OUTLINER_URL}/generate-outline", outline_payload, timeout_seconds)
+    outline_resp = post_json_with_retry(f"{OUTLINER_URL}/outline/generate-and-save", outline_payload, timeout_seconds)
 
     if not outline_resp.get("success"):
         raise HTTPException(status_code=500, detail=f"大纲生成失败: {outline_resp}")
 
     title = outline_resp.get("document_title") or f"{req.topic} 文档"
-    structure, content_prompts, _, _ = ensure_exact_structure_and_prompts(
-        title=title,
-        structure=outline_resp.get("structure", {}),
-        content_prompts=outline_resp.get("content_prompts", []),
-        chapter_count=req.chapter_count,
-        subsection_count=req.subsection_count,
-    )
+    structure = outline_resp.get("structure", {})
+    content_prompts = outline_resp.get("content_prompts", [])
+    if not isinstance(structure, dict) or not isinstance(content_prompts, list):
+        raise HTTPException(status_code=500, detail=f"大纲结果格式异常: {outline_resp}")
+
+    expected_subsections = req.chapter_count * req.subsection_count
+    outlined_subsections = len(content_prompts)
+    if outlined_subsections <= 0:
+        raise HTTPException(status_code=500, detail="大纲生成结果为空，无法开始内容生成")
 
     generate_payload = {
         "document_id": document_id,
@@ -217,14 +220,13 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
     if not gen_resp.get("success"):
         raise HTTPException(status_code=500, detail=f"文档生成失败: {gen_resp}")
 
-    expected_subsections = req.chapter_count * req.subsection_count
     passed = gen_resp.get("passed_subsections", 0)
     failed = len(gen_resp.get("failed_subsections", []))
     forced = len(gen_resp.get("forced_subsections", []))
-    if passed < expected_subsections:
+    if passed < outlined_subsections:
         raise HTTPException(
             status_code=500,
-            detail=f"文档生成未达到目标小节数: 通过 {passed}/{expected_subsections}, 失败 {failed}",
+            detail=f"文档生成未达到大纲小节数: 通过 {passed}/{outlined_subsections}, 失败 {failed}",
         )
 
     history_resp = post_json_with_retry(f"{OUTLINER_URL}/history/get", {"document_id": document_id}, 60)
@@ -243,6 +245,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "content": markdown_content,
         "stats": {
             "expected_subsections": expected_subsections,
+            "outlined_subsections": outlined_subsections,
             "passed_subsections": passed,
             "failed_subsections": failed,
             "forced_subsections": forced,
@@ -475,6 +478,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
 
         # 第1步：生成大纲
         outline_payload = {
+            "document_id": document_id,
             "user_background": req.user_background,
             "user_requirements": user_requirements,
             "max_sections": req.chapter_count,
@@ -483,7 +487,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         
         try:
             outline_http_resp = requests.post(
-                f"{OUTLINER_URL}/generate-outline",
+                f"{OUTLINER_URL}/outline/generate-and-save",
                 json=outline_payload,
                 timeout=REQUEST_TIMEOUT
             )
@@ -514,25 +518,93 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         msg = json.dumps({'type': 'outline', 'message': f'✅ 大纲生成完成\n主题: {doc_title}'})
         yield f"data: {msg}\n\n"
 
-        title = outline_resp.get("document_title") or f"{req.topic} 文档"
-        structure, content_prompts, source_total, total_subsections = ensure_exact_structure_and_prompts(
-            title=title,
-            structure=outline_resp.get("structure", {}),
-            content_prompts=outline_resp.get("content_prompts", []),
-            chapter_count=req.chapter_count,
-            subsection_count=req.subsection_count,
-        )
+        msg = json.dumps({
+            'type': 'detail',
+            'stage': 'outline_document_ready',
+            'message': f'全文大纲已生成并存储到数据库（document_id={document_id}）',
+            'metadata': {'document_id': document_id},
+        })
+        yield f"data: {msg}\n\n"
 
-        if source_total != total_subsections:
+        title = outline_resp.get("document_title") or f"{req.topic} 文档"
+        structure = outline_resp.get("structure", {})
+        content_prompts = outline_resp.get("content_prompts", [])
+        if not isinstance(structure, dict) or not isinstance(content_prompts, list):
+            msg = json.dumps({'type': 'error', 'message': f'大纲结果格式异常: {str(outline_resp)[:200]}'} )
+            yield f"data: {msg}\n\n"
+            return
+        total_subsections = len(content_prompts)
+        if total_subsections <= 0:
+            msg = json.dumps({'type': 'error', 'message': '大纲结果为空，无法开始内容生成'})
+            yield f"data: {msg}\n\n"
+            return
+
+        ordered_subsections: List[Dict[str, Any]] = []
+        subsection_order = 0
+        for section in structure.get("sections", []):
+            section_id = str(section.get("id") or "")
+            section_title = str(section.get("title") or section_id or "未命名章节")
             msg = json.dumps({
-                'type': 'progress',
-                'message': f'⚠️ 大纲小节数为 {source_total}，已自动修正为 {total_subsections}（严格按用户设置）'
+                'type': 'detail',
+                'stage': 'section_outline_ready',
+                'message': f'章节大纲已生成并存储: {section_title}',
+                'metadata': {
+                    'section_id': section_id,
+                    'section_title': section_title,
+                },
             })
             yield f"data: {msg}\n\n"
+            for subsection in section.get("subsections", []):
+                subsection_id = str(subsection.get("id") or "")
+                subsection_title = str(subsection.get("title") or subsection_id or "未命名小节")
+                subsection_order += 1
+                ordered_subsections.append({
+                    "section_id": section_id,
+                    "subsection_id": subsection_id,
+                    "section_title": section_title,
+                    "subsection_title": subsection_title,
+                    "subsection_order": subsection_order,
+                })
+                msg = json.dumps({
+                    'type': 'detail',
+                    'stage': 'subsection_outline_ready',
+                    'message': f'第{subsection_order}小节大纲已生成并存储: {section_title} > {subsection_title}',
+                    'metadata': {
+                        'section_id': section_id,
+                        'subsection_id': subsection_id,
+                        'section_title': section_title,
+                        'subsection_title': subsection_title,
+                        'subsection_order': subsection_order,
+                    },
+                })
+                yield f"data: {msg}\n\n"
+
+        emitted_start_indices = set()
+        emitted_passed_indices = set()
 
         # 第2步：生成文档内容（异步启动）
         msg = json.dumps({'type': 'progress', 'message': f'🚀 开始生成内容（共{total_subsections}个小节）...'})
         yield f"data: {msg}\n\n"
+
+        if ordered_subsections:
+            first_item = ordered_subsections[0]
+            first_msg = f"开始处理小节: {first_item['section_title']} > {first_item['subsection_title']}"
+            msg = json.dumps({
+                'type': 'detail',
+                'message': first_msg,
+                'stage': 'subsection_start',
+                'metadata': {
+                    'section_id': first_item['section_id'],
+                    'subsection_id': first_item['subsection_id'],
+                    'section_title': first_item['section_title'],
+                    'subsection_title': first_item['subsection_title'],
+                    'subsection_order': 1,
+                    'section_subsection_total': total_subsections,
+                    'synthetic': True,
+                },
+            })
+            yield f"data: {msg}\n\n"
+            emitted_start_indices.add(0)
 
         generate_payload = {
             "document_id": document_id,
@@ -582,6 +654,48 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 if history_resp.status_code == 200:
                     history = history_resp.json().get("history", [])
                     current_count = len(history)
+
+                    while len(emitted_passed_indices) < current_count and len(emitted_passed_indices) < len(ordered_subsections):
+                        next_idx = len(emitted_passed_indices)
+                        item = ordered_subsections[next_idx]
+                        pass_msg = f"小节通过验证: {item['section_title']} > {item['subsection_title']}"
+                        msg = json.dumps({
+                            'type': 'detail',
+                            'message': pass_msg,
+                            'stage': 'subsection_passed',
+                            'metadata': {
+                                'section_id': item['section_id'],
+                                'subsection_id': item['subsection_id'],
+                                'section_title': item['section_title'],
+                                'subsection_title': item['subsection_title'],
+                                'subsection_order': next_idx + 1,
+                                'section_subsection_total': total_subsections,
+                                'synthetic': True,
+                            },
+                        })
+                        yield f"data: {msg}\n\n"
+                        emitted_passed_indices.add(next_idx)
+
+                    next_start_idx = current_count
+                    if next_start_idx < len(ordered_subsections) and next_start_idx not in emitted_start_indices:
+                        item = ordered_subsections[next_start_idx]
+                        start_msg = f"开始处理小节: {item['section_title']} > {item['subsection_title']}"
+                        msg = json.dumps({
+                            'type': 'detail',
+                            'message': start_msg,
+                            'stage': 'subsection_start',
+                            'metadata': {
+                                'section_id': item['section_id'],
+                                'subsection_id': item['subsection_id'],
+                                'section_title': item['section_title'],
+                                'subsection_title': item['subsection_title'],
+                                'subsection_order': next_start_idx + 1,
+                                'section_subsection_total': total_subsections,
+                                'synthetic': True,
+                            },
+                        })
+                        yield f"data: {msg}\n\n"
+                        emitted_start_indices.add(next_start_idx)
                     
                     # 每次进度变化或30秒都推送一次进度
                     if current_count > last_count or time.time() - last_progress_update > 30:
@@ -683,6 +797,37 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                     last_event_id = max(last_event_id, int(event_item.get("id", 0)))
         except Exception as e:
             print(f"收尾事件查询异常: {e}")
+
+        try:
+            history_resp = requests.post(
+                f"{OUTLINER_URL}/history/get",
+                json={"document_id": document_id},
+                timeout=10
+            )
+            final_history = history_resp.json().get("history", []) if history_resp.status_code == 200 else []
+            final_count = len(final_history)
+            while len(emitted_passed_indices) < final_count and len(emitted_passed_indices) < len(ordered_subsections):
+                next_idx = len(emitted_passed_indices)
+                item = ordered_subsections[next_idx]
+                pass_msg = f"小节通过验证: {item['section_title']} > {item['subsection_title']}"
+                msg = json.dumps({
+                    'type': 'detail',
+                    'message': pass_msg,
+                    'stage': 'subsection_passed',
+                    'metadata': {
+                        'section_id': item['section_id'],
+                        'subsection_id': item['subsection_id'],
+                        'section_title': item['section_title'],
+                        'subsection_title': item['subsection_title'],
+                        'subsection_order': next_idx + 1,
+                        'section_subsection_total': total_subsections,
+                        'synthetic': True,
+                    },
+                })
+                yield f"data: {msg}\n\n"
+                emitted_passed_indices.add(next_idx)
+        except Exception as e:
+            print(f"收尾补发小节事件异常: {e}")
         
         # 第3步：获取最终内容
         msg = json.dumps({'type': 'progress', 'message': '📦 整合文档内容...'})

@@ -314,6 +314,7 @@
     let currentTitle = '';
     let currentContent = '';
     let eventSource = null;
+    let seenSubsectionEvents = new Set();
 
     function stripEmojis(text) {
       if (!text) return '';
@@ -337,9 +338,88 @@
       resultEl.scrollTop = resultEl.scrollHeight;
     }
 
+    function buildSubsectionEventKey(stage, data) {
+      const meta = data.metadata || {};
+      const sectionId = meta.section_id || '';
+      const subsectionId = meta.subsection_id || '';
+      const order = meta.subsection_order || '';
+      return `${stage}|${sectionId}|${subsectionId}|${order}|${data.message || ''}`;
+    }
+
+    function formatDetailLine(data) {
+      const stage = data.stage || '';
+      const meta = data.metadata || {};
+      const stageLabel = mapStageLabel(stage);
+      const order = Number(meta.subsection_order || 0);
+      const globalOrder = Number(meta.global_subsection_order || 0);
+      const total = Number(meta.section_subsection_total || 0);
+      const totalGlobal = Number(meta.global_subsection_total || meta.total_subsections || 0);
+      const sectionTitle = (meta.section_title || '').trim();
+      const subsectionTitle = (meta.subsection_title || '').trim();
+      const synthetic = meta.synthetic === true;
+      const orderTextGlobal = globalOrder > 0 && totalGlobal > 0 ? `#${globalOrder}/${totalGlobal}` : '';
+
+      if (stage === 'subsection_start' || stage === 'subsection_passed') {
+        const key = buildSubsectionEventKey(stage, data);
+        if (seenSubsectionEvents.has(key)) {
+          return null;
+        }
+        seenSubsectionEvents.add(key);
+
+        const orderText = order > 0 && total > 0 ? `#${order}/${total}` : '#?';
+        const titleText = sectionTitle && subsectionTitle
+          ? `${sectionTitle} > ${subsectionTitle}`
+          : (data.message || '').trim();
+        const sourceText = synthetic ? ' · 保底日志' : '';
+        return `[${stageLabel}] ${orderText} ${titleText}${sourceText}`;
+      }
+
+      if (stage === 'subsection_outline_ready') {
+        const key = buildSubsectionEventKey(stage, data);
+        if (seenSubsectionEvents.has(key)) {
+          return null;
+        }
+        seenSubsectionEvents.add(key);
+        const titleText = sectionTitle && subsectionTitle
+          ? `${sectionTitle} > ${subsectionTitle}`
+          : (data.message || '').trim();
+        const tag = orderTextGlobal || (order > 0 && total > 0 ? `#${order}/${total}` : '#?');
+        return `[${stageLabel}] ${tag} ${titleText}`;
+      }
+
+      if (stage === 'outline_document_ready' || stage === 'section_outline_ready' || stage === 'subsection_outline_ready') {
+        return `[${stageLabel}] ${data.message || ''}`;
+      }
+
+      if (stage === 'history_loaded' || stage === 'history_saved') {
+        const tag = orderTextGlobal || (order > 0 ? `#${order}` : '');
+        const suffix = tag ? ` ${tag}` : '';
+        return `[${stageLabel}]${suffix} ${data.message || ''}`.trim();
+      }
+
+      if (stage === 'verifier_failed' || stage === 'controller_start' || stage === 'controller_success' || stage === 'controller_error' || stage === 'verifier_passed') {
+        const iteration = meta.iteration ? ` · 轮次${meta.iteration}` : '';
+        const retry = meta.controller_retry ? ` · 控制器重试${meta.controller_retry}` : '';
+        const tag = orderTextGlobal || (order > 0 ? `#${order}` : '');
+        return `[${stageLabel}] ${tag} ${(data.message || '').trim()}${iteration}${retry}`.replace(/\s{2,}/g, ' ').trim();
+      }
+
+      if (stage === 'generator_start') {
+        const iteration = meta.iteration ? ` · 轮次${meta.iteration}` : '';
+        const regen = meta.is_regeneration ? ' · 重新生成' : '';
+        const tag = orderTextGlobal || (order > 0 ? `#${order}` : '');
+        return `[${stageLabel}] ${tag} ${(data.message || '').trim()}${iteration}${regen}`.replace(/\s{2,}/g, ' ').trim();
+      }
+
+      return `[${stageLabel}] ${data.message || ''}`;
+    }
+
     function mapStageLabel(stage) {
       const stageMap = {
         document_start: '文档',
+        outline_document_ready: '全文大纲',
+        section_outline_ready: '章节大纲',
+        subsection_outline_ready: '小节大纲',
         subsection_start: '小节开始',
         generator_start: '生成器',
         generator_error: '生成器错误',
@@ -350,6 +430,8 @@
         controller_start: '控制器',
         controller_success: '控制器完成',
         controller_error: '控制器重试',
+        history_loaded: '历史加载',
+        history_saved: '写入History',
         subsection_passed: '小节完成',
         subsection_failed: '小节失败',
         subsection_exception: '小节异常',
@@ -375,6 +457,7 @@
       setStatus('正在生成中，请等待（可能需要 1-5 分钟）...');
       resultEl.textContent = '正在连接到生成服务...\n';
       metaEl.textContent = '';
+      seenSubsectionEvents = new Set();
 
       // 构建查询参数
       const params = new URLSearchParams({
@@ -400,8 +483,10 @@
             } else if (data.type === 'outline') {
               appendLog(`[大纲] ${data.message}`);
             } else if (data.type === 'detail') {
-              const stageLabel = mapStageLabel(data.stage || '');
-              appendLog(`[${stageLabel}] ${data.message || ''}`);
+              const line = formatDetailLine(data);
+              if (line) {
+                appendLog(line);
+              }
             } else if (data.type === 'complete') {
               const result = data.result;
               currentTitle = result.title;
