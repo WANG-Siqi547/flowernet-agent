@@ -662,8 +662,8 @@ class FlowerNetOrchestrator:
         section_id: str = None,
         subsection_id: str = None,
         history: Optional[List[str]] = None,
-        rel_threshold: float = 0.65,
-        red_threshold: float = 0.65
+        rel_threshold: float = 0.70,
+        red_threshold: float = 0.60
     ) -> Dict[str, Any]:
         """
         生成一个subsection，并进行验证-修改的循环
@@ -902,8 +902,8 @@ class FlowerNetOrchestrator:
         draft: str,
         outline: str,
         history: List[str],
-        rel_threshold: float = 0.65,
-        red_threshold: float = 0.65
+        rel_threshold: float = 0.70,
+        red_threshold: float = 0.60
     ) -> Dict[str, Any]:
         """调用 Verifier API"""
         try:
@@ -999,8 +999,8 @@ class FlowerNetOrchestrator:
         title: str,
         outline_list: List[Dict[str, Any]],
         system_prompt: str = "",
-        rel_threshold: float = 0.65,
-        red_threshold: float = 0.65
+        rel_threshold: float = 0.70,
+        red_threshold: float = 0.60
     ) -> Dict[str, Any]:
         """
         生成完整文档（多个sections，每个section包含多个subsections）
