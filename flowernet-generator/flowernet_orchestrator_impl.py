@@ -64,8 +64,9 @@ class DocumentGenerationOrchestrator:
         self.retry_base_delay = float(os.getenv("DOC_RETRY_BASE_DELAY", "2.0"))
         self.retry_max_delay = float(os.getenv("DOC_RETRY_MAX_DELAY", "90.0"))
         self.retry_jitter = float(os.getenv("DOC_RETRY_JITTER", "0.5"))
-        self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "true").lower() == "true"
-        self.max_subsection_attempts = int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "0"))
+        self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
+        self.max_subsection_attempts = int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "8"))
+        self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "3")))
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -489,21 +490,23 @@ class DocumentGenerationOrchestrator:
         total_history_count = len(passed_history)
         windowed_count = len(windowed_history)
         print(f"   📜 已通过的前置内容数: {total_history_count} (使用最近 {windowed_count} 个小节)")
+
+        effective_attempt_cap = self.max_subsection_attempts if self.max_subsection_attempts > 0 else self.max_iterations
         
         while True:
             iterations += 1
-            if (not self.subsection_retry_forever) and self.max_subsection_attempts > 0 and iterations > self.max_subsection_attempts:
+            if (not self.subsection_retry_forever) and effective_attempt_cap > 0 and iterations > effective_attempt_cap:
                 self._emit_progress_event(
                     document_id=document_id,
                     section_id=section_id,
                     subsection_id=subsection_id,
                     stage="subsection_exhausted",
-                    message=f"达到最大尝试次数 {self.max_subsection_attempts}，小节失败",
+                    message=f"达到最大尝试次数 {effective_attempt_cap}，小节失败",
                     metadata={"iteration": iterations - 1},
                 )
                 return {
                     "success": False,
-                    "error": f"小节未通过且达到最大尝试次数: {self.max_subsection_attempts}",
+                    "error": f"小节未通过且达到最大尝试次数: {effective_attempt_cap}",
                     "final_outline": current_outline,
                     "iterations": iterations - 1,
                     "all_drafts": all_drafts,
@@ -654,6 +657,32 @@ class DocumentGenerationOrchestrator:
             controller_retry = 0
             while True:
                 controller_retry += 1
+                if controller_retry > self.max_controller_retries:
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="controller_exhausted",
+                        message=(
+                            f"第 {iterations} 轮：Controller 连续失败 {self.max_controller_retries} 次，"
+                            "结束当前小节"
+                        ),
+                        metadata={
+                            "iteration": iterations,
+                            "controller_retry": self.max_controller_retries,
+                        },
+                    )
+                    return {
+                        "success": False,
+                        "error": (
+                            "Controller 连续失败且达到重试上限: "
+                            f"{self.max_controller_retries}"
+                        ),
+                        "final_outline": current_outline,
+                        "iterations": iterations,
+                        "all_drafts": all_drafts,
+                    }
+
                 self._emit_progress_event(
                     document_id=document_id,
                     section_id=section_id,
