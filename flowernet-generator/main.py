@@ -9,6 +9,7 @@ from typing import List, Optional, Dict, Any
 import uvicorn
 import os
 import sys
+import threading
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root in sys.path:
     sys.path.remove(project_root)
@@ -100,6 +101,7 @@ def init_generator(provider: str = "azure,ollama", model: str = None):
 orchestrator = None
 document_orchestrator = None
 history_manager = None
+document_generation_lock = threading.Lock()
 
 
 def get_history_manager(outliner_url: str):
@@ -386,22 +388,44 @@ async def generate_document(request: GenerateDocumentRequest):
     - 上一个subsection合格才能生成下一个
     - history在下一个subsection生成时被提取出来
     - history也在Verifier验证时使用
+    - 可选全局串行：同一时刻只允许一个文档任务执行（默认开启）
     """
     try:
         orchestrator = get_document_generation_orchestrator()
-        
-        result = orchestrator.generate_document(
-            document_id=request.document_id,
-            title=request.title,
-            structure=request.structure,
-            content_prompts=request.content_prompts,
-            user_background=request.user_background,
-            user_requirements=request.user_requirements,
-            rel_threshold=request.rel_threshold,
-            red_threshold=request.red_threshold
-        )
-        
-        return result
+
+        serialize_tasks = os.getenv("SERIALIZE_DOCUMENT_TASKS", "true").lower() == "true"
+        lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "0"))
+
+        acquired = True
+        if serialize_tasks:
+            if lock_wait_timeout > 0:
+                acquired = document_generation_lock.acquire(timeout=lock_wait_timeout)
+            else:
+                document_generation_lock.acquire()
+
+            if not acquired:
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        f"已有文档生成任务正在运行，请稍后重试（等待上限 {lock_wait_timeout:.0f}s）"
+                    ),
+                )
+
+        try:
+            result = orchestrator.generate_document(
+                document_id=request.document_id,
+                title=request.title,
+                structure=request.structure,
+                content_prompts=request.content_prompts,
+                user_background=request.user_background,
+                user_requirements=request.user_requirements,
+                rel_threshold=request.rel_threshold,
+                red_threshold=request.red_threshold
+            )
+            return result
+        finally:
+            if serialize_tasks and acquired:
+                document_generation_lock.release()
         
     except Exception as e:
         import traceback

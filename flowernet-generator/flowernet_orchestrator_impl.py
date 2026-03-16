@@ -32,6 +32,8 @@ import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import time
+import os
+import random
 
 
 class DocumentGenerationOrchestrator:
@@ -48,7 +50,7 @@ class DocumentGenerationOrchestrator:
         max_iterations: int = 5,
         history_manager: Optional[Any] = None,
         history_window_size: int = 5,  # 历史窗口大小：只使用最近N个小节
-        max_forced_iterations: int = 15  # 强制通过阈值：超过此次数强制通过
+        max_forced_iterations: int = 15  # 兼容旧参数：不再用于强制通过
     ):
         """初始化编排器"""
         self.generator_url = generator_url
@@ -59,6 +61,11 @@ class DocumentGenerationOrchestrator:
         self.history_manager = history_manager
         self.history_window_size = history_window_size
         self.max_forced_iterations = max_forced_iterations
+        self.retry_base_delay = float(os.getenv("DOC_RETRY_BASE_DELAY", "2.0"))
+        self.retry_max_delay = float(os.getenv("DOC_RETRY_MAX_DELAY", "90.0"))
+        self.retry_jitter = float(os.getenv("DOC_RETRY_JITTER", "0.5"))
+        self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "true").lower() == "true"
+        self.max_subsection_attempts = int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "0"))
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -66,6 +73,12 @@ class DocumentGenerationOrchestrator:
         self._local_generator = None
         self._local_verifier = None
         self._local_controller = None
+
+    def _compute_retry_delay(self, attempt: int) -> float:
+        base = self.retry_base_delay * (2 ** max(0, min(attempt - 1, 6)))
+        delay = min(base, self.retry_max_delay)
+        delay += random.uniform(0.0, self.retry_jitter)
+        return min(delay, self.retry_max_delay)
 
     def set_local_generator(self, generator):
         """设置本地Generator实例，避免HTTP自调用"""
@@ -472,46 +485,27 @@ class DocumentGenerationOrchestrator:
         
         while True:
             iterations += 1
-            if iterations <= self.max_iterations:
-                print(f"\n      尝试 {iterations}/{self.max_iterations}")
-            elif iterations <= self.max_forced_iterations:
-                print(f"\n      尝试 {iterations}（超过配置上限，继续重试；达到 {self.max_forced_iterations} 次后将强制通过）")
-            else:
-                print(f"\n      ⚠️  已达到最大尝试次数 {self.max_forced_iterations}，强制通过当前小节")
-                draft_to_save = all_drafts[-1] if all_drafts else ""
+            if (not self.subsection_retry_forever) and self.max_subsection_attempts > 0 and iterations > self.max_subsection_attempts:
                 self._emit_progress_event(
                     document_id=document_id,
                     section_id=section_id,
                     subsection_id=subsection_id,
-                    stage="subsection_forced_pass",
-                    message=f"达到最大迭代次数 {self.max_forced_iterations}，强制通过",
-                    metadata={"iteration": iterations, "forced": True},
+                    stage="subsection_exhausted",
+                    message=f"达到最大尝试次数 {self.max_subsection_attempts}，小节失败",
+                    metadata={"iteration": iterations - 1},
                 )
-                if self.history_manager:
-                    self.history_manager.update_subsection_content(
-                        document_id=document_id,
-                        section_id=section_id,
-                        subsection_id=subsection_id,
-                        generated_content=draft_to_save,
-                        outline=current_outline,
-                        relevancy_index=0.0,
-                        redundancy_index=1.0,
-                        is_passed=False,
-                        iteration_count=iterations
-                    )
                 return {
-                    "success": True,
-                    "draft": draft_to_save,
+                    "success": False,
+                    "error": f"小节未通过且达到最大尝试次数: {self.max_subsection_attempts}",
                     "final_outline": current_outline,
-                    "iterations": iterations,
-                    "verification": {
-                        "relevancy_index": 0.0,
-                        "redundancy_index": 1.0,
-                        "feedback": "强制通过（达到最大迭代次数）",
-                        "forced": True
-                    },
-                    "all_drafts": all_drafts
+                    "iterations": iterations - 1,
+                    "all_drafts": all_drafts,
                 }
+
+            if iterations <= self.max_iterations:
+                print(f"\n      尝试 {iterations}/{self.max_iterations}")
+            else:
+                print(f"\n      尝试 {iterations}（超过配置迭代上限，继续严格闭环直到通过）")
             
             print(f"         🎯 调用 Generator...")
             self._emit_progress_event(
@@ -543,7 +537,7 @@ class DocumentGenerationOrchestrator:
                     message=f"第 {iterations} 轮：Generator 失败，准备重试",
                     metadata={"iteration": iterations, "error": gen_result.get("error", "unknown")},
                 )
-                time.sleep(1)
+                time.sleep(self._compute_retry_delay(iterations))
                 continue
             
             draft = gen_result.get("draft", "")
@@ -577,7 +571,7 @@ class DocumentGenerationOrchestrator:
                     message=f"第 {iterations} 轮：Verifier 调用失败，准备重试",
                     metadata={"iteration": iterations},
                 )
-                time.sleep(1)
+                time.sleep(self._compute_retry_delay(iterations))
                 continue
             
             is_passed = verify_result.get("is_passed", False)
@@ -653,7 +647,12 @@ class DocumentGenerationOrchestrator:
                     metadata={"iteration": iterations, "controller_retry": controller_retry},
                 )
                 controller_result = self._call_controller(
-                    old_outline=current_outline,
+                    old_outline=self._resolve_subsection_outline(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        fallback_outline=current_outline,
+                    ),
                     failed_draft=draft,
                     feedback=verify_result,
                     outline=outline,
@@ -697,7 +696,7 @@ class DocumentGenerationOrchestrator:
                     message=f"第 {iterations} 轮：Controller 改纲失败，继续重试",
                     metadata={"iteration": iterations, "controller_retry": controller_retry},
                 )
-                time.sleep(1)
+                time.sleep(self._compute_retry_delay(controller_retry))
     
     def _build_enhanced_prompt(
         self,

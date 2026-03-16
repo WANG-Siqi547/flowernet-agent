@@ -158,21 +158,35 @@ services:
       - key: OPENROUTER_APP_NAME
         value: FlowerNet
       - key: PROVIDER_RETRIES
-        value: "4"
+        value: "6"
       - key: PROVIDER_BACKOFF
-        value: "2.0"
+        value: "3.0"
       - key: PROVIDER_MAX_BACKOFF
-        value: "90.0"
+        value: "180.0"
       - key: PROVIDER_JITTER
-        value: "0.4"
+        value: "0.5"
       - key: PROVIDER_MIN_INTERVAL
-        value: "1.2"
-      - key: ORCH_GENERATOR_RETRIES
-        value: "4"
-      - key: ORCH_GENERATOR_BACKOFF
         value: "2.0"
+      - key: ORCH_GENERATOR_RETRIES
+        value: "6"
+      - key: ORCH_GENERATOR_BACKOFF
+        value: "3.0"
       - key: ORCH_GENERATOR_MAX_BACKOFF
-        value: "60.0"
+        value: "120.0"
+      - key: SERIALIZE_DOCUMENT_TASKS
+        value: "true"
+      - key: SERIALIZE_DOCUMENT_WAIT_TIMEOUT
+        value: "0"
+      - key: DOC_RETRY_BASE_DELAY
+        value: "2.0"
+      - key: DOC_RETRY_MAX_DELAY
+        value: "90.0"
+      - key: DOC_RETRY_JITTER
+        value: "0.5"
+      - key: SUBSECTION_RETRY_FOREVER
+        value: "true"
+      - key: MAX_SUBSECTION_ATTEMPTS
+        value: "0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
