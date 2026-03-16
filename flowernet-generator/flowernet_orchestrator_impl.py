@@ -672,6 +672,10 @@ class DocumentGenerationOrchestrator:
                     failed_draft=draft,
                     feedback=verify_result,
                     outline=outline,
+                    history=[h["content"] for h in windowed_history],
+                    iteration=iterations,
+                    rel_threshold=effective_rel_threshold,
+                    red_threshold=effective_red_threshold,
                     document_id=document_id,
                     section_id=section_id,
                     subsection_id=subsection_id,
@@ -723,45 +727,44 @@ class DocumentGenerationOrchestrator:
         red_threshold: float,
     ) -> str:
         """
-        构建增强的生成提示，包含大纲和历史context
+        构建增强的生成提示，按照正确流程:
+        - 大纲（已此前存储在数据库的 subsection outline）
+        - history（已通过验证的前置小节）
+        一起发送给 LLM，提示生成高相关性、低冗余度的内容。
         """
-        enhanced = f"""
-你正在编写一篇文档的特定部分。
+        enhanced = f"""你正在撰写一篇文档的某个小节。
 
-【当前部分的大纲和要求】
+【当前小节的详细大纲（必须严格按照它展开，这是内容的完整范围和边界）】
 {outline}
 
 """
-        
+
         if history_text:
-            enhanced += f"""【前面已生成的内容（作为参考，避免重复）】
+            enhanced += f"""【前面已通过验证的小节内容（作为已生成内容的参考）】
 {history_text}
 
 【生成要求】
-- 明确目标：输出需具备 high relevancy 和 low redundancy
-- 量化约束：relevancy_index >= {rel_threshold:.2f}，redundancy_index <= {red_threshold:.2f}
-- 基于上述大纲，生成新的内容
-- 与前面的内容保持逻辑连贯
-- 避免与前面内容重复或冗余
-- 确保内容与大纲高度相关
-- 字数控制在 300-500 字
+- 目标指标：relevancy_index >= {rel_threshold:.2f}，redundancy_index <= {red_threshold:.2f}
+- 「必须满足」：内容必须与当前小节大纲高度匹配，每个段落都要服从大纲中的具体要求
+- 「必须遵免」：不得重复、改写或拼套上面《已通过小节内容》中已有的信息；若内容馆相似会指文重写
+- 与前面小节保持逻辑连贯，但展开全新的视角和信息
+- 字数控制在 500～800 字
 
 """
         else:
             enhanced += f"""【生成要求】
-- 明确目标：输出需具备 high relevancy 和 low redundancy
-- 量化约束：relevancy_index >= {rel_threshold:.2f}，redundancy_index <= {red_threshold:.2f}
-- 严格围绕当前大纲，不写无关内容
-- 字数控制在 300-500 字
+- 目标指标：relevancy_index >= {rel_threshold:.2f}，redundancy_index <= {red_threshold:.2f}
+- 「必须满足」：内容必须与当前小节大纲高度匹配，不写大纲之外的内容
+- 字数控制在 500～800 字
 
 """
-        
+
         enhanced += f"""【原始生成指令】
 {original_prompt}
 
-请直接输出所需的内容，不要添加任何前言或后言。
+请直接输出该小节的正文内容，不要添加任何前言或后语。
 """
-        
+
         return enhanced.strip()
     
     def _call_generator(self, prompt: str) -> Dict[str, Any]:
@@ -844,6 +847,10 @@ class DocumentGenerationOrchestrator:
         failed_draft: str,
         feedback: Dict[str, Any],
         outline: str,
+        history: Optional[List[str]] = None,
+        iteration: int = 1,
+        rel_threshold: float = 0.80,
+        red_threshold: float = 0.40,
         document_id: Optional[str] = None,
         section_id: Optional[str] = None,
         subsection_id: Optional[str] = None,
@@ -855,6 +862,10 @@ class DocumentGenerationOrchestrator:
                 "current_outline": old_outline,
                 "failed_draft": failed_draft,
                 "feedback": feedback,
+                "history": history or [],
+                "iteration": iteration,
+                "rel_threshold": rel_threshold,
+                "red_threshold": red_threshold,
             }
             if document_id:
                 payload["document_id"] = document_id

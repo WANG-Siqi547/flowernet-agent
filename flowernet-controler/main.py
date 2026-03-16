@@ -113,6 +113,10 @@ class ImproveOutlineRequest(BaseModel):
     current_outline: str  # 当前大纲（可能已被改进过）
     failed_draft: str  # 验证失败的内容
     feedback: Dict[str, Any]  # Verifier 的反馈
+    history: List[str] = []  # 已通过小节的历史内容（用于去重指导）
+    iteration: int = 1  # 当前迭代轮次（第几次改纲）
+    rel_threshold: float = 0.80  # 实际生效的相关性阈值
+    red_threshold: float = 0.40  # 实际生效的冗余度阈值
     # 可选：如果传了这三个 ID，controller 会直接从数据库读取最新大纲并在成功后回写
     document_id: Optional[str] = None
     section_id: Optional[str] = None
@@ -209,7 +213,10 @@ async def improve_outline(req: ImproveOutlineRequest):
         rel_score = req.feedback.get("relevancy_index", 0)
         red_score = req.feedback.get("redundancy_index", 0)
         feedback_text = req.feedback.get("feedback", "")
-        iteration = req.feedback.get("iteration", 1)
+        # 使用请求中传入的实际值（不再从 feedback 里尝试读取）
+        iteration = req.iteration
+        rel_threshold = req.rel_threshold
+        red_threshold = req.red_threshold
 
         # 优先从 DB 里取最新大纲，这样 controller 能感知之前已经改过的版本
         db_outline = _fetch_subsection_outline_from_db(
@@ -220,33 +227,41 @@ async def improve_outline(req: ImproveOutlineRequest):
         working_outline = db_outline if db_outline else req.current_outline
         original_outline = req.original_outline or working_outline
 
-        improvement_prompt = f"""
-你是一个文档写作指导专家。
+        # 构建历史上下文（已通过小节的摘要，供去重指导）
+        history_context = ""
+        if req.history:
+            recent = req.history[-3:]  # 仅取最近3条避免 prompt 过长
+            history_context = "\n\n已通过的前置内容（请避免与这些内容重复）：\n"
+            for i, h in enumerate(recent, 1):
+                history_context += f"[已通过小节 {i}]（前200字）: {h[:200]}\n"
 
-原始大纲要求：
+        improvement_prompt = f"""
+你是一个文档写作指导专家。本次你的任务是改进一个小节的详细写作大纲，使得根据该大纲生成的内容能够通过以下验证指标：
+- 相关性（relevancy_index）需 >= {rel_threshold:.2f}（当前: {rel_score:.4f}）
+- 冗余度（redundancy_index）需 <= {red_threshold:.2f}（当前: {red_score:.4f}）
+
+这是第 {iteration} 次改纲尝试。
+
+【原始大纲（保持原始意图不变）】
 {original_outline}
 
-当前大纲：
+【当前大纲（第 {iteration-1} 轮的版本，本次需要改进）】
 {working_outline}
 
-生成失败的内容（前500字）：
+【验证失败的内容（前500字）】
 {req.failed_draft[:500]}
 
-验证反馈：
-- 相关性分数: {rel_score:.4f} (目标 >= 0.6)
-- 冗余度分数: {red_score:.4f} (目标 <= 0.7)
-- 反馈: {feedback_text}
+【Verifier 反馈】
+{feedback_text}
+{history_context}
+【改进要求】
+{"1. 相关性不足（" + str(round(rel_score,4)) + " < " + str(rel_threshold) + "）：大纲要更明确、具体，强调该小节的核心主题，列出必须涵盖的关键点，确保每个写作要点都与主题直接相关。" if rel_score < rel_threshold else "1. 相关性已满足，保持当前主题聚焦度。"}
+{"2. 冗余度过高（" + str(round(red_score,4)) + " > " + str(red_threshold) + "）：大纲中必须明确指出哪些角度/信息已被前文覆盖，要求写全新的视角，可以列出具体的禁止重复方向。" if red_score > red_threshold else "2. 冗余度已满足，保持现有差异化要求。"}
 
-请根据以上信息改进大纲，使生成的内容能通过验证。改进建议：
-1. 如果相关性不足（{rel_score:.4f} < 0.6）：大纲要更明确具体，强调核心主题，列出必须涵盖的关键点
-2. 如果冗余度过高（{red_score:.4f} > 0.7）：大纲要提示写全新的角度和信息，明确指出禁止重复的内容类型
-3. 如果两者都需要改进：综合上述两点
-
-请直接输出改进后的详细大纲文本，不要添加任何前言或标签。
+请直接输出改进后的详细大纲文本（仍然是大纲，不是正文），不要添加任何前言或解释标签。
 """
 
         import requests as _req
-        outliner_base = (os.getenv("OUTLINER_URL", "http://localhost:8003")).rstrip("/")
         generator_base = (os.getenv("GENERATOR_URL", "http://localhost:8002")).rstrip("/")
 
         improved_outline = None
@@ -268,13 +283,11 @@ async def improve_outline(req: ImproveOutlineRequest):
             print(f"⚠️  LLM 改进大纲失败（会使用规则降级）: {e}")
 
         if not improved_outline:
-            improved_outline = f"{original_outline}\n\n【第 {iteration} 次改进建议】\n"
-            if rel_score < 0.6:
-                improved_outline += "- 增加与主题高度相关的细节内容\n"
-                improved_outline += "- 在开头明确表述核心观点\n"
-            if red_score > 0.7:
-                improved_outline += "- 避免与前文重复，强调新的视角和信息\n"
-                improved_outline += "- 补充前文未覆盖的领域\n"
+            improved_outline = f"{original_outline}\n\n【第 {iteration} 次改进建议（规则降级）】\n"
+            if rel_score < rel_threshold:
+                improved_outline += f"- 当前相关性 {rel_score:.4f} 不足 {rel_threshold}，增加与主题高度相关的细节，在开头明确表述核心观点\n"
+            if red_score > red_threshold:
+                improved_outline += f"- 当前冗余度 {red_score:.4f} 超过 {red_threshold}，避免与前文重复，强调全新视角和信息\n"
             if "偏离主题" in feedback_text or rel_score < 0.5:
                 improved_outline += "- 严格遵循主题，每句话都要与主题直接相关\n"
 

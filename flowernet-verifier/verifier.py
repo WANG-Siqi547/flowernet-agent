@@ -158,7 +158,7 @@ class FlowerNetVerifier:
         }
 
     # --- 维度 3: 综合判定 (Decision) ---
-    def verify(self, draft, outline, history_list, rel_threshold=0.4, red_threshold=0.6):
+    def verify(self, draft, outline, history_list, rel_threshold=0.80, red_threshold=0.40):
         """
         一键验证逻辑：FlowerNet 决定是否进入下一步
         """
