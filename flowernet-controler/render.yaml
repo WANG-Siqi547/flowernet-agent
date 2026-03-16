@@ -17,4 +17,8 @@ services:
         value: "true"
       - key: DATABASE_PATH
         value: /tmp/flowernet_history.db
+      - key: OUTLINER_URL
+        value: https://flowernet-outliner.onrender.com
+      - key: GENERATOR_URL
+        value: https://flowernet-generator.onrender.com
     healthCheckPath: /

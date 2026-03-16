@@ -20,6 +20,7 @@ from flowernet_orchestrator import DocumentGenerationOrchestrator
 # 导入 HistoryManager
 try:
     from history_store import HistoryManager
+    from remote_history_client import RemoteHistoryManager
     HISTORY_AVAILABLE = True
 except ImportError:
     print("⚠️  警告: 无法导入 HistoryManager，数据库存储功能将不可用")
@@ -100,33 +101,55 @@ orchestrator = None
 document_orchestrator = None
 history_manager = None
 
+
+def get_history_manager(outliner_url: str):
+    """优先通过 outliner 服务访问共享数据库，避免多服务各自持有本地 SQLite。"""
+    global history_manager
+
+    if history_manager is not None:
+        return history_manager
+
+    if not HISTORY_AVAILABLE:
+        return None
+
+    use_remote_history = os.getenv('USE_REMOTE_HISTORY', 'true').lower() == 'true'
+    if use_remote_history and outliner_url:
+        history_manager = RemoteHistoryManager(
+            base_url=outliner_url,
+            timeout=int(os.getenv('HISTORY_HTTP_TIMEOUT', '60')),
+        )
+        print(f"✅ HistoryManager 已初始化 (Remote via {outliner_url})")
+        return history_manager
+
+    use_db = os.getenv('USE_DATABASE', 'true').lower() == 'true'
+    raw_db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
+    if os.path.isabs(raw_db_path):
+        db_path = raw_db_path
+    else:
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        db_path = os.path.join(project_root, raw_db_path)
+    history_manager = HistoryManager(use_database=use_db, db_path=db_path)
+    print(f"✅ HistoryManager 已初始化 ({'数据库模式' if use_db else '内存模式'})")
+    return history_manager
+
+
 def get_orchestrator():
-    """获取或初始化编排器（带 HistoryManager）"""
+    """获取或初始化编排器（带共享 HistoryManager）"""
     global orchestrator, history_manager
     if orchestrator is None:
         generator_url = os.getenv('GENERATOR_URL', 'http://localhost:8002')
         verifier_url = os.getenv('VERIFIER_URL', 'http://localhost:8000')
         controller_url = os.getenv('CONTROLLER_URL', 'http://localhost:8001')
+        outliner_url = os.getenv('OUTLINER_URL', 'http://localhost:8003')
         max_iterations = int(os.getenv('MAX_ITERATIONS', '5'))
-        
-        # 初始化 HistoryManager
-        if HISTORY_AVAILABLE and history_manager is None:
-            use_db = os.getenv('USE_DATABASE', 'true').lower() == 'true'
-            raw_db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
-            if os.path.isabs(raw_db_path):
-                db_path = raw_db_path
-            else:
-                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                db_path = os.path.join(project_root, raw_db_path)
-            history_manager = HistoryManager(use_database=use_db, db_path=db_path)
-            print(f"✅ HistoryManager 已初始化 ({'数据库模式' if use_db else '内存模式'})")
+        history_manager = get_history_manager(outliner_url)
         
         orchestrator = FlowerNetOrchestrator(
             generator_url=generator_url,
             verifier_url=verifier_url,
             controller_url=controller_url,
             max_iterations=max_iterations,
-            history_manager=history_manager  # 传入 HistoryManager
+            history_manager=history_manager
         )
         
         # 为 orchestrator 注入本地 generator 实例，避免 HTTP 递归调用
@@ -150,17 +173,7 @@ def get_document_generation_orchestrator():
         controller_url = os.getenv('CONTROLLER_URL', 'http://localhost:8001')
         outliner_url = os.getenv('OUTLINER_URL', 'http://localhost:8003')
         max_iterations = int(os.getenv('MAX_ITERATIONS', '5'))
-        
-        # 确保 HistoryManager 已初始化
-        if HISTORY_AVAILABLE and history_manager is None:
-            use_db = os.getenv('USE_DATABASE', 'true').lower() == 'true'
-            raw_db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
-            if os.path.isabs(raw_db_path):
-                db_path = raw_db_path
-            else:
-                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                db_path = os.path.join(project_root, raw_db_path)
-            history_manager = HistoryManager(use_database=use_db, db_path=db_path)
+        history_manager = get_history_manager(outliner_url)
         
         document_orchestrator = DocumentGenerationOrchestrator(
             generator_url=generator_url,

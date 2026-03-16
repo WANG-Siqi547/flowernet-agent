@@ -98,6 +98,22 @@ class HistoryManager:
             """
         )
 
+        # 新表：流程事件（用于前端展示生成细节）
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS progress_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id TEXT NOT NULL,
+                section_id TEXT,
+                subsection_id TEXT,
+                stage TEXT NOT NULL,
+                message TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                metadata TEXT
+            )
+            """
+        )
+
         # 创建索引
         cursor.execute(
             """
@@ -124,6 +140,13 @@ class HistoryManager:
             """
             CREATE INDEX IF NOT EXISTS idx_passed_history
             ON passed_history(document_id)
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_progress_document
+            ON progress_events(document_id, id)
             """
         )
 
@@ -356,13 +379,20 @@ class HistoryManager:
         subsection_id: str,
         outline: str,
     ):
-        """为新的 subsection 创建追踪记录"""
+        """为新的 subsection 创建或重置追踪记录"""
         timestamp = datetime.now().isoformat()
         
         if self.use_database:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
+            cursor.execute(
+                """
+                DELETE FROM subsection_tracking
+                WHERE document_id = ? AND section_id = ? AND subsection_id = ?
+                """,
+                (document_id, section_id, subsection_id),
+            )
             cursor.execute(
                 """
                 INSERT INTO subsection_tracking (document_id, section_id, subsection_id, outline, created_at, updated_at)
@@ -379,37 +409,57 @@ class HistoryManager:
         document_id: str,
         section_id: str,
         subsection_id: str,
-        generated_content: str,
-        relevancy_index: float,
-        redundancy_index: float,
-        is_passed: bool,
-        iteration_count: int,
+        generated_content: Optional[str] = None,
+        relevancy_index: Optional[float] = None,
+        redundancy_index: Optional[float] = None,
+        is_passed: Optional[bool] = None,
+        iteration_count: Optional[int] = None,
+        outline: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
-        """更新 subsection 的生成内容和验证结果"""
+        """更新 subsection 的大纲、生成内容和验证结果"""
         timestamp = datetime.now().isoformat()
         
         if self.use_database:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
+            fields = []
+            values = []
+
+            if outline is not None:
+                fields.append("outline = ?")
+                values.append(outline)
+            if generated_content is not None:
+                fields.append("generated_content = ?")
+                values.append(generated_content)
+            if relevancy_index is not None:
+                fields.append("relevancy_index = ?")
+                values.append(relevancy_index)
+            if redundancy_index is not None:
+                fields.append("redundancy_index = ?")
+                values.append(redundancy_index)
+            if is_passed is not None:
+                fields.append("is_passed = ?")
+                values.append(1 if is_passed else 0)
+            if iteration_count is not None:
+                fields.append("iteration_count = ?")
+                values.append(iteration_count)
+            if metadata is not None:
+                fields.append("metadata = ?")
+                values.append(json.dumps(metadata))
+
+            fields.append("updated_at = ?")
+            values.append(timestamp)
+            values.extend([document_id, section_id, subsection_id])
+
             cursor.execute(
-                """
+                f"""
                 UPDATE subsection_tracking
-                SET generated_content = ?, relevancy_index = ?, redundancy_index = ?, 
-                    is_passed = ?, iteration_count = ?, updated_at = ?
+                SET {', '.join(fields)}
                 WHERE document_id = ? AND section_id = ? AND subsection_id = ?
                 """,
-                (
-                    generated_content,
-                    relevancy_index,
-                    redundancy_index,
-                    1 if is_passed else 0,
-                    iteration_count,
-                    timestamp,
-                    document_id,
-                    section_id,
-                    subsection_id,
-                ),
+                values,
             )
             
             conn.commit()
@@ -532,3 +582,90 @@ class HistoryManager:
             conn.commit()
             conn.close()
             print(f"✅ 已清空文档 {document_id} 的已通过历史链 (Database)")
+
+    # ============ 新增方法：流程事件管理 ============
+
+    def add_progress_event(
+        self,
+        document_id: str,
+        stage: str,
+        message: str,
+        section_id: Optional[str] = None,
+        subsection_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[int]:
+        """记录一条流程事件，用于前端展示详细生成过程。"""
+        timestamp = datetime.now().isoformat()
+
+        if self.use_database:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO progress_events (document_id, section_id, subsection_id, stage, message, timestamp, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document_id,
+                    section_id,
+                    subsection_id,
+                    stage,
+                    message,
+                    timestamp,
+                    json.dumps(metadata or {}),
+                ),
+            )
+            event_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            return event_id
+
+        return None
+
+    def get_progress_events(
+        self,
+        document_id: str,
+        after_id: int = 0,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """获取某文档的流程事件，支持增量拉取。"""
+        if self.use_database:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, document_id, section_id, subsection_id, stage, message, timestamp, metadata
+                FROM progress_events
+                WHERE document_id = ? AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (document_id, max(0, int(after_id)), max(1, int(limit))),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+
+            return [
+                {
+                    "id": row[0],
+                    "document_id": row[1],
+                    "section_id": row[2],
+                    "subsection_id": row[3],
+                    "stage": row[4],
+                    "message": row[5],
+                    "timestamp": row[6],
+                    "metadata": json.loads(row[7]) if row[7] else {},
+                }
+                for row in rows
+            ]
+
+        return []
+
+    def clear_progress_events(self, document_id: str):
+        """清空某文档的流程事件。"""
+        if self.use_database:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM progress_events WHERE document_id = ?", (document_id,))
+            conn.commit()
+            conn.close()

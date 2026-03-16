@@ -66,6 +66,8 @@ services:
         value: https://flowernet-controller.onrender.com
       - key: OUTLINER_URL
         value: https://flowernet-outliner.onrender.com
+      - key: USE_REMOTE_HISTORY
+        value: "true"
       - key: NO_PROXY
         value: "localhost,127.0.0.1"
     healthCheckPath: /health

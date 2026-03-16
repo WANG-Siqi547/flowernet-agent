@@ -502,51 +502,177 @@ class FlowerNetOutliner:
 
         raise Exception(f"不支持的 provider: {provider}")
     
+    def generate_detailed_section_outlines(
+            self,
+            structure: Dict[str, Any],
+            user_background: str,
+            user_requirements: str,
+        ) -> Dict[str, Any]:
+            """
+            阶段 2: 基于整篇结构，再调用一次 LLM 生成每个 section/subsection 的详细大纲。
+            """
+            structure_json = json.dumps(structure, ensure_ascii=False, indent=2)
+            detailed_prompt = f"""
+    你是一个专业的学术写作大纲设计专家。
+    
+    现在已经有一份整篇文章的总体结构，请你基于这个总体结构，再进一步生成每个 section 和 subsection 的详细写作大纲。
+    
+    **用户背景**:
+    {user_background}
+    
+    **用户需求**:
+    {user_requirements}
+    
+    **已有总体结构**:
+    {structure_json}
+    
+    **你的任务**:
+    1. 保持原有 title、section id、subsection id 不变
+    2. 为每个 section 生成更详细的 `section_outline`
+    3. 为每个 subsection 生成更详细的 `outline`
+    4. `description` 可以优化，但必须与总体结构一致
+    5. 每个 `outline` 要写清楚该小节应覆盖的核心点、逻辑顺序、避免重复的方向
+    
+    **输出格式**（严格 JSON）:
+    {{
+      "title": "保持原文档标题",
+      "sections": [
+        {{
+          "id": "section_1",
+          "title": "章节标题",
+          "description": "该章节的定位",
+          "section_outline": "该章节整体应该如何展开、章节内部逻辑如何组织、与前后章节如何衔接",
+          "subsections": [
+            {{
+              "id": "subsection_1_1",
+              "title": "小节标题",
+              "description": "该小节的简要说明",
+              "outline": "该小节的详细写作大纲，包含要点、顺序、约束、避免重复的要求"
+            }}
+          ]
+        }}
+      ]
+    }}
+    
+    请直接输出 JSON，不要输出额外解释，不要修改任何 id。
+    """
+            detailed_text, llm_metadata = self._generate_text_with_fallback(detailed_prompt, max_tokens=5000)
+    
+            if detailed_text.startswith("```json"):
+                detailed_text = detailed_text[7:]
+            if detailed_text.startswith("```"):
+                detailed_text = detailed_text[3:]
+            if detailed_text.endswith("```"):
+                detailed_text = detailed_text[:-3]
+    
+            detailed = json.loads(detailed_text.strip())
+            detailed.setdefault("title", structure.get("title", ""))
+    
+            base_sections = structure.get("sections", []) if isinstance(structure.get("sections", []), list) else []
+            detailed_sections = detailed.get("sections", []) if isinstance(detailed.get("sections", []), list) else []
+            detailed_by_section_id = {
+                str(section.get("id", "")).strip(): section
+                for section in detailed_sections
+                if isinstance(section, dict) and str(section.get("id", "")).strip()
+            }
+    
+            normalized_sections: List[Dict[str, Any]] = []
+            for base_section in base_sections:
+                if not isinstance(base_section, dict):
+                    continue
+    
+                section_id = str(base_section.get("id", "")).strip()
+                detailed_section = detailed_by_section_id.get(section_id, {})
+                base_subsections = base_section.get("subsections", []) if isinstance(base_section.get("subsections", []), list) else []
+                detailed_subsections = detailed_section.get("subsections", []) if isinstance(detailed_section.get("subsections", []), list) else []
+                detailed_by_subsection_id = {
+                    str(sub.get("id", "")).strip(): sub
+                    for sub in detailed_subsections
+                    if isinstance(sub, dict) and str(sub.get("id", "")).strip()
+                }
+    
+                normalized_subsections: List[Dict[str, Any]] = []
+                for base_subsection in base_subsections:
+                    if not isinstance(base_subsection, dict):
+                        continue
+                    subsection_id = str(base_subsection.get("id", "")).strip()
+                    detailed_subsection = detailed_by_subsection_id.get(subsection_id, {})
+                    subsection_description = str(
+                        detailed_subsection.get("description")
+                        or base_subsection.get("description")
+                        or f"围绕“{base_subsection.get('title', subsection_id)}”展开"
+                    ).strip()
+                    subsection_outline = str(
+                        detailed_subsection.get("outline")
+                        or subsection_description
+                    ).strip()
+    
+                    normalized_subsections.append({
+                        "id": subsection_id,
+                        "title": str(base_subsection.get("title") or detailed_subsection.get("title") or subsection_id).strip(),
+                        "description": subsection_description,
+                        "outline": subsection_outline,
+                    })
+    
+                section_description = str(
+                    detailed_section.get("description")
+                    or base_section.get("description")
+                    or ""
+                ).strip()
+                section_outline = str(
+                    detailed_section.get("section_outline")
+                    or section_description
+                    or f"本章围绕“{base_section.get('title', section_id)}”展开。"
+                ).strip()
+    
+                normalized_sections.append({
+                    "id": section_id,
+                    "title": str(base_section.get("title") or detailed_section.get("title") or section_id).strip(),
+                    "description": section_description,
+                    "section_outline": section_outline,
+                    "subsections": normalized_subsections,
+                })
+    
+            return {
+                "success": True,
+                "structure": {
+                    "title": detailed.get("title") or structure.get("title", ""),
+                    "sections": normalized_sections,
+                },
+                "metadata": {
+                    "provider": llm_metadata.get("provider", self.last_provider_used),
+                    "model": llm_metadata.get("model", self.model),
+                    "prompt_tokens": llm_metadata.get("prompt_tokens", 0),
+                    "output_tokens": llm_metadata.get("output_tokens", 0),
+                },
+            }
+    
     def generate_content_prompts(
         self,
         structure: Dict[str, Any],
         user_background: str,
         user_requirements: str
     ) -> List[Dict[str, Any]]:
-        """
-        阶段 2: 为每个 subsection 生成 Content Prompt
-        
-        Args:
-            structure: 阶段 1 生成的文档结构
-            user_background: 用户背景
-            user_requirements: 用户需求
-            
-        Returns:
-            [
-                {
-                    "section_id": "section_1",
-                    "subsection_id": "subsection_1_1",
-                    "section_title": "章节标题",
-                    "subsection_title": "子章节标题",
-                    "content_prompt": "生成该段的详细提示词",
-                    "order": 1  # 生成顺序
-                },
-                ...
-            ]
-        """
+        """阶段 3: 基于详细 subsection outline 生成 Content Prompt。"""
         content_prompts = []
         order = 1
         
         for section in structure.get("sections", []):
             section_id = section.get("id", "")
             section_title = section.get("title", "")
+            section_outline = section.get("section_outline", "")
             
             for subsection in section.get("subsections", []):
                 subsection_id = subsection.get("id", "")
                 subsection_title = subsection.get("title", "")
                 subsection_desc = subsection.get("description", "")
+                subsection_outline = subsection.get("outline", subsection_desc)
                 
-                # 为该 subsection 生成 Content Prompt
                 content_prompt = self._build_content_prompt(
                     document_title=structure.get("title", ""),
                     section_title=section_title,
                     subsection_title=subsection_title,
-                    subsection_description=subsection_desc,
+                    subsection_description=subsection_outline,
                     user_background=user_background,
                     user_requirements=user_requirements
                 )
@@ -556,7 +682,9 @@ class FlowerNetOutliner:
                     "subsection_id": subsection_id,
                     "section_title": section_title,
                     "subsection_title": subsection_title,
+                    "section_outline": section_outline,
                     "subsection_description": subsection_desc,
+                    "subsection_outline": subsection_outline,
                     "content_prompt": content_prompt,
                     "order": order
                 })
@@ -565,7 +693,7 @@ class FlowerNetOutliner:
         
         print(f"✅ 生成了 {len(content_prompts)} 个 Content Prompts")
         return content_prompts
-    
+
     def _build_content_prompt(
         self,
         document_title: str,
@@ -575,9 +703,7 @@ class FlowerNetOutliner:
         user_background: str,
         user_requirements: str
     ) -> str:
-        """
-        构建单个 subsection 的 Content Prompt
-        """
+        """构建单个 subsection 的 Content Prompt"""
         prompt = f"""
 你正在撰写一篇关于"{document_title}"的文档。
 
@@ -590,11 +716,11 @@ class FlowerNetOutliner:
 **当前章节**: {section_title}
 **当前小节**: {subsection_title}
 
-**该小节要求**:
+**该小节详细大纲**:
 {subsection_description}
 
 **写作要求**:
-1. 紧扣"{subsection_title}"这个主题，确保内容相关性
+1. 严格按照当前小节详细大纲展开
 2. 详细展开，字数控制在 500-800 字
 3. 使用清晰的逻辑结构，可以包含小标题
 4. 语言专业、准确，避免空洞内容
@@ -613,18 +739,8 @@ class FlowerNetOutliner:
         max_subsections_per_section: int = 4
     ) -> Dict[str, Any]:
         """
-        完整流程: 生成文档结构 + 为每段生成 Content Prompt
-        
-        Returns:
-            {
-                "success": True,
-                "document_title": "...",
-                "structure": {...},
-                "content_prompts": [...],
-                "metadata": {...}
-            }
+        完整流程: 第一次 LLM 生成总体结构，第二次 LLM 生成 section/subsection 详细大纲，再生成 prompt。
         """
-        # 阶段 1: 生成大纲
         structure_result = self.generate_document_structure(
             user_background=user_background,
             user_requirements=user_requirements,
@@ -635,9 +751,17 @@ class FlowerNetOutliner:
         if not structure_result.get("success"):
             return structure_result
         
-        structure = structure_result["structure"]
-        
-        # 阶段 2: 生成所有 Content Prompts
+        base_structure = structure_result["structure"]
+        detailed_outline_result = self.generate_detailed_section_outlines(
+            structure=base_structure,
+            user_background=user_background,
+            user_requirements=user_requirements,
+        )
+
+        if not detailed_outline_result.get("success"):
+            return detailed_outline_result
+
+        structure = detailed_outline_result["structure"]
         content_prompts = self.generate_content_prompts(
             structure=structure,
             user_background=user_background,
@@ -650,7 +774,10 @@ class FlowerNetOutliner:
             "structure": structure,
             "content_prompts": content_prompts,
             "total_subsections": len(content_prompts),
-            "metadata": structure_result.get("metadata", {})
+            "metadata": {
+                "structure_generation": structure_result.get("metadata", {}),
+                "detail_generation": detailed_outline_result.get("metadata", {}),
+            }
         }
     
     def _call_ollama(self, prompt: str, max_tokens: int = 2000) -> str:

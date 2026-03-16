@@ -379,13 +379,20 @@ class HistoryManager:
         subsection_id: str,
         outline: str,
     ):
-        """为新的 subsection 创建追踪记录"""
+        """为新的 subsection 创建或重置追踪记录"""
         timestamp = datetime.now().isoformat()
         
         if self.use_database:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
+            cursor.execute(
+                """
+                DELETE FROM subsection_tracking
+                WHERE document_id = ? AND section_id = ? AND subsection_id = ?
+                """,
+                (document_id, section_id, subsection_id),
+            )
             cursor.execute(
                 """
                 INSERT INTO subsection_tracking (document_id, section_id, subsection_id, outline, created_at, updated_at)
@@ -402,37 +409,57 @@ class HistoryManager:
         document_id: str,
         section_id: str,
         subsection_id: str,
-        generated_content: str,
-        relevancy_index: float,
-        redundancy_index: float,
-        is_passed: bool,
-        iteration_count: int,
+        generated_content: Optional[str] = None,
+        relevancy_index: Optional[float] = None,
+        redundancy_index: Optional[float] = None,
+        is_passed: Optional[bool] = None,
+        iteration_count: Optional[int] = None,
+        outline: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
-        """更新 subsection 的生成内容和验证结果"""
+        """更新 subsection 的大纲、生成内容和验证结果"""
         timestamp = datetime.now().isoformat()
         
         if self.use_database:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
+
+            fields = []
+            values = []
+
+            if outline is not None:
+                fields.append("outline = ?")
+                values.append(outline)
+            if generated_content is not None:
+                fields.append("generated_content = ?")
+                values.append(generated_content)
+            if relevancy_index is not None:
+                fields.append("relevancy_index = ?")
+                values.append(relevancy_index)
+            if redundancy_index is not None:
+                fields.append("redundancy_index = ?")
+                values.append(redundancy_index)
+            if is_passed is not None:
+                fields.append("is_passed = ?")
+                values.append(1 if is_passed else 0)
+            if iteration_count is not None:
+                fields.append("iteration_count = ?")
+                values.append(iteration_count)
+            if metadata is not None:
+                fields.append("metadata = ?")
+                values.append(json.dumps(metadata))
+
+            fields.append("updated_at = ?")
+            values.append(timestamp)
+            values.extend([document_id, section_id, subsection_id])
+
             cursor.execute(
-                """
+                f"""
                 UPDATE subsection_tracking
-                SET generated_content = ?, relevancy_index = ?, redundancy_index = ?, 
-                    is_passed = ?, iteration_count = ?, updated_at = ?
+                SET {', '.join(fields)}
                 WHERE document_id = ? AND section_id = ? AND subsection_id = ?
                 """,
-                (
-                    generated_content,
-                    relevancy_index,
-                    redundancy_index,
-                    1 if is_passed else 0,
-                    iteration_count,
-                    timestamp,
-                    document_id,
-                    section_id,
-                    subsection_id,
-                ),
+                values,
             )
             
             conn.commit()

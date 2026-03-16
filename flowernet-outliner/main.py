@@ -79,6 +79,49 @@ class GenerateAndSaveOutlineRequest(BaseModel):
     max_subsections_per_section: int = Field(default=4, ge=1, le=8)
 
 
+class SubsectionTrackingCreateRequest(BaseModel):
+    document_id: str = Field(..., description="文档 ID")
+    section_id: str = Field(..., description="Section ID")
+    subsection_id: str = Field(..., description="Subsection ID")
+    outline: str = Field(..., description="当前 subsection 大纲")
+
+
+class SubsectionTrackingUpdateRequest(BaseModel):
+    document_id: str = Field(..., description="文档 ID")
+    section_id: str = Field(..., description="Section ID")
+    subsection_id: str = Field(..., description="Subsection ID")
+    generated_content: Optional[str] = Field(default=None, description="生成内容")
+    relevancy_index: Optional[float] = Field(default=None, description="相关性分数")
+    redundancy_index: Optional[float] = Field(default=None, description="冗余度分数")
+    is_passed: Optional[bool] = Field(default=None, description="是否通过")
+    iteration_count: Optional[int] = Field(default=None, description="迭代次数")
+    outline: Optional[str] = Field(default=None, description="更新后的 subsection 大纲")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="追踪元数据")
+
+
+class SubsectionTrackingQuery(BaseModel):
+    document_id: str = Field(..., description="文档 ID")
+    section_id: str = Field(..., description="Section ID")
+    subsection_id: str = Field(..., description="Subsection ID")
+
+
+class PassedHistoryEntry(BaseModel):
+    document_id: str = Field(..., description="文档 ID")
+    section_id: str = Field(..., description="Section ID")
+    subsection_id: str = Field(..., description="Subsection ID")
+    content: str = Field(..., description="已通过内容")
+    order_index: int = Field(..., ge=0, description="顺序索引")
+
+
+class ProgressEventCreateRequest(BaseModel):
+    document_id: str = Field(..., description="文档 ID")
+    stage: str = Field(..., description="流程阶段")
+    message: str = Field(..., description="展示消息")
+    section_id: Optional[str] = Field(default=None, description="Section ID")
+    subsection_id: Optional[str] = Field(default=None, description="Subsection ID")
+    metadata: Optional[Dict[str, Any]] = Field(default=None, description="额外元数据")
+
+
 # ============ FastAPI App ============
 
 app = FastAPI(
@@ -361,6 +404,139 @@ async def get_progress_events(query: ProgressQuery):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/progress/add")
+async def add_progress_event(request: ProgressEventCreateRequest):
+    try:
+        history_manager.add_progress_event(
+            document_id=request.document_id,
+            stage=request.stage,
+            message=request.message,
+            section_id=request.section_id,
+            subsection_id=request.subsection_id,
+            metadata=request.metadata,
+        )
+        return {
+            "success": True,
+            "message": "progress event added"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/subsection-tracking/create")
+async def create_subsection_tracking(request: SubsectionTrackingCreateRequest):
+    try:
+        history_manager.create_subsection_tracking(
+            document_id=request.document_id,
+            section_id=request.section_id,
+            subsection_id=request.subsection_id,
+            outline=request.outline,
+        )
+        return {
+            "success": True,
+            "message": "subsection tracking created"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/subsection-tracking/update")
+async def update_subsection_tracking(request: SubsectionTrackingUpdateRequest):
+    try:
+        history_manager.update_subsection_content(
+            document_id=request.document_id,
+            section_id=request.section_id,
+            subsection_id=request.subsection_id,
+            generated_content=request.generated_content,
+            relevancy_index=request.relevancy_index,
+            redundancy_index=request.redundancy_index,
+            is_passed=request.is_passed,
+            iteration_count=request.iteration_count,
+            outline=request.outline,
+            metadata=request.metadata,
+        )
+        return {
+            "success": True,
+            "message": "subsection tracking updated"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/subsection-tracking/get")
+async def get_subsection_tracking(request: SubsectionTrackingQuery):
+    try:
+        tracking = history_manager.get_subsection_tracking(
+            document_id=request.document_id,
+            section_id=request.section_id,
+            subsection_id=request.subsection_id,
+        )
+        return {
+            "success": True,
+            "tracking": tracking,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/passed-history/add")
+async def add_passed_history(entry: PassedHistoryEntry):
+    try:
+        history_manager.add_passed_history(
+            document_id=entry.document_id,
+            section_id=entry.section_id,
+            subsection_id=entry.subsection_id,
+            content=entry.content,
+            order_index=entry.order_index,
+        )
+        return {
+            "success": True,
+            "message": "passed history added"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/passed-history/get")
+async def get_passed_history(query: HistoryQuery):
+    try:
+        history = history_manager.get_passed_history(query.document_id)
+        return {
+            "success": True,
+            "document_id": query.document_id,
+            "history": history,
+            "total": len(history),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/passed-history/get-text")
+async def get_passed_history_text(query: HistoryQuery):
+    try:
+        text = history_manager.get_passed_history_text(query.document_id)
+        return {
+            "success": True,
+            "document_id": query.document_id,
+            "history_text": text,
+            "total_characters": len(text),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/passed-history/clear")
+async def clear_passed_history(query: HistoryQuery):
+    try:
+        history_manager.clear_passed_history(query.document_id)
+        return {
+            "success": True,
+            "message": f"已清空文档 {query.document_id} 的 passed history"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============ 新增：大纲管理接口 ============
 
 @app.post("/outline/save")
@@ -476,21 +652,22 @@ async def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
             }}
         )
         
-        # 第二步：为每个 section 和 subsection 保存其大纲
-        print(f"💾 保存每个 section 和 subsection 的大纲...")
+        # 第二步：为每个 section 和 subsection 保存其详细大纲
+        print(f"💾 保存每个 section 和 subsection 的详细大纲...")
         subsection_outline_count = 0
         
         for section in structure.get("sections", []):
             section_id = section.get("id", "")
             section_title = section.get("title", "")
-            section_description = f"该章节包含以下小节:\n"
+            section_description = section.get("description", "")
+            section_outline = section.get("section_outline", section_description)
             
             for subsection in section.get("subsections", []):
                 subsection_id = subsection.get("id", "")
                 subsection_title = subsection.get("title", "")
                 subsection_desc = subsection.get("description", "")
+                subsection_outline = subsection.get("outline", subsection_desc)
                 
-                # 保存 subsection 的大纲
                 outlined_content_prompt = None
                 for cp in content_prompts:
                     if cp["section_id"] == section_id and cp["subsection_id"] == subsection_id:
@@ -499,23 +676,28 @@ async def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
                 
                 history_manager.save_outline(
                     document_id=request.document_id,
-                    outline_content=f"## {subsection_title}\n\n{subsection_desc}\n\n### 生成提示\n{outlined_content_prompt or 'N/A'}",
+                    outline_content=subsection_outline,
                     outline_type="subsection",
                     section_id=section_id,
                     subsection_id=subsection_id,
-                    metadata={"title": subsection_title}
+                    metadata={
+                        "title": subsection_title,
+                        "description": subsection_desc,
+                        "content_prompt": outlined_content_prompt or "",
+                    }
                 )
                 
                 subsection_outline_count += 1
-                section_description += f"\n- {subsection_title}: {subsection_desc}"
             
-            # 保存 section 的大纲
             history_manager.save_outline(
                 document_id=request.document_id,
-                outline_content=f"# {section_title}\n\n{section_description}",
+                outline_content=section_outline,
                 outline_type="section",
                 section_id=section_id,
-                metadata={"title": section_title}
+                metadata={
+                    "title": section_title,
+                    "description": section_description,
+                }
             )
         
         print(f"✅ 大纲生成并保存完成!")
