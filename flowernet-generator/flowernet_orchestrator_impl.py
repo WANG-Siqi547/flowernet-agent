@@ -29,7 +29,7 @@ FlowerNet 完整编排器 - 按照你的完整需求实现
 
 import requests
 import json
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import time
 import os
@@ -79,6 +79,13 @@ class DocumentGenerationOrchestrator:
         delay = min(base, self.retry_max_delay)
         delay += random.uniform(0.0, self.retry_jitter)
         return min(delay, self.retry_max_delay)
+
+    def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
+        """前3轮使用严格阈值；第4轮起每轮小幅放宽，避免长期卡住。"""
+        relax_steps = max(0, iteration - 3)
+        effective_rel = max(rel_threshold - min(0.03, 0.01 * relax_steps), rel_threshold - 0.03)
+        effective_red = min(red_threshold + min(0.03, 0.01 * relax_steps), red_threshold + 0.03)
+        return round(effective_rel, 4), round(effective_red, 4)
 
     def set_local_generator(self, generator):
         """设置本地Generator实例，避免HTTP自调用"""
@@ -161,8 +168,8 @@ class DocumentGenerationOrchestrator:
         content_prompts: List[Dict[str, Any]],  # 从 Outliner 返回的 content_prompts
         user_background: str,
         user_requirements: str,
-        rel_threshold: float = 0.6,
-        red_threshold: float = 0.7
+        rel_threshold: float = 0.72,
+        red_threshold: float = 0.55
     ) -> Dict[str, Any]:
         """
         完整文档生成流程
@@ -452,8 +459,8 @@ class DocumentGenerationOrchestrator:
         outline: str,
         initial_prompt: str,
         passed_history: List[Dict[str, str]],
-        rel_threshold: float = 0.6,
-        red_threshold: float = 0.7
+        rel_threshold: float = 0.72,
+        red_threshold: float = 0.55
     ) -> Dict[str, Any]:
         """
         生成单个 subsection 的完整循环（第二步和第三步）
@@ -517,12 +524,18 @@ class DocumentGenerationOrchestrator:
                 metadata={"iteration": iterations},
             )
             
+            effective_rel_threshold, effective_red_threshold = self._compute_effective_thresholds(
+                iteration=iterations,
+                rel_threshold=rel_threshold,
+                red_threshold=red_threshold,
+            )
+
             enhanced_prompt = self._build_enhanced_prompt(
                 original_prompt=current_prompt,
                 outline=current_outline,
                 history_text=history_text,
-                rel_threshold=rel_threshold,
-                red_threshold=red_threshold,
+                rel_threshold=effective_rel_threshold,
+                red_threshold=effective_red_threshold,
             )
             
             gen_result = self._call_generator(enhanced_prompt)
@@ -557,8 +570,8 @@ class DocumentGenerationOrchestrator:
                 draft=draft,
                 outline=current_outline,
                 history=[h["content"] for h in windowed_history],
-                rel_threshold=rel_threshold,
-                red_threshold=red_threshold
+                rel_threshold=effective_rel_threshold,
+                red_threshold=effective_red_threshold
             )
             
             if not verify_result.get("success"):
@@ -579,7 +592,10 @@ class DocumentGenerationOrchestrator:
             red_score = verify_result.get("redundancy_index", 0)
             feedback = verify_result.get("feedback", "")
             
-            print(f"         相关性: {rel_score:.4f}, 冗余度: {red_score:.4f}")
+            print(
+                f"         相关性: {rel_score:.4f} (阈值: {effective_rel_threshold:.2f}), "
+                f"冗余度: {red_score:.4f} (阈值: {effective_red_threshold:.2f})"
+            )
             
             if is_passed:
                 print(f"         ✨ 验证通过!")

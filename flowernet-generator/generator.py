@@ -654,6 +654,13 @@ class FlowerNetOrchestrator:
         print(f"  - Max iterations: {max_iterations}")
         print(f"  - History Manager: {'✅ 已启用' if history_manager else '❌ 未启用'}")
 
+    def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
+        """前3轮严格校验；从第4轮起轻微放宽，减少长时间卡关。"""
+        relax_steps = max(0, iteration - 3)
+        effective_rel = max(rel_threshold - min(0.03, 0.01 * relax_steps), rel_threshold - 0.03)
+        effective_red = min(red_threshold + min(0.03, 0.01 * relax_steps), red_threshold + 0.03)
+        return round(effective_rel, 4), round(effective_red, 4)
+
     def generate_section(
         self,
         outline: str,
@@ -662,8 +669,8 @@ class FlowerNetOrchestrator:
         section_id: str = None,
         subsection_id: str = None,
         history: Optional[List[str]] = None,
-        rel_threshold: float = 0.70,
-        red_threshold: float = 0.60
+        rel_threshold: float = 0.72,
+        red_threshold: float = 0.55
     ) -> Dict[str, Any]:
         """
         生成一个subsection，并进行验证-修改的循环
@@ -722,12 +729,17 @@ class FlowerNetOrchestrator:
             
             # 2️⃣ 调用 Verifier 验证 draft
             print(f"🔍 [Verifier] 验证内容...")
+            effective_rel_threshold, effective_red_threshold = self._compute_effective_thresholds(
+                iteration=iterations,
+                rel_threshold=rel_threshold,
+                red_threshold=red_threshold,
+            )
             verify_response = self._call_verifier(
                 draft=draft,
                 outline=outline,
                 history=history,
-                rel_threshold=rel_threshold,
-                red_threshold=red_threshold
+                rel_threshold=effective_rel_threshold,
+                red_threshold=effective_red_threshold
             )
             
             if not verify_response.get("success"):
@@ -743,8 +755,8 @@ class FlowerNetOrchestrator:
             red_score = verify_response.get("redundancy_index", 0)
             feedback = verify_response.get("feedback", "")
             
-            print(f"📊 相关性: {rel_score:.4f} (阈值: {rel_threshold})")
-            print(f"📊 冗余度: {red_score:.4f} (阈值: {red_threshold})")
+            print(f"📊 相关性: {rel_score:.4f} (阈值: {effective_rel_threshold})")
+            print(f"📊 冗余度: {red_score:.4f} (阈值: {effective_red_threshold})")
             print(f"💬 反馈: {feedback}")
             
             # 3️⃣ 如果验证通过，存入数据库并返回结果
@@ -902,8 +914,8 @@ class FlowerNetOrchestrator:
         draft: str,
         outline: str,
         history: List[str],
-        rel_threshold: float = 0.70,
-        red_threshold: float = 0.60
+        rel_threshold: float = 0.72,
+        red_threshold: float = 0.55
     ) -> Dict[str, Any]:
         """调用 Verifier API"""
         try:
@@ -999,8 +1011,8 @@ class FlowerNetOrchestrator:
         title: str,
         outline_list: List[Dict[str, Any]],
         system_prompt: str = "",
-        rel_threshold: float = 0.70,
-        red_threshold: float = 0.60
+        rel_threshold: float = 0.72,
+        red_threshold: float = 0.55
     ) -> Dict[str, Any]:
         """
         生成完整文档（多个sections，每个section包含多个subsections）

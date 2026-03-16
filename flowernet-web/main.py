@@ -40,8 +40,8 @@ class GenerateDocRequest(BaseModel):
     subsection_count: int = Field(default=3, ge=1, le=8)
     user_background: str = Field(default="普通读者")
     extra_requirements: str = Field(default="")
-    rel_threshold: float = Field(default=0.6, ge=0, le=1)
-    red_threshold: float = Field(default=0.7, ge=0, le=1)
+    rel_threshold: float = Field(default=0.72, ge=0, le=1)
+    red_threshold: float = Field(default=0.55, ge=0, le=1)
 
 
 class DownloadDocxRequest(BaseModel):
@@ -55,8 +55,8 @@ class PofficesGenerateRequest(BaseModel):
     subsection_count: int = Field(default=3, ge=1, le=8)
     user_background: str = Field(default="普通读者")
     extra_requirements: str = Field(default="")
-    rel_threshold: float = Field(default=0.6, ge=0, le=1)
-    red_threshold: float = Field(default=0.7, ge=0, le=1)
+    rel_threshold: float = Field(default=0.72, ge=0, le=1)
+    red_threshold: float = Field(default=0.55, ge=0, le=1)
     async_mode: bool = Field(default=True, description="true=异步任务，false=同步等待结果")
     timeout_seconds: int = Field(default=600, ge=60, le=7200, description="同步模式超时秒数")
 
@@ -896,8 +896,8 @@ async def generate_stream_endpoint(
     subsection_count: int = 2,
     user_background: str = "普通读者",
     extra_requirements: str = "",
-    rel_threshold: float = 0.6,
-    red_threshold: float = 0.7,
+    rel_threshold: float = 0.72,
+    red_threshold: float = 0.55,
     x_api_key: str = Header(default="", alias="X-API-Key"),
     authorization: str = Header(default="", alias="Authorization"),
 ):
