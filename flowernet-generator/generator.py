@@ -655,10 +655,10 @@ class FlowerNetOrchestrator:
         print(f"  - History Manager: {'✅ 已启用' if history_manager else '❌ 未启用'}")
 
     def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
-        """前3轮严格校验；从第4轮起轻微放宽，减少长时间卡关。"""
+        """前3轮严格校验；从第4轮起每轮放宽 0.02，最多放宽 0.10，减少长时间卡关。"""
         relax_steps = max(0, iteration - 3)
-        effective_rel = max(rel_threshold - min(0.03, 0.01 * relax_steps), rel_threshold - 0.03)
-        effective_red = min(red_threshold + min(0.03, 0.01 * relax_steps), red_threshold + 0.03)
+        effective_rel = max(rel_threshold - min(0.10, 0.02 * relax_steps), rel_threshold - 0.10)
+        effective_red = min(red_threshold + min(0.10, 0.02 * relax_steps), red_threshold + 0.10)
         return round(effective_rel, 4), round(effective_red, 4)
 
     def generate_section(
@@ -669,8 +669,8 @@ class FlowerNetOrchestrator:
         section_id: str = None,
         subsection_id: str = None,
         history: Optional[List[str]] = None,
-        rel_threshold: float = 0.72,
-        red_threshold: float = 0.55
+        rel_threshold: float = 0.80,
+        red_threshold: float = 0.40
     ) -> Dict[str, Any]:
         """
         生成一个subsection，并进行验证-修改的循环
@@ -914,50 +914,43 @@ class FlowerNetOrchestrator:
         draft: str,
         outline: str,
         history: List[str],
-        rel_threshold: float = 0.72,
-        red_threshold: float = 0.55
+        rel_threshold: float = 0.80,
+        red_threshold: float = 0.40
     ) -> Dict[str, Any]:
-        """调用 Verifier API"""
-        try:
-            print(f"🔗 [Orchestrator] 调用 Verifier API: {self.verifier_url}/verify")
-            payload = {
-                "draft": draft,
-                "outline": outline,
-                "history": history,
-                "rel_threshold": rel_threshold,
-                "red_threshold": red_threshold
-            }
-            cmd = [
-                "curl", "-s", "-X", "POST", f"{self.verifier_url}/verify",
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps(payload, ensure_ascii=False)
-            ]
-            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-
-            if completed.returncode != 0:
-                return {
-                    "success": False,
-                    "error": f"Verifier curl 执行失败: {completed.stderr.strip()}"
+        """调用 Verifier API，内部最多重试3次应对 Render 冷启动。"""
+        last_error = "unknown"
+        for attempt in range(1, 4):
+            try:
+                print(f"🔗 [Orchestrator] 调用 Verifier API: {self.verifier_url}/verify (第{attempt}次)")
+                payload = {
+                    "draft": draft,
+                    "outline": outline,
+                    "history": history,
+                    "rel_threshold": rel_threshold,
+                    "red_threshold": red_threshold
                 }
-
-            if not completed.stdout.strip():
-                return {
-                    "success": False,
-                    "error": "Verifier 返回空响应"
-                }
-
-            data = json.loads(completed.stdout)
-            print(f"   响应长度: {len(completed.stdout)}")
-            return {
-                "success": True,
-                **data
-            }
-        except Exception as e:
-            print(f"   ❌ Verifier 异常: {type(e).__name__}: {str(e)[:100]}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+                cmd = [
+                    "curl", "-s", "-X", "POST", f"{self.verifier_url}/verify",
+                    "-H", "Content-Type: application/json",
+                    "-d", json.dumps(payload, ensure_ascii=False),
+                    "--max-time", "90"
+                ]
+                completed = subprocess.run(cmd, capture_output=True, text=True, timeout=95)
+                if completed.returncode != 0:
+                    last_error = f"Verifier curl 执行失败: {completed.stderr.strip()[:80]}"
+                elif not completed.stdout.strip():
+                    last_error = "Verifier 返回空响应"
+                else:
+                    data = json.loads(completed.stdout)
+                    print(f"   响应长度: {len(completed.stdout)}")
+                    return {"success": True, **data}
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {str(e)[:80]}"
+            if attempt < 3:
+                print(f"   ⚠️ Verifier 第{attempt}次调用失败 ({last_error})，5s 后重试...")
+                import time as _t; _t.sleep(5)
+        print(f"   ❌ Verifier 全部重试失败: {last_error}")
+        return {"success": False, "error": last_error}
 
     def _call_controller(
         self,
@@ -1011,8 +1004,8 @@ class FlowerNetOrchestrator:
         title: str,
         outline_list: List[Dict[str, Any]],
         system_prompt: str = "",
-        rel_threshold: float = 0.72,
-        red_threshold: float = 0.55
+        rel_threshold: float = 0.80,
+        red_threshold: float = 0.40
     ) -> Dict[str, Any]:
         """
         生成完整文档（多个sections，每个section包含多个subsections）

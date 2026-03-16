@@ -185,8 +185,8 @@ class VerifyRequest(BaseModel):
     outline: str                # 对应的大纲/任务要求
     history: List[str] = []     # 之前已经生成的章节内容列表（用于查重）
     document_id: Optional[str] = None  # 如果不传 history，可用 document_id 从数据库读取
-    rel_threshold: Optional[float] = 0.72  # 可选：自定义相关性阈值
-    red_threshold: Optional[float] = 0.55  # 可选：自定义冗余度阈值
+    rel_threshold: Optional[float] = 0.80  # 可选：自定义相关性阈值
+    red_threshold: Optional[float] = 0.40  # 可选：自定义冗余度阈值
 
 # 2. 初始化应用
 app = FastAPI(title="FlowerNet Verifying Layer API")

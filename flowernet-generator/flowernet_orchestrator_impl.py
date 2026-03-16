@@ -81,10 +81,10 @@ class DocumentGenerationOrchestrator:
         return min(delay, self.retry_max_delay)
 
     def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
-        """前3轮使用严格阈值；第4轮起每轮小幅放宽，避免长期卡住。"""
+        """前3轮使用严格阈值；第4轮起每轮放宽 0.02，最多放宽 0.10，保证最终收敛。"""
         relax_steps = max(0, iteration - 3)
-        effective_rel = max(rel_threshold - min(0.03, 0.01 * relax_steps), rel_threshold - 0.03)
-        effective_red = min(red_threshold + min(0.03, 0.01 * relax_steps), red_threshold + 0.03)
+        effective_rel = max(rel_threshold - min(0.10, 0.02 * relax_steps), rel_threshold - 0.10)
+        effective_red = min(red_threshold + min(0.10, 0.02 * relax_steps), red_threshold + 0.10)
         return round(effective_rel, 4), round(effective_red, 4)
 
     def set_local_generator(self, generator):
@@ -168,8 +168,8 @@ class DocumentGenerationOrchestrator:
         content_prompts: List[Dict[str, Any]],  # 从 Outliner 返回的 content_prompts
         user_background: str,
         user_requirements: str,
-        rel_threshold: float = 0.72,
-        red_threshold: float = 0.55
+        rel_threshold: float = 0.80,
+        red_threshold: float = 0.40
     ) -> Dict[str, Any]:
         """
         完整文档生成流程
@@ -459,8 +459,8 @@ class DocumentGenerationOrchestrator:
         outline: str,
         initial_prompt: str,
         passed_history: List[Dict[str, str]],
-        rel_threshold: float = 0.72,
-        red_threshold: float = 0.55
+        rel_threshold: float = 0.80,
+        red_threshold: float = 0.40
     ) -> Dict[str, Any]:
         """
         生成单个 subsection 的完整循环（第二步和第三步）
@@ -810,34 +810,33 @@ class DocumentGenerationOrchestrator:
         rel_threshold: float,
         red_threshold: float
     ) -> Dict[str, Any]:
-        """调用 Verifier API"""
-        try:
-            response = self.session.post(
-                f"{self.verifier_url}/verify",
-                json={
-                    "draft": draft,
-                    "outline": outline,
-                    "history": history,
-                    "rel_threshold": rel_threshold,
-                    "red_threshold": red_threshold
-                },
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                result["success"] = True
-                return result
-            else:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}"
-                }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
+        """调用 Verifier API，内部最多重试3次（应对 Render 冷启动），避免浪费生成轮次。"""
+        last_error = "unknown"
+        for attempt in range(1, 4):
+            try:
+                response = self.session.post(
+                    f"{self.verifier_url}/verify",
+                    json={
+                        "draft": draft,
+                        "outline": outline,
+                        "history": history,
+                        "rel_threshold": rel_threshold,
+                        "red_threshold": red_threshold
+                    },
+                    timeout=90
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    result["success"] = True
+                    return result
+                else:
+                    last_error = f"HTTP {response.status_code}"
+            except Exception as e:
+                last_error = str(e)
+            if attempt < 3:
+                print(f"         ⚠️ Verifier 第{attempt}次调用失败 ({last_error[:80]})，5s 后重试...")
+                time.sleep(5)
+        return {"success": False, "error": last_error}
     
     def _call_controller(
         self,

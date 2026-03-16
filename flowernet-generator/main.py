@@ -51,8 +51,8 @@ class GenerateSectionRequest(BaseModel):
     section_id: Optional[str] = None
     subsection_id: Optional[str] = None
     history: List[str] = []
-    rel_threshold: float = 0.72
-    red_threshold: float = 0.55
+    rel_threshold: float = 0.80
+    red_threshold: float = 0.40
 
 
 class GenerateDocumentRequest(BaseModel):
@@ -63,8 +63,8 @@ class GenerateDocumentRequest(BaseModel):
     content_prompts: List[Dict[str, Any]]  # 从 Outliner 返回的 content_prompts
     user_background: str
     user_requirements: str
-    rel_threshold: float = 0.72
-    red_threshold: float = 0.55
+    rel_threshold: float = 0.80
+    red_threshold: float = 0.40
 
 
 # ============ 全局对象 ============
