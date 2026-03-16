@@ -22,10 +22,10 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# 检查推荐环境变量（Gemini 主 + OpenRouter 备）
-if [ -z "$GOOGLE_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ]; then
-    echo -e "${YELLOW}⚠️  警告：未检测到 GOOGLE_API_KEY / OPENROUTER_API_KEY${NC}"
-    echo -e "${YELLOW}   建议至少配置其中一个以确保生成能力${NC}"
+# 检查推荐环境变量（Azure 主 + Ollama 备）
+if [ -z "$AZURE_OPENAI_API_KEY" ] && [ -z "$GENERATOR_AZURE_API_KEY" ] && [ -z "$OUTLINER_AZURE_API_KEY" ]; then
+    echo -e "${YELLOW}⚠️  警告：未检测到 Azure OpenAI API Key（AZURE_OPENAI_API_KEY）${NC}"
+    echo -e "${YELLOW}   若未配置 Azure，将仅能依赖 Ollama 本地模型${NC}"
 fi
 
 # 获取脚本所在目录

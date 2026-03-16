@@ -1,7 +1,7 @@
 """
 FlowerNet Outliner - 文档大纲生成与内容提示词管理
 根据用户需求生成文档结构，并为每个段落生成专用的 Content Prompt
-支持多种 LLM: Ollama (本地), Google Gemini
+支持多种 LLM: Azure OpenAI, Ollama (本地), Google Gemini, OpenRouter
 """
 
 import os
@@ -43,26 +43,32 @@ class FlowerNetOutliner:
     文档大纲生成器
     - 第一阶段：使用 Document Structure Prompt 生成层级大纲
     - 第二阶段：为每个 subsection 生成 Content Prompt
-    - 支持 Ollama (本地) 和 Google Gemini
+    - 支持 Azure OpenAI、Ollama (本地)、Google Gemini、OpenRouter
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "models/gemini-2.5-flash-lite", provider: str = "gemini,openrouter"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "azure,ollama"):
         """
         初始化 Outliner
         
         Args:
-            api_key: API Key（仅 Gemini 需要，默认从环境变量读取）
+            api_key: API Key（兼容参数，优先从环境变量读取）
             model: 使用的模型名称
                 - Ollama: "qwen2.5:7b", "llama3.1:8b" 等
+                - Azure OpenAI: "gpt-4o-mini"
                 - Gemini: "models/gemini-2.5-flash"
-            provider: LLM 提供商，支持单个或链式（如 "gemini,openrouter"）
+            provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
         """
-        requested_provider = provider or os.getenv("OUTLINER_PROVIDER_CHAIN", "gemini,openrouter")
+        requested_provider = provider or os.getenv("OUTLINER_PROVIDER_CHAIN", "azure,ollama")
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
-        self.provider_chain = parsed_chain or ["gemini", "openrouter"]
+        self.provider_chain = parsed_chain or ["azure", "ollama"]
 
         self.model = model
-        self.gemini_model = os.getenv("OUTLINER_GEMINI_MODEL", model or "models/gemini-2.5-flash-lite")
+        self.azure_model = os.getenv("OUTLINER_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
+        self.azure_api_key = os.getenv("OUTLINER_AZURE_API_KEY", os.getenv("AZURE_OPENAI_API_KEY", "")).strip()
+        self.azure_api_base = os.getenv("OUTLINER_AZURE_API_BASE", os.getenv("AZURE_OPENAI_API_BASE", "")).strip()
+        self.azure_api_version = os.getenv("OUTLINER_AZURE_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")).strip()
+        self.azure_deployment_name = os.getenv("OUTLINER_AZURE_DEPLOYMENT_NAME", os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")).strip()
+        self.gemini_model = os.getenv("OUTLINER_GEMINI_MODEL", "models/gemini-2.5-flash-lite")
         self.openrouter_model = os.getenv("OUTLINER_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
         self.ollama_model = os.getenv("OUTLINER_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -87,6 +93,8 @@ class FlowerNetOutliner:
 
         print("✅ Outliner 初始化成功:")
         print(f"  - Provider chain: {self.provider_chain}")
+        print(f"  - Azure model: {self.azure_model}")
+        print(f"  - Azure deployment: {self.azure_deployment_name}")
         print(f"  - Gemini model: {self.gemini_model}")
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
@@ -356,6 +364,62 @@ class FlowerNetOutliner:
         raise Exception("所有 LLM 提供商都失败: " + " | ".join(errors))
 
     def _generate_text_with_provider(self, provider: str, prompt: str, max_tokens: int) -> Tuple[str, Dict[str, Any]]:
+        if provider == "azure":
+            if not self.azure_api_key:
+                raise Exception("AZURE_OPENAI_API_KEY 未配置")
+            if not self.azure_api_base:
+                raise Exception("AZURE_OPENAI_API_BASE 未配置")
+            if not self.azure_deployment_name:
+                raise Exception("AZURE_OPENAI_DEPLOYMENT_NAME 未配置")
+
+            base = self.azure_api_base.rstrip("/")
+            if not base.endswith("/openai"):
+                base = f"{base}/openai"
+            url = f"{base}/deployments/{self.azure_deployment_name}/chat/completions"
+
+            payload = {
+                "model": self.azure_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": max_tokens,
+            }
+            headers = {
+                "api-key": self.azure_api_key,
+                "Content-Type": "application/json",
+            }
+            params = {"api-version": self.azure_api_version}
+
+            try:
+                response = requests.post(url, params=params, json=payload, headers=headers, timeout=120)
+                response.raise_for_status()
+                data = response.json()
+                choice = ((data.get("choices") or [{}])[0] or {})
+                msg = choice.get("message") or {}
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
+                    content = "".join(parts)
+                text = str(content).strip()
+                if not text:
+                    raise Exception("Azure OpenAI 返回空响应")
+                usage = data.get("usage") or {}
+                return text, {
+                    "provider": "azure",
+                    "model": self.azure_model,
+                    "deployment": self.azure_deployment_name,
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                }
+            except requests.HTTPError as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                retry_after_raw = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
+                retry_after = self._parse_retry_after_seconds(retry_after_raw)
+                if retry_after is not None:
+                    raise Exception(f"Azure OpenAI HTTP {status}, retry_after={retry_after}")
+                raise Exception(f"Azure OpenAI HTTP {status}: {str(exc)}")
+            except requests.RequestException as exc:
+                raise Exception(f"Azure OpenAI request error: {str(exc)}")
+
         if provider == "gemini":
             if not GEMINI_AVAILABLE:
                 raise Exception("google-genai 未安装")

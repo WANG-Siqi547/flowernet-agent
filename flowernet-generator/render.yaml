@@ -10,14 +10,30 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
       - key: GENERATOR_PROVIDER
-        value: gemini,openrouter
+        value: azure,ollama
       - key: GENERATOR_MODEL
-        value: models/gemini-2.5-flash-lite
-      - key: GENERATOR_GEMINI_MODEL
-        value: models/gemini-2.5-flash-lite
-      - key: GENERATOR_OPENROUTER_MODEL
-        value: qwen/qwen3-coder:free
+        value: gpt-4o-mini
+      - key: GENERATOR_AZURE_MODEL
+        value: gpt-4o-mini
+      - key: GENERATOR_AZURE_API_BASE
+        value: https://poffices-ai.openai.azure.com/
+      - key: GENERATOR_AZURE_API_VERSION
+        value: 2025-01-01-preview
+      - key: GENERATOR_AZURE_DEPLOYMENT_NAME
+        value: gpt-4o-mini
+      - key: GENERATOR_AZURE_API_KEY
+        sync: false
+      - key: AZURE_OPENAI_API_BASE
+        value: https://poffices-ai.openai.azure.com/
+      - key: AZURE_OPENAI_API_VERSION
+        value: 2025-01-01-preview
+      - key: AZURE_OPENAI_DEPLOYMENT_NAME
+        value: gpt-4o-mini
+      - key: AZURE_OPENAI_MODEL
+        value: gpt-4o-mini
       - key: OPENROUTER_HTTP_REFERER
         value: https://flowernet-web.onrender.com
       - key: OPENROUTER_APP_NAME

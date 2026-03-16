@@ -1,7 +1,7 @@
 """
 FlowerNet Generator - LLM驱动的内容生成模块
 根据prompt使用LLM生成draft内容
-支持多种 LLM 提供商: Anthropic Claude, Google Gemini, Ollama
+支持多种 LLM 提供商: Azure OpenAI, Anthropic Claude, Google Gemini, OpenRouter, Ollama
 """
 
 import os
@@ -48,29 +48,36 @@ except ImportError:
 class FlowerNetGenerator:
     """
     内容生成器：支持多种 LLM 提供商
+    - Azure OpenAI (需要 AZURE_OPENAI_API_KEY)
     - Anthropic Claude (需要 ANTHROPIC_API_KEY)
-    - Google Gemini (需要 GOOGLE_API_KEY，完全免费)
+    - Google Gemini (需要 GOOGLE_API_KEY)
     - Ollama (本地运行，完全免费无限制)
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "models/gemini-2.5-flash-lite", provider: str = "gemini,openrouter"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "azure,ollama"):
         """
         初始化生成器
         
         Args:
             api_key: API key，如果不提供则从环境变量读取
             model: 使用的模型名称
+                - Azure OpenAI: "gpt-4o-mini"（部署名由 AZURE_OPENAI_DEPLOYMENT_NAME 指定）
                 - Claude: "claude-3-5-sonnet-20241022"
                 - Gemini: "models/gemini-2.5-flash" (免费, 最新), "models/gemini-2.5-pro" (免费但有限制)
                 - Ollama: "qwen2.5:7b", "llama3.1:8b", "mistral:7b" 等
-            provider: LLM 提供商，支持单个或链式（如 "gemini,openrouter"）
+            provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
         """
-        requested_provider = provider or os.getenv("GENERATOR_PROVIDER_CHAIN", "gemini,openrouter")
+        requested_provider = provider or os.getenv("GENERATOR_PROVIDER_CHAIN", "azure,ollama")
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
-        self.provider_chain = parsed_chain or ["gemini", "openrouter"]
+        self.provider_chain = parsed_chain or ["azure", "ollama"]
 
         self.model = model
-        self.gemini_model = os.getenv("GENERATOR_GEMINI_MODEL", model or "models/gemini-2.5-flash-lite")
+        self.azure_model = os.getenv("GENERATOR_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
+        self.azure_api_key = os.getenv("GENERATOR_AZURE_API_KEY", os.getenv("AZURE_OPENAI_API_KEY", "")).strip()
+        self.azure_api_base = os.getenv("GENERATOR_AZURE_API_BASE", os.getenv("AZURE_OPENAI_API_BASE", "")).strip()
+        self.azure_api_version = os.getenv("GENERATOR_AZURE_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")).strip()
+        self.azure_deployment_name = os.getenv("GENERATOR_AZURE_DEPLOYMENT_NAME", os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")).strip()
+        self.gemini_model = os.getenv("GENERATOR_GEMINI_MODEL", "models/gemini-2.5-flash-lite")
         self.openrouter_model = os.getenv("GENERATOR_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
         self.ollama_model = os.getenv("GENERATOR_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -97,6 +104,8 @@ class FlowerNetGenerator:
 
         print("✅ Generator 初始化:")
         print(f"  - Provider chain: {self.provider_chain}")
+        print(f"  - Azure model: {self.azure_model}")
+        print(f"  - Azure deployment: {self.azure_deployment_name}")
         print(f"  - Gemini model: {self.gemini_model}")
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
@@ -184,7 +193,9 @@ class FlowerNetGenerator:
                 for attempt in range(1, self.provider_retries + 1):
                     self._wait_for_provider_slot(provider)
 
-                    if provider == "gemini":
+                    if provider == "azure":
+                        result = self._generate_with_azure(prompt, max_tokens)
+                    elif provider == "gemini":
                         result = self._generate_with_gemini(prompt, max_tokens)
                     elif provider == "openrouter":
                         result = self._generate_with_openrouter(prompt, max_tokens)
@@ -228,6 +239,98 @@ class FlowerNetGenerator:
             return {
                 "success": False,
                 "error": f"Error: {str(e)}",
+                "draft": ""
+            }
+
+    def _generate_with_azure(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
+        """使用 Azure OpenAI（OpenAI-compatible）生成内容"""
+        try:
+            if not self.azure_api_key:
+                return {
+                    "success": False,
+                    "error": "AZURE_OPENAI_API_KEY not set",
+                    "draft": ""
+                }
+            if not self.azure_api_base:
+                return {
+                    "success": False,
+                    "error": "AZURE_OPENAI_API_BASE not set",
+                    "draft": ""
+                }
+            if not self.azure_deployment_name:
+                return {
+                    "success": False,
+                    "error": "AZURE_OPENAI_DEPLOYMENT_NAME not set",
+                    "draft": ""
+                }
+
+            base = self.azure_api_base.rstrip("/")
+            if not base.endswith("/openai"):
+                base = f"{base}/openai"
+            url = f"{base}/deployments/{self.azure_deployment_name}/chat/completions"
+
+            payload = {
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": max_tokens,
+                "model": self.azure_model,
+            }
+            headers = {
+                "api-key": self.azure_api_key,
+                "Content-Type": "application/json",
+            }
+            params = {"api-version": self.azure_api_version}
+
+            response = requests.post(url, params=params, json=payload, headers=headers, timeout=120)
+            response.raise_for_status()
+            data = response.json()
+
+            choice = ((data.get("choices") or [{}])[0] or {})
+            msg = choice.get("message") or {}
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
+                content = "".join(parts)
+            draft_text = str(content).strip()
+            if not draft_text:
+                return {
+                    "success": False,
+                    "error": "Azure OpenAI empty response",
+                    "draft": ""
+                }
+
+            usage = data.get("usage") or {}
+            return {
+                "success": True,
+                "draft": draft_text,
+                "metadata": {
+                    "model": self.azure_model,
+                    "provider": "azure",
+                    "deployment": self.azure_deployment_name,
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+            }
+        except requests.RequestException as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            retry_after = self._parse_retry_after_seconds(
+                getattr(getattr(e, "response", None), "headers", {}).get("Retry-After", "")
+            )
+            error_message = f"Azure OpenAI API Error: {str(e)}"
+            if status_code is not None:
+                error_message = f"Azure OpenAI HTTP {status_code}: {str(e)}"
+            return {
+                "success": False,
+                "error": error_message,
+                "draft": "",
+                "status_code": status_code,
+                "retry_after": retry_after,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Azure OpenAI API Error: {str(e)}",
                 "draft": ""
             }
     

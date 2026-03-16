@@ -107,8 +107,8 @@ async def startup_event():
     global outliner, history_manager
     
     # 初始化 Outliner
-    provider = os.getenv('OUTLINER_PROVIDER', 'gemini,openrouter')
-    model = os.getenv('OUTLINER_MODEL', 'models/gemini-2.5-flash-lite')
+    provider = os.getenv('OUTLINER_PROVIDER', 'azure,ollama')
+    model = os.getenv('OUTLINER_MODEL', 'gpt-4o-mini')
 
     api_key = os.getenv('GOOGLE_API_KEY', '')
     outliner = FlowerNetOutliner(api_key=api_key, model=model, provider=provider)

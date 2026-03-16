@@ -20,26 +20,28 @@
 ### 前置要求
 
 - Python 3.8+
-- Google Gemini API Key（免费）或 Anthropic Claude API Key
+- Azure OpenAI API Key（推荐）或其他兼容 Provider Key
 
 ### 1. 获取 API Key
 
-**Google Gemini（推荐，完全免费）**:
-1. 访问 https://aistudio.google.com/app/apikey
-2. 登录 Google 账号
-3. 点击 "Create API Key"
-4. 复制生成的 Key（格式：`AIza...`）
-
-**限额**: 1500 请求/天，60 请求/分钟
+**Azure OpenAI（推荐）**:
+1. 登录 Azure 门户并进入你的 Azure OpenAI 资源
+2. 复制 API Key（Key1/Key2）
+3. 确认 Deployment Name（例如 `gpt-4o-mini`）
+4. 记录 Endpoint（例如 `https://your-resource.openai.azure.com/`）
 
 ### 2. 设置环境变量
 
 ```bash
-# 设置 Gemini API Key
-export GOOGLE_API_KEY="your-api-key-here"
+# Azure OpenAI（主）
+export AZURE_OPENAI_API_KEY="your-azure-api-key"
+export AZURE_OPENAI_API_BASE="https://poffices-ai.openai.azure.com/"
+export AZURE_OPENAI_API_VERSION="2025-01-01-preview"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
 
-# 或使用 Claude（付费）
-export ANTHROPIC_API_KEY="sk-ant-..."
+# 可选：显式指定 Provider 链（默认已是 azure,ollama）
+export GENERATOR_PROVIDER="azure,ollama"
+export OUTLINER_PROVIDER="azure,ollama"
 ```
 
 ### 3. 启动服务
