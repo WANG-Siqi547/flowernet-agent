@@ -4,7 +4,7 @@ import os
 import threading
 import time
 import random
-from typing import Any, Dict, List, Generator
+from typing import Any, Dict, List, Generator, Optional
 from urllib.parse import quote
 import json
 from uuid import uuid4
@@ -229,7 +229,12 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
 
     history_resp = post_json_with_retry(f"{OUTLINER_URL}/history/get", {"document_id": document_id}, 60)
     history_items = history_resp.get("history", []) if history_resp.get("success") else []
-    markdown_content = build_markdown_document(title, structure, history_items)
+    markdown_content = build_markdown_document(
+        title,
+        structure,
+        history_items,
+        generated_sections=gen_resp.get("sections", []),
+    )
 
     return {
         "success": True,
@@ -285,11 +290,36 @@ def build_requirements_text(req: GenerateDocRequest) -> str:
     return base
 
 
-def build_markdown_document(title: str, structure: Dict[str, Any], history: List[Dict[str, Any]]) -> str:
+def _build_content_map_from_history(history: List[Dict[str, Any]]) -> Dict[str, str]:
     content_map: Dict[str, str] = {}
     for item in history:
         key = f"{item.get('section_id', '')}::{item.get('subsection_id', '')}"
         content_map[key] = item.get("content", "")
+    return content_map
+
+
+def _build_content_map_from_sections(sections: Optional[List[Dict[str, Any]]]) -> Dict[str, str]:
+    content_map: Dict[str, str] = {}
+    for section in sections or []:
+        section_id = str(section.get("section_id") or section.get("id") or "")
+        for subsection in section.get("subsections", []) or []:
+            subsection_id = str(subsection.get("subsection_id") or subsection.get("id") or "")
+            content = subsection.get("content", "")
+            if section_id and subsection_id and content:
+                content_map[f"{section_id}::{subsection_id}"] = content
+    return content_map
+
+
+def build_markdown_document(
+    title: str,
+    structure: Dict[str, Any],
+    history: List[Dict[str, Any]],
+    generated_sections: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    content_map = _build_content_map_from_sections(generated_sections)
+    history_map = _build_content_map_from_history(history)
+    for key, value in history_map.items():
+        content_map.setdefault(key, value)
 
     lines = [f"# {title}", ""]
     for section in structure.get("sections", []):
@@ -668,7 +698,12 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         except:
             history_items = []
 
-        markdown_content = build_markdown_document(title, structure, history_items)
+        markdown_content = build_markdown_document(
+            title,
+            structure,
+            history_items,
+            generated_sections=gen_resp.get("sections", []),
+        )
         
         # 计算统计数据
         expected_subsections = req.chapter_count * req.subsection_count

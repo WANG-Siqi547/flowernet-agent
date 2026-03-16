@@ -263,6 +263,7 @@ class DocumentGenerationOrchestrator:
                             section_result["subsections"].append({
                                 "subsection_id": subsection_id,
                                 "subsection_title": subsection_title,
+                                "content": generated_content,
                                 "success": True,
                                 "iterations": subsection_gen_result.get("iterations", 0),
                                 "verification": subsection_gen_result.get("verification", {}),
