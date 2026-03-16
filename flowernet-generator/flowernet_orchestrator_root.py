@@ -148,8 +148,8 @@ class DocumentGenerationOrchestrator:
         content_prompts: List[Dict[str, Any]],  # 从 Outliner 返回的 content_prompts
         user_background: str,
         user_requirements: str,
-        rel_threshold: float = 0.6,
-        red_threshold: float = 0.7
+        rel_threshold: float = 0.65,
+        red_threshold: float = 0.65
     ) -> Dict[str, Any]:
         """
         完整文档生成流程
@@ -439,8 +439,8 @@ class DocumentGenerationOrchestrator:
         outline: str,
         initial_prompt: str,
         passed_history: List[Dict[str, str]],
-        rel_threshold: float = 0.6,
-        red_threshold: float = 0.7
+        rel_threshold: float = 0.65,
+        red_threshold: float = 0.65
     ) -> Dict[str, Any]:
         """
         生成单个 subsection 的完整循环（第二步和第三步）
