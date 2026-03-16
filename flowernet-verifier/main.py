@@ -66,9 +66,11 @@ class FlowerNetVerifier:
         else:
             keyword_coverage = 0.0
 
-        # 2. ROUGE-L F1（序列匹配，已去停用词后效果更准）
+        # 2. ROUGE-L Recall：衡量大纲内容被草稿覆盖了多少。
+        # 用 recall 而非 F1：outline 通常远短于 draft，F1 会因 precision 被长文本压缩至趋近0，造成假阴性
+        # recall = LCS / len(outline_tokens) 不受 draft 长度影响
         try:
-            rouge_l = self.scorer.score(outline, draft)['rougeL'].fmeasure
+            rouge_l = self.scorer.score(outline, draft)['rougeL'].recall
         except Exception:
             rouge_l = 0.0
 
@@ -132,9 +134,10 @@ class FlowerNetVerifier:
             else:
                 bigram_overlap = 0.0
 
-            # ROUGE-L（序列级重复）
+            # ROUGE-L Recall：衡量历史内容被草稿重复了多少
+            # recall = LCS / len(hist_tokens)：hist 是 reference，表示历史中有多少内容被 draft 再现
             try:
-                rouge_l = self.scorer.score(hist, draft)['rougeL'].fmeasure
+                rouge_l = self.scorer.score(hist, draft)['rougeL'].recall
             except Exception:
                 rouge_l = 0.0
 
