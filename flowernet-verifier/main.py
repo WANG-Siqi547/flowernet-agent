@@ -2,95 +2,152 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
-import numpy as np
 import jieba
 import os
 from rank_bm25 import BM25Okapi
 from rouge_score import rouge_scorer
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.decomposition import LatentDirichletAllocation
 
 from history_store import HistoryManager
+
+# 英文停用词表：过滤高频功能词，只保留实义词参与计算
+_EN_STOPWORDS = {
+    'the','a','an','is','are','was','were','be','been','being',
+    'have','has','had','do','does','did','will','would','could',
+    'should','may','might','shall','can','need','dare','ought',
+    'used','to','of','in','on','at','by','for','with','about',
+    'against','between','into','through','during','before','after',
+    'above','below','from','up','down','out','off','over','under',
+    'again','further','then','once','and','but','or','nor','so',
+    'yet','both','either','neither','not','only','same','than',
+    'too','very','just','because','as','until','while','that',
+    'this','these','those','it','its','i','you','he','she','we',
+    'they','what','which','who','whom','when','where','why','how',
+    'all','each','every','more','most','other','some','such','no',
+    'any','if','my','your','his','her','our','their','there','also',
+    'its','use','also','since','however','therefore','thus','hence',
+}
 
 
 # ============ FlowerNetVerifier 轻量级版本 ============
 class FlowerNetVerifier:
     def __init__(self):
-        print("🌸 FlowerNet 验证层启动（轻量级模式）")
+        print("🌸 FlowerNet 验证层启动（优化版）")
         self.public_url = os.getenv('VERIFIER_PUBLIC_URL', 'http://localhost:8000')
         print(f"  - Verifier Public URL: {self.public_url}")
         self.scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
-        self.vectorizer = CountVectorizer(stop_words='english', max_features=1000)
-        print("✅ 验证层就绪（仅使用传统 NLP）")
+        print("✅ 验证层就绪")
 
     def _tokenize(self, text):
-        """分词"""
+        """全量分词（含停用词）"""
         tokens = [t.strip().lower() for t in jieba.cut(text)]
         return [t for t in tokens if t]
 
+    def _content_tokens(self, text):
+        """实义词分词：过滤英文停用词和单字符 token，用于相似度计算"""
+        tokens = [t.strip().lower() for t in jieba.cut(text)]
+        return [t for t in tokens if len(t) > 1 and t not in _EN_STOPWORDS]
+
     def calculate_relevancy(self, draft, outline):
-        """计算草稿与大纲的相关性"""
-        outline_tokens = [w for w in self._tokenize(outline) if len(w) > 1]
-        draft_tokens = [w for w in self._tokenize(draft) if len(w) > 1]
-        
+        """
+        计算草稿与大纲的相关性。
+        算法：实义关键词覆盖率(0.4) + ROUGE-L F1(0.4) + BM25(0.2)
+        - 关键词覆盖率：大纲中的实义词有多少出现在草稿中
+        - ROUGE-L：最长公共子序列匹配，捕捉词序和短语一致性
+        - BM25：用大纲自比得分作上限归一化，衡量草稿对大纲的词频相关程度
+        """
+        outline_tokens = self._content_tokens(outline)
+        draft_tokens = self._content_tokens(draft)
+
+        # 1. 关键词覆盖率（实义词）
         if outline_tokens:
-            outline_keywords = set(outline_tokens)
-            draft_keywords = set(draft_tokens)
-            keyword_coverage = len(outline_keywords & draft_keywords) / len(outline_keywords)
+            outline_kw = set(outline_tokens)
+            draft_kw = set(draft_tokens)
+            keyword_coverage = len(outline_kw & draft_kw) / len(outline_kw)
         else:
             keyword_coverage = 0.0
 
+        # 2. ROUGE-L F1（序列匹配，已去停用词后效果更准）
         try:
-            bm25 = BM25Okapi([outline_tokens, draft_tokens])
-            bm25_score = bm25.get_scores(draft_tokens)[0] / (bm25.get_scores(draft_tokens).max() + 1e-9)
-        except:
-            bm25_score = 0.5
+            rouge_l = self.scorer.score(outline, draft)['rougeL'].fmeasure
+        except Exception:
+            rouge_l = 0.0
 
-        length_score = min(len(draft) / max(len(outline), 1), 1.0)
-        # 提高关键词覆盖率权重，降低长度影响
-        relevancy_score = (keyword_coverage * 0.6) + (bm25_score * 0.3) + (length_score * 0.1)
+        # 3. BM25（以大纲自比得分为上限归一化，修复原来用 draft 自比导致分母过大的 bug）
+        try:
+            if outline_tokens and draft_tokens:
+                bm25 = BM25Okapi([outline_tokens])
+                raw_score = bm25.get_scores(draft_tokens)[0]
+                # 大纲自比得分作为满分参考上限
+                self_ref = bm25.get_scores(outline_tokens)[0]
+                bm25_score = float(min(raw_score / (self_ref + 1e-9), 1.0))
+                bm25_score = max(bm25_score, 0.0)
+            else:
+                bm25_score = 0.0
+        except Exception:
+            bm25_score = 0.0
+
+        relevancy_score = (keyword_coverage * 0.4) + (rouge_l * 0.4) + (bm25_score * 0.2)
 
         return {
             "score": float(round(relevancy_score, 4)),
             "details": {
-                "keyword_coverage": float(keyword_coverage),
-                "bm25_similarity": float(bm25_score),
-                "length_score": float(length_score),
+                "keyword_coverage": float(round(keyword_coverage, 4)),
+                "rouge_l": float(round(rouge_l, 4)),
+                "bm25_score": float(round(bm25_score, 4)),
             },
         }
 
     def calculate_redundancy(self, draft, history_list):
-        """计算冗余度"""
+        """
+        检测草稿与已生成历史的冗余度。
+        算法：对每条历史分别计算，取最大值（修复原来全部拼接导致越来越长、停用词污染的 bug）。
+        每条历史得分 = 实义词 token 重叠(0.5) + 实义词 bigram 重叠(0.3) + ROUGE-L(0.2)
+        - 使用实义词过滤停用词，避免 the/of/and 等词拉高误报
+        - 逐条取最大值而非平均：只要有一条历史高度相似就应报警
+        """
         if not history_list:
             return {"score": 0.0, "details": "No history yet"}
 
-        all_histories = " ".join(history_list)
-        draft_tokens_list = [t for t in self._tokenize(draft) if len(t) > 1]
-        history_tokens_list = [t for t in self._tokenize(all_histories) if len(t) > 1]
-        draft_tokens_set = set(draft_tokens_list)
-        history_tokens_set = set(history_tokens_list)
+        draft_tokens = self._content_tokens(draft)
+        draft_tokens_set = set(draft_tokens)
+        draft_bigrams = set(zip(draft_tokens, draft_tokens[1:]))
 
-        if draft_tokens_set:
-            token_overlap = len(draft_tokens_set & history_tokens_set) / len(draft_tokens_set)
-        else:
-            token_overlap = 0.0
+        max_redundancy = 0.0
+        per_entry_scores = []
 
-        draft_bigrams = set(zip(draft_tokens_list, draft_tokens_list[1:]))
-        history_bigrams = set(zip(history_tokens_list, history_tokens_list[1:]))
-        
-        if draft_bigrams:
-            bigram_overlap = len(draft_bigrams & history_bigrams) / len(draft_bigrams)
-        else:
-            bigram_overlap = 0.0
+        for hist in history_list:
+            hist_tokens = self._content_tokens(hist)
+            hist_tokens_set = set(hist_tokens)
+            hist_bigrams = set(zip(hist_tokens, hist_tokens[1:]))
 
-        # 提高单词重叠权重，更严格检测冗余
-        redundancy_score = (token_overlap * 0.7) + (bigram_overlap * 0.3)
+            # 实义词 unigram 重叠率
+            if draft_tokens_set:
+                token_overlap = len(draft_tokens_set & hist_tokens_set) / len(draft_tokens_set)
+            else:
+                token_overlap = 0.0
+
+            # 实义词 bigram 重叠率（捕捉短语级重复）
+            if draft_bigrams:
+                bigram_overlap = len(draft_bigrams & hist_bigrams) / len(draft_bigrams)
+            else:
+                bigram_overlap = 0.0
+
+            # ROUGE-L（序列级重复）
+            try:
+                rouge_l = self.scorer.score(hist, draft)['rougeL'].fmeasure
+            except Exception:
+                rouge_l = 0.0
+
+            entry_score = (token_overlap * 0.5) + (bigram_overlap * 0.3) + (rouge_l * 0.2)
+            per_entry_scores.append(float(round(entry_score, 4)))
+            if entry_score > max_redundancy:
+                max_redundancy = entry_score
 
         return {
-            "score": float(round(redundancy_score, 4)),
+            "score": float(round(max_redundancy, 4)),
             "details": {
-                "token_overlap": float(token_overlap),
-                "bigram_overlap": float(bigram_overlap),
+                "per_history_scores": per_entry_scores,
+                "max_redundancy": float(round(max_redundancy, 4)),
             },
         }
 
