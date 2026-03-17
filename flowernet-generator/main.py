@@ -102,6 +102,22 @@ orchestrator = None
 document_orchestrator = None
 history_manager = None
 document_generation_lock = threading.Lock()
+generator_init_lock = threading.Lock()
+
+
+def ensure_generator_initialized():
+    """按需初始化 Generator，避免启动阶段阻塞健康检查。"""
+    global generator
+    if generator is not None:
+        return generator
+
+    with generator_init_lock:
+        if generator is not None:
+            return generator
+        return init_generator(
+            provider=os.getenv("GENERATOR_PROVIDER", "azure,ollama"),
+            model=os.getenv("GENERATOR_MODEL", None),
+        )
 
 
 def get_history_manager(outliner_url: str):
@@ -202,22 +218,26 @@ async def startup_event():
     provider = os.getenv('GENERATOR_PROVIDER', 'azure,ollama')
     model = os.getenv('GENERATOR_MODEL', None)
     ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+    preload_on_startup = os.getenv('GENERATOR_PRELOAD_ON_STARTUP', 'false').lower() == 'true'
     
     msg = f"\n⚡ 启动事件触发\n"
     msg += f"📦 环境变量:\n"
     msg += f"   - GENERATOR_PROVIDER: {provider}\n"
     msg += f"   - GENERATOR_MODEL: {model}\n"
     msg += f"   - OLLAMA_URL: {ollama_url}\n"
+    msg += f"   - GENERATOR_PRELOAD_ON_STARTUP: {preload_on_startup}\n"
     
     print(msg)
     sys.stdout.flush()
     
-    result = init_generator(provider=provider, model=model)
-    
-    if result is None:
-        print("⚠️  警告: Generator 初始化失败，某些端点可能不可用")
+    if preload_on_startup:
+        result = ensure_generator_initialized()
+        if result is None:
+            print("⚠️  警告: Generator 预加载失败，后续会在请求时重试初始化")
+        else:
+            print(f"✅ Generator 预加载成功: {type(result).__name__}")
     else:
-        print(f"✅ Generator 初始化成功: {type(result).__name__}")
+        print("ℹ️  启用惰性初始化：启动阶段不阻塞，首次请求时再初始化 Generator")
     
     sys.stdout.flush()
 
@@ -274,10 +294,7 @@ async def generate(request: GenerateRequest):
     简单生成：只根据 prompt 生成 draft，不进行验证
     """
     if generator is None:
-        init_generator(
-            provider=os.getenv("GENERATOR_PROVIDER", "ollama"),
-            model=os.getenv("GENERATOR_MODEL", None)
-        )
+        ensure_generator_initialized()
     if generator is None:
         raise HTTPException(status_code=500, detail=f"Generator not initialized: {_init_error or 'unknown error'}")
     
@@ -297,10 +314,7 @@ async def generate_with_context(request: GenerateWithContextRequest):
     带上下文的生成：考虑大纲和历史内容
     """
     if generator is None:
-        init_generator(
-            provider=os.getenv("GENERATOR_PROVIDER", "ollama"),
-            model=os.getenv("GENERATOR_MODEL", None)
-        )
+        ensure_generator_initialized()
     if generator is None:
         raise HTTPException(status_code=500, detail=f"Generator not initialized: {_init_error or 'unknown error'}")
     
@@ -332,10 +346,7 @@ async def generate_section(request: GenerateSectionRequest):
     print(f"\n🔹 [HTTP] /generate_section 请求接收到")
     
     if generator is None:
-        init_generator(
-            provider=os.getenv("GENERATOR_PROVIDER", "ollama"),
-            model=os.getenv("GENERATOR_MODEL", None)
-        )
+        ensure_generator_initialized()
     if generator is None:
         raise HTTPException(status_code=500, detail=f"Generator not initialized: {_init_error or 'unknown error'}")
     
@@ -391,7 +402,12 @@ async def generate_document(request: GenerateDocumentRequest):
     - 可选全局串行：同一时刻只允许一个文档任务执行（默认开启）
     """
     try:
+        if generator is None:
+            ensure_generator_initialized()
+
         orchestrator = get_document_generation_orchestrator()
+        if generator is not None:
+            orchestrator.set_local_generator(generator)
 
         serialize_tasks = os.getenv("SERIALIZE_DOCUMENT_TASKS", "true").lower() == "true"
         lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "0"))

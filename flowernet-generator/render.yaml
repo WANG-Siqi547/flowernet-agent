@@ -65,9 +65,9 @@ services:
       - key: DOC_RETRY_JITTER
         value: "0.5"
       - key: SUBSECTION_RETRY_FOREVER
-        value: "true"
+        value: "false"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "0"
+        value: "8"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
