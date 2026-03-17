@@ -271,6 +271,12 @@ async def health():
     }
 
 
+@app.head("/health")
+async def health_head():
+    """Render 可能使用 HEAD 做健康检查，显式返回 200。"""
+    return
+
+
 # ============ API 端点 ============
 
 @app.get("/")
@@ -286,6 +292,12 @@ def read_root():
             "/generate_document": "Generate complete document"
         }
     }
+
+
+@app.head("/")
+def read_root_head():
+    """Render 内部探针兼容：HEAD / 返回 200。"""
+    return
 
 
 @app.post("/generate")
