@@ -4,6 +4,8 @@ from typing import List, Dict, Any, Optional
 from controler import FlowerNetController
 import os
 import requests
+import re
+from collections import Counter
 
 app = FastAPI(title="FlowerNet Controller API")
 
@@ -107,6 +109,87 @@ def _sanitize_outline_text(text: Optional[str]) -> str:
             outline = outline[len(prefix):].strip()
 
     return outline
+
+
+def _tokenize_text(text: str) -> List[str]:
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_-]{2,}", text or "")
+    return [token.lower() for token in tokens if token.strip()]
+
+
+def _extract_anchor_terms(text: str, max_terms: int = 16) -> List[str]:
+    counter = Counter(_tokenize_text(text))
+    return [term for term, _ in counter.most_common(max_terms)]
+
+
+def _keyword_coverage(candidate: str, anchors: List[str]) -> float:
+    if not anchors:
+        return 0.0
+    normalized = (candidate or "").lower()
+    hit = sum(1 for term in anchors if term and term in normalized)
+    return hit / max(1, len(anchors))
+
+
+def _token_overlap_ratio(text_a: str, text_b: str) -> float:
+    set_a = set(_tokenize_text(text_a))
+    set_b = set(_tokenize_text(text_b))
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
+
+def _structure_score(outline: str) -> float:
+    lines = [line.strip() for line in (outline or "").splitlines() if line.strip()]
+    if not lines:
+        return 0.0
+    bullet_like = sum(1 for line in lines if line.startswith(("-", "*", "1.", "2.", "3.", "①", "②", "③")))
+    line_count_score = min(1.0, len(lines) / 4.0)
+    bullet_score = min(1.0, bullet_like / max(1, len(lines)))
+    return 0.6 * line_count_score + 0.4 * bullet_score
+
+
+def _score_outline_candidate(
+    candidate_outline: str,
+    original_outline: str,
+    working_outline: str,
+    failed_draft: str,
+    history: List[str],
+    rel_score: float,
+    red_score: float,
+    rel_threshold: float,
+    red_threshold: float,
+) -> Dict[str, float]:
+    anchors = _extract_anchor_terms(original_outline)
+    relevance_anchor = _keyword_coverage(candidate_outline, anchors)
+    similarity_to_working = 1.0 - _token_overlap_ratio(candidate_outline, working_outline)
+
+    history_text = "\n".join(history[-3:]) if history else ""
+    overlap_history = _token_overlap_ratio(candidate_outline, history_text) if history_text else 0.0
+    overlap_failed = _token_overlap_ratio(candidate_outline, failed_draft)
+    novelty = 1.0 - min(1.0, 0.65 * overlap_history + 0.35 * overlap_failed)
+
+    structure = _structure_score(candidate_outline)
+
+    rel_gap = max(0.0, rel_threshold - rel_score)
+    red_gap = max(0.0, red_score - red_threshold)
+
+    rel_weight = 0.55 + min(0.25, rel_gap)
+    red_weight = 0.20 + min(0.25, red_gap)
+    structure_weight = max(0.10, 1.0 - rel_weight - red_weight)
+
+    total = (
+        rel_weight * relevance_anchor
+        + red_weight * novelty
+        + structure_weight * structure
+        + 0.05 * similarity_to_working
+    )
+
+    return {
+        "total": round(total, 4),
+        "relevance_anchor": round(relevance_anchor, 4),
+        "novelty": round(novelty, 4),
+        "structure": round(structure, 4),
+        "delta_from_working": round(similarity_to_working, 4),
+    }
 
 
 # ============ API 数据模型 ============
@@ -285,6 +368,7 @@ async def improve_outline(req: ImproveOutlineRequest):
         generator_base = (os.getenv("GENERATOR_URL", "http://localhost:8002")).rstrip("/")
 
         improved_outline = None
+        llm_outline = None
 
         # 尝试通过 generator /generate 接口让 LLM 改进大纲
         try:
@@ -298,27 +382,86 @@ async def improve_outline(req: ImproveOutlineRequest):
             if resp.status_code == 200:
                 body = resp.json()
                 if body.get("success") and body.get("draft"):
-                    improved_outline = str(body["draft"]).strip()
+                    llm_outline = _sanitize_outline_text(str(body["draft"]).strip())
         except Exception as e:
             print(f"⚠️  LLM 改进大纲失败（会使用规则降级）: {e}")
 
-        if not improved_outline:
-            fallback_lines = [working_outline or original_outline]
-            if rel_score < rel_threshold:
-                fallback_lines.append(
-                    "补充要求：开头先定义本小节核心结论，再按要点展开，每段都要与本小节主题直接对应。"
-                )
-            if red_score > red_threshold:
-                fallback_lines.append(
-                    "补充要求：避免复述前文已有信息，改写为新的事实、案例或角度。"
-                )
-            if "偏离主题" in feedback_text or rel_score < 0.5:
-                fallback_lines.append(
-                    "补充要求：删除泛泛背景描述，只保留与当前大纲要点直接相关的内容。"
-                )
-            improved_outline = "\n".join([line for line in fallback_lines if line and line.strip()])
+        fallback_lines = [working_outline or original_outline]
+        if rel_score < rel_threshold:
+            fallback_lines.append(
+                "补充要求：开头先定义本小节核心结论，再按要点展开，每段都要与本小节主题直接对应。"
+            )
+        if red_score > red_threshold:
+            fallback_lines.append(
+                "补充要求：避免复述前文已有信息，改写为新的事实、案例或角度。"
+            )
+        if "偏离主题" in feedback_text or rel_score < 0.5:
+            fallback_lines.append(
+                "补充要求：删除泛泛背景描述，只保留与当前大纲要点直接相关的内容。"
+            )
+        rule_outline = _sanitize_outline_text("\n".join([line for line in fallback_lines if line and line.strip()]))
 
-        improved_outline = _sanitize_outline_text(improved_outline)
+        baseline_outline = working_outline or original_outline
+        baseline_score = _score_outline_candidate(
+            candidate_outline=baseline_outline,
+            original_outline=original_outline,
+            working_outline=baseline_outline,
+            failed_draft=req.failed_draft,
+            history=req.history,
+            rel_score=rel_score,
+            red_score=red_score,
+            rel_threshold=rel_threshold,
+            red_threshold=red_threshold,
+        )
+
+        candidates: List[Dict[str, Any]] = []
+        if llm_outline:
+            candidates.append({"source": "llm", "outline": llm_outline})
+        if rule_outline:
+            candidates.append({"source": "rule", "outline": rule_outline})
+
+        seen = set()
+        dedup_candidates: List[Dict[str, Any]] = []
+        for candidate in candidates:
+            outline_text = candidate["outline"].strip()
+            if not outline_text:
+                continue
+            key = outline_text[:2000]
+            if key in seen:
+                continue
+            seen.add(key)
+            score_detail = _score_outline_candidate(
+                candidate_outline=outline_text,
+                original_outline=original_outline,
+                working_outline=baseline_outline,
+                failed_draft=req.failed_draft,
+                history=req.history,
+                rel_score=rel_score,
+                red_score=red_score,
+                rel_threshold=rel_threshold,
+                red_threshold=red_threshold,
+            )
+            dedup_candidates.append(
+                {
+                    "source": candidate["source"],
+                    "outline": outline_text,
+                    "score": score_detail,
+                }
+            )
+
+        min_gain = float(os.getenv("CONTROLLER_MIN_SCORE_GAIN", "0.03"))
+        chosen = None
+        if dedup_candidates:
+            chosen = max(dedup_candidates, key=lambda x: x["score"]["total"])
+
+        changed = False
+        chosen_source = "baseline"
+        if chosen and (chosen["score"]["total"] - baseline_score["total"] >= min_gain):
+            improved_outline = chosen["outline"]
+            chosen_source = chosen["source"]
+            changed = improved_outline.strip() != baseline_outline.strip()
+        else:
+            improved_outline = baseline_outline
 
         # 改进成功后写回数据库
         _save_improved_outline_to_db(
@@ -332,7 +475,21 @@ async def improve_outline(req: ImproveOutlineRequest):
         return {
             "success": True,
             "improved_outline": improved_outline,
-            "source": "llm" if improved_outline and "\n【第" not in improved_outline else "rule",
+            "source": chosen_source,
+            "changed": changed,
+            "baseline_score": baseline_score,
+            "selected_score": (chosen["score"] if chosen else baseline_score),
+            "selection_min_gain": min_gain,
+            "candidate_scores": [
+                {
+                    "source": c["source"],
+                    "total": c["score"]["total"],
+                    "relevance_anchor": c["score"]["relevance_anchor"],
+                    "novelty": c["score"]["novelty"],
+                    "structure": c["score"]["structure"],
+                }
+                for c in dedup_candidates
+            ],
             "recommendations": [
                 f"相关性分数: {rel_score:.4f}",
                 f"冗余度分数: {red_score:.4f}",
