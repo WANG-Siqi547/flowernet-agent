@@ -89,6 +89,26 @@ def _save_improved_outline_to_db(
         print(f"⚠️  回写改进大纲失败: {e}")
 
 
+def _sanitize_outline_text(text: Optional[str]) -> str:
+    """清洗被规则降级文本污染的大纲，避免相关性计算被元信息拉低。"""
+    outline = (text or "").strip()
+    if not outline:
+        return ""
+
+    # 去掉历史叠加的规则降级片段
+    marker = "【第 "
+    idx = outline.find(marker)
+    if idx > 0:
+        outline = outline[:idx].strip()
+
+    # 去掉常见前缀标签
+    for prefix in ("改进后大纲：", "改进后的大纲：", "大纲："):
+        if outline.startswith(prefix):
+            outline = outline[len(prefix):].strip()
+
+    return outline
+
+
 # ============ API 数据模型 ============
 
 class RefinePromptRequest(BaseModel):
@@ -224,8 +244,8 @@ async def improve_outline(req: ImproveOutlineRequest):
             section_id=req.section_id,
             subsection_id=req.subsection_id,
         )
-        working_outline = db_outline if db_outline else req.current_outline
-        original_outline = req.original_outline or working_outline
+        working_outline = _sanitize_outline_text(db_outline if db_outline else req.current_outline)
+        original_outline = _sanitize_outline_text(req.original_outline) or working_outline
 
         # 构建历史上下文（已通过小节的摘要，供去重指导）
         history_context = ""
@@ -283,13 +303,22 @@ async def improve_outline(req: ImproveOutlineRequest):
             print(f"⚠️  LLM 改进大纲失败（会使用规则降级）: {e}")
 
         if not improved_outline:
-            improved_outline = f"{original_outline}\n\n【第 {iteration} 次改进建议（规则降级）】\n"
+            fallback_lines = [working_outline or original_outline]
             if rel_score < rel_threshold:
-                improved_outline += f"- 当前相关性 {rel_score:.4f} 不足 {rel_threshold}，增加与主题高度相关的细节，在开头明确表述核心观点\n"
+                fallback_lines.append(
+                    "补充要求：开头先定义本小节核心结论，再按要点展开，每段都要与本小节主题直接对应。"
+                )
             if red_score > red_threshold:
-                improved_outline += f"- 当前冗余度 {red_score:.4f} 超过 {red_threshold}，避免与前文重复，强调全新视角和信息\n"
+                fallback_lines.append(
+                    "补充要求：避免复述前文已有信息，改写为新的事实、案例或角度。"
+                )
             if "偏离主题" in feedback_text or rel_score < 0.5:
-                improved_outline += "- 严格遵循主题，每句话都要与主题直接相关\n"
+                fallback_lines.append(
+                    "补充要求：删除泛泛背景描述，只保留与当前大纲要点直接相关的内容。"
+                )
+            improved_outline = "\n".join([line for line in fallback_lines if line and line.strip()])
+
+        improved_outline = _sanitize_outline_text(improved_outline)
 
         # 改进成功后写回数据库
         _save_improved_outline_to_db(
