@@ -15,8 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY static/ ./static/
 
-# 暴露端口
-EXPOSE 8010
+# 暴露端口（Render 会通过 PORT 环境变量注入实际端口）
+EXPOSE 10000
 
-# 运行应用
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8010"]
+# 运行应用（优先使用 Render 提供的 PORT）
+CMD ["sh", "-c", "python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]

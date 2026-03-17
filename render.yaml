@@ -213,7 +213,7 @@ services:
     dockerContext: ./flowernet-web
     envVars:
       - key: PORT
-        value: 8010
+        value: 10000
       - key: OUTLINER_URL
         value: https://flowernet-outliner.onrender.com
       - key: GENERATOR_URL
