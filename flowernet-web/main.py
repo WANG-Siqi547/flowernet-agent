@@ -25,6 +25,8 @@ DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "3"))
 DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
 DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
 DOWNSTREAM_JITTER = float(os.getenv("DOWNSTREAM_JITTER", "0.35"))
+GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "1"))
+GENERATOR_RESUME_BACKOFF = float(os.getenv("GENERATOR_RESUME_BACKOFF", "2.0"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
@@ -178,6 +180,61 @@ def post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return post_json_with_retry(url=url, payload=payload, timeout=REQUEST_TIMEOUT)
 
 
+def fetch_history_items(document_id: str, timeout_seconds: int = 60) -> List[Dict[str, Any]]:
+    try:
+        history_resp = post_json_with_retry(
+            f"{OUTLINER_URL}/history/get",
+            {"document_id": document_id},
+            timeout_seconds,
+        )
+        if history_resp.get("success") and isinstance(history_resp.get("history"), list):
+            return history_resp.get("history", [])
+    except Exception as e:
+        print(f"获取历史内容失败: {e}")
+    return []
+
+
+def generate_document_with_recovery(
+    document_id: str,
+    generate_payload: Dict[str, Any],
+    timeout_seconds: int,
+) -> Dict[str, Any]:
+    total_attempts = 1 + max(0, GENERATOR_RESUME_RETRIES)
+    last_error = ""
+
+    for attempt in range(1, total_attempts + 1):
+        try:
+            result = post_json_with_retry(
+                f"{GENERATOR_URL}/generate_document",
+                generate_payload,
+                timeout_seconds,
+            )
+            if isinstance(result, dict):
+                result.setdefault("recovery_attempt", attempt)
+                result.setdefault("recovery_attempts", total_attempts)
+            return result
+        except HTTPException as exc:
+            last_error = str(exc.detail)
+        except Exception as exc:
+            last_error = str(exc)
+
+        if attempt < total_attempts:
+            delay = min(
+                DOWNSTREAM_MAX_BACKOFF,
+                GENERATOR_RESUME_BACKOFF * (2 ** (attempt - 1)) + random.uniform(0, DOWNSTREAM_JITTER),
+            )
+            print(f"⚠️ generate_document 第{attempt}次失败，{delay:.1f}s 后重试续跑: {last_error[:180]}")
+            time.sleep(delay)
+
+    return {
+        "success": False,
+        "error": f"文档生成在重试续跑后仍失败: {last_error}",
+        "interrupted": True,
+        "recovery_attempt": total_attempts,
+        "recovery_attempts": total_attempts,
+    }
+
+
 def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, Any]:
     document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
     user_requirements = build_requirements_text(req)
@@ -215,22 +272,77 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "rel_threshold": req.rel_threshold,
         "red_threshold": req.red_threshold,
     }
-    gen_resp = post_json_with_retry(f"{GENERATOR_URL}/generate_document", generate_payload, timeout_seconds)
+    gen_resp = generate_document_with_recovery(
+        document_id=document_id,
+        generate_payload=generate_payload,
+        timeout_seconds=timeout_seconds,
+    )
 
+    history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
     if not gen_resp.get("success"):
+        if history_items:
+            partial_content = build_markdown_document(
+                title,
+                structure,
+                history_items,
+                generated_sections=gen_resp.get("sections", []) if isinstance(gen_resp, dict) else [],
+            )
+            return {
+                "success": True,
+                "partial": True,
+                "interrupted": True,
+                "message": f"生成中断，已返回通过验证的 {len(history_items)} 个小节",
+                "document_id": document_id,
+                "title": title,
+                "content": partial_content,
+                "stats": {
+                    "expected_subsections": expected_subsections,
+                    "outlined_subsections": outlined_subsections,
+                    "passed_subsections": len(history_items),
+                    "failed_subsections": len(gen_resp.get("failed_subsections", [])) if isinstance(gen_resp, dict) else 0,
+                    "forced_subsections": len(gen_resp.get("forced_subsections", [])) if isinstance(gen_resp, dict) else 0,
+                    "total_iterations": gen_resp.get("total_iterations", 0) if isinstance(gen_resp, dict) else 0,
+                    "generation_time": gen_resp.get("generation_time", "") if isinstance(gen_resp, dict) else "",
+                },
+            }
         raise HTTPException(status_code=500, detail=f"文档生成失败: {gen_resp}")
 
     passed = gen_resp.get("passed_subsections", 0)
     failed = len(gen_resp.get("failed_subsections", []))
     forced = len(gen_resp.get("forced_subsections", []))
+    if passed < outlined_subsections and history_items:
+        markdown_content = build_markdown_document(
+            title,
+            structure,
+            history_items,
+            generated_sections=gen_resp.get("sections", []),
+        )
+        return {
+            "success": True,
+            "partial": True,
+            "interrupted": True,
+            "message": f"生成中断，已返回通过验证的 {len(history_items)} 个小节",
+            "document_id": document_id,
+            "title": title,
+            "content": markdown_content,
+            "stats": {
+                "expected_subsections": expected_subsections,
+                "outlined_subsections": outlined_subsections,
+                "passed_subsections": len(history_items),
+                "failed_subsections": failed,
+                "forced_subsections": forced,
+                "total_iterations": gen_resp.get("total_iterations", 0),
+                "generation_time": gen_resp.get("generation_time", ""),
+            },
+        }
     if passed < outlined_subsections:
         raise HTTPException(
             status_code=500,
             detail=f"文档生成未达到大纲小节数: 通过 {passed}/{outlined_subsections}, 失败 {failed}",
         )
 
-    history_resp = post_json_with_retry(f"{OUTLINER_URL}/history/get", {"document_id": document_id}, 60)
-    history_items = history_resp.get("history", []) if history_resp.get("success") else []
+    if not history_items:
+        history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
     markdown_content = build_markdown_document(
         title,
         structure,
@@ -624,14 +736,17 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         def generate_async():
             nonlocal gen_resp, error_occurred
             try:
-                resp = requests.post(
-                    f"{GENERATOR_URL}/generate_document",
-                    json=generate_payload,
-                    timeout=REQUEST_TIMEOUT
+                gen_resp = generate_document_with_recovery(
+                    document_id=document_id,
+                    generate_payload=generate_payload,
+                    timeout_seconds=REQUEST_TIMEOUT,
                 )
-                gen_resp = resp.json() if resp.status_code == 200 else {"success": False, "error": f"HTTP {resp.status_code}"}
+                if not isinstance(gen_resp, dict) or not gen_resp.get("success"):
+                    error_occurred = True
+                    print(f"生成错误: {gen_resp}")
             except Exception as e:
                 error_occurred = True
+                gen_resp = {"success": False, "error": f"生成服务异常: {e}"}
                 print(f"生成错误: {e}")
         
         gen_thread = threading.Thread(target=generate_async, daemon=True)
@@ -734,9 +849,23 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         gen_thread.join(timeout=10)
         
         if error_occurred:
-            msg = json.dumps({'type': 'error', 'message': '生成服务连接失败'})
-            yield f"data: {msg}\n\n"
-            return
+            history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
+            if history_items:
+                gen_resp = gen_resp or {}
+                gen_resp.update({
+                    "success": True,
+                    "passed_subsections": len(history_items),
+                    "failed_subsections": gen_resp.get("failed_subsections", []),
+                    "forced_subsections": gen_resp.get("forced_subsections", []),
+                    "interrupted": True,
+                    "interrupted_reason": gen_resp.get("error", "生成服务连接失败"),
+                })
+                msg = json.dumps({'type': 'warning', 'message': f'⚠️ 生成中断，先返回已通过的 {len(history_items)} 个小节'})
+                yield f"data: {msg}\n\n"
+            else:
+                msg = json.dumps({'type': 'error', 'message': '生成服务连接失败'})
+                yield f"data: {msg}\n\n"
+                return
         
         if gen_resp is None:
             # 线程仍在运行但超时 - 尝试从数据库恢复
@@ -769,10 +898,23 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 return
         
         if not gen_resp.get("success"):
-            err_msg = gen_resp.get('error', '文档生成失败')
-            msg = json.dumps({'type': 'error', 'message': err_msg})
-            yield f"data: {msg}\n\n"
-            return
+            history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
+            if history_items:
+                gen_resp.update({
+                    "success": True,
+                    "passed_subsections": len(history_items),
+                    "failed_subsections": gen_resp.get("failed_subsections", []),
+                    "forced_subsections": gen_resp.get("forced_subsections", []),
+                    "interrupted": True,
+                    "interrupted_reason": gen_resp.get('error', '文档生成失败'),
+                })
+                msg = json.dumps({'type': 'warning', 'message': f'⚠️ 生成中断，先返回已通过的 {len(history_items)} 个小节'})
+                yield f"data: {msg}\n\n"
+            else:
+                err_msg = gen_resp.get('error', '文档生成失败')
+                msg = json.dumps({'type': 'error', 'message': err_msg})
+                yield f"data: {msg}\n\n"
+                return
 
         # 再抓取一轮收尾事件，避免线程结束时最后几条细节日志丢失
         try:
@@ -857,16 +999,23 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         forced = len(gen_resp.get("forced_subsections", []))
         total_generated = passed + failed
 
-        if passed < expected_subsections:
+        partial_mode = passed < expected_subsections or bool(gen_resp.get("interrupted"))
+        if passed <= 0:
             msg = json.dumps({
                 'type': 'error',
-                'message': f'生成未达到目标小节数：通过 {passed}/{expected_subsections}，失败 {failed}。请重试或检查下游服务。'
+                'message': f'生成未产出可用内容：通过 {passed}/{expected_subsections}，失败 {failed}。请重试或检查下游服务。'
             })
             yield f"data: {msg}\n\n"
             return
+        if partial_mode:
+            warn_text = gen_resp.get("interrupted_reason") or f'生成未达到目标小节数：通过 {passed}/{expected_subsections}，失败 {failed}'
+            msg = json.dumps({'type': 'warning', 'message': f'⚠️ {warn_text}，先展示已通过内容'})
+            yield f"data: {msg}\n\n"
         
         result = {
             "success": True,
+            "partial": partial_mode,
+            "interrupted": partial_mode,
             "document_id": document_id,
             "title": title,
             "content": markdown_content,
