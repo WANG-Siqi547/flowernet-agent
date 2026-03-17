@@ -82,8 +82,8 @@ class DocumentGenerationOrchestrator:
         return min(delay, self.retry_max_delay)
 
     def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
-        """前3轮使用严格阈值；第4轮起每轮放宽 0.02，最多放宽 0.10，保证最终收敛。"""
-        relax_steps = max(0, iteration - 3)
+        """前2轮使用严格阈值；第3轮起每轮放宽 0.02，最多放宽 0.10，保证最终收敛。"""
+        relax_steps = max(0, iteration - 2)
         effective_rel = max(rel_threshold - min(0.10, 0.02 * relax_steps), rel_threshold - 0.10)
         effective_red = min(red_threshold + min(0.10, 0.02 * relax_steps), red_threshold + 0.10)
         return round(effective_rel, 4), round(effective_red, 4)
