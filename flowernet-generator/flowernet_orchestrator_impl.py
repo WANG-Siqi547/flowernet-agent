@@ -169,7 +169,7 @@ class DocumentGenerationOrchestrator:
         content_prompts: List[Dict[str, Any]],  # 从 Outliner 返回的 content_prompts
         user_background: str,
         user_requirements: str,
-        rel_threshold: float = 0.80,
+        rel_threshold: float = 0.85,
         red_threshold: float = 0.40
     ) -> Dict[str, Any]:
         """
@@ -460,7 +460,7 @@ class DocumentGenerationOrchestrator:
         outline: str,
         initial_prompt: str,
         passed_history: List[Dict[str, str]],
-        rel_threshold: float = 0.80,
+        rel_threshold: float = 0.85,
         red_threshold: float = 0.40
     ) -> Dict[str, Any]:
         """
@@ -878,7 +878,7 @@ class DocumentGenerationOrchestrator:
         outline: str,
         history: Optional[List[str]] = None,
         iteration: int = 1,
-        rel_threshold: float = 0.80,
+        rel_threshold: float = 0.85,
         red_threshold: float = 0.40,
         document_id: Optional[str] = None,
         section_id: Optional[str] = None,
