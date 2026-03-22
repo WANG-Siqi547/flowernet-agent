@@ -15,6 +15,7 @@
 import requests
 import json
 import time
+import os
 from typing import Dict, Any
 from datetime import datetime
 
@@ -25,6 +26,7 @@ class FlowerNetE2ETest:
         self.verifier_url = "http://localhost:8000"
         self.controller_url = "http://localhost:8001"
         self.session = requests.Session()
+        self.session.trust_env = False
     
     def test_complete_flow(self):
         """完整流程测试"""
@@ -115,26 +117,35 @@ class FlowerNetE2ETest:
             "max_subsections_per_section": 2
         }
         
-        try:
-            print(f"📡 调用 Outliner: /outline/generate-and-save")
-            response = self.session.post(
-                f"{self.outliner_url}/outline/generate-and-save",
-                json=payload,
-                timeout=300
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}"
-                }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
+        outline_timeout = int(os.getenv("E2E_OUTLINE_TIMEOUT", "900"))
+        outline_retries = max(1, int(os.getenv("E2E_OUTLINE_RETRIES", "2")))
+        last_error = "unknown"
+
+        for attempt in range(1, outline_retries + 1):
+            try:
+                print(f"📡 调用 Outliner: /outline/generate-and-save (attempt {attempt}/{outline_retries})")
+                response = self.session.post(
+                    f"{self.outliner_url}/outline/generate-and-save",
+                    json=payload,
+                    timeout=outline_timeout
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+
+                last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+            except Exception as e:
+                last_error = str(e)
+
+            if attempt < outline_retries:
+                wait_seconds = min(8, 2 * attempt)
+                print(f"⚠️ Outliner 调用失败，{wait_seconds}s 后重试: {last_error}")
+                time.sleep(wait_seconds)
+
+        return {
+            "success": False,
+            "error": last_error
+        }
     
     def _generate_document(
         self,
@@ -158,10 +169,11 @@ class FlowerNetE2ETest:
         
         try:
             print(f"📡 调用 Generator: /generate_document (完整流程版)")
+            request_timeout = int(os.getenv("E2E_GENERATE_TIMEOUT", "3600"))
             response = self.session.post(
                 f"{self.generator_url}/generate_document",
                 json=payload,
-                timeout=600  # 可能需要很长时间
+                timeout=request_timeout
             )
             
             if response.status_code == 200:

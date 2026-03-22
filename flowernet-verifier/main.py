@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import uvicorn
 import jieba
 import os
@@ -46,6 +46,51 @@ class FlowerNetVerifier:
         """实义词分词：过滤英文停用词和单字符 token，用于相似度计算"""
         tokens = [t.strip().lower() for t in jieba.cut(text)]
         return [t for t in tokens if len(t) > 1 and t not in _EN_STOPWORDS]
+
+
+    def check_sources(
+        self,
+        draft: str,
+        source_results: Optional[List[Dict[str, Any]]] = None,
+        require_source_citations: bool = False,
+        min_source_citations: int = 1,
+    ) -> Dict[str, Any]:
+        import re
+
+        source_results = source_results or []
+        refs = sorted({int(item) for item in re.findall(r"\[来源(\d+)\]", draft or "")})
+        total_available_sources = len(source_results)
+        invalid_refs = [ref for ref in refs if ref < 1 or ref > total_available_sources]
+        required_count = max(1, int(min_source_citations))
+
+        if require_source_citations:
+            citation_count_ok = len(refs) >= required_count
+        else:
+            citation_count_ok = True
+
+        if require_source_citations and total_available_sources == 0:
+            passed = False
+            reason = "source_results_empty"
+        elif len(invalid_refs) > 0:
+            passed = False
+            reason = "invalid_source_reference"
+        elif citation_count_ok:
+            passed = True
+            reason = "ok"
+        else:
+            passed = False
+            reason = "insufficient_citations"
+
+        return {
+            "passed": passed,
+            "reason": reason,
+            "reference_count": len(refs),
+            "references": refs,
+            "invalid_references": invalid_refs,
+            "total_available_sources": total_available_sources,
+            "require_source_citations": require_source_citations,
+            "min_source_citations": required_count,
+        }
 
     def calculate_relevancy(self, draft, outline):
         """
@@ -154,25 +199,52 @@ class FlowerNetVerifier:
             },
         }
 
-    def verify(self, draft, outline, history_list, rel_threshold=0.4, red_threshold=0.6):
+    def verify(
+        self,
+        draft,
+        outline,
+        history_list,
+        rel_threshold=0.4,
+        red_threshold=0.6,
+        source_results: Optional[List[Dict[str, Any]]] = None,
+        require_source_citations: bool = False,
+        min_source_citations: int = 1,
+    ):
         """一键验证逻辑"""
         rel = self.calculate_relevancy(draft, outline)
         red = self.calculate_redundancy(draft, history_list)
+        source_check = self.check_sources(
+            draft=draft,
+            source_results=source_results,
+            require_source_citations=require_source_citations,
+            min_source_citations=min_source_citations,
+        )
 
-        is_passed = (rel['score'] >= rel_threshold) and (red['score'] <= red_threshold)
+        is_passed = (
+            (rel['score'] >= rel_threshold)
+            and (red['score'] <= red_threshold)
+            and source_check["passed"]
+        )
 
         advice = "Content looks good."
         if rel['score'] < rel_threshold:
             advice = "Content is deviating from the outline. Add more focus on the section mission."
         if red['score'] > red_threshold:
             advice = "Content is redundant with previous sections. Provide new information."
+        if not source_check["passed"]:
+            advice = "Source citation check failed. Add valid citations in format [来源N] with correct source numbers."
 
         return {
             "is_passed": is_passed,
             "relevancy_index": rel['score'],
             "redundancy_index": red['score'],
             "feedback": advice,
-            "raw_data": {"relevancy": rel['details'], "redundancy": red['details']}
+            "source_check": source_check,
+            "raw_data": {
+                "relevancy": rel['details'],
+                "redundancy": red['details'],
+                "source_check": source_check,
+            }
         }
 
 
@@ -187,6 +259,9 @@ class VerifyRequest(BaseModel):
     document_id: Optional[str] = None  # 如果不传 history，可用 document_id 从数据库读取
     rel_threshold: Optional[float] = 0.80  # 可选：自定义相关性阈值
     red_threshold: Optional[float] = 0.40  # 可选：自定义冗余度阈值
+    source_results: List[Dict[str, Any]] = []
+    require_source_citations: bool = False
+    min_source_citations: int = 1
 
 # 2. 初始化应用
 app = FastAPI(title="FlowerNet Verifying Layer API")
@@ -242,7 +317,10 @@ async def perform_verification(request: VerifyRequest):
             outline=request.outline,
             history_list=history_list,
             rel_threshold=request.rel_threshold,
-            red_threshold=request.red_threshold
+            red_threshold=request.red_threshold,
+            source_results=request.source_results,
+            require_source_citations=request.require_source_citations,
+            min_source_citations=request.min_source_citations,
         )
         return result
     except Exception as e:

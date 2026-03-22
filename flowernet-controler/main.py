@@ -370,36 +370,89 @@ async def improve_outline(req: ImproveOutlineRequest):
         improved_outline = None
         llm_outline = None
 
+        llm_error = ""
+        use_llm_outline = os.getenv("CONTROLLER_USE_LLM_OUTLINE", "false").lower() == "true"
+        require_llm_source = os.getenv("CONTROLLER_REQUIRE_LLM_SOURCE", "false").lower() == "true"
+        llm_timeout = max(20, int(os.getenv("CONTROLLER_LLM_TIMEOUT", "90")))
+        llm_retries = max(1, int(os.getenv("CONTROLLER_LLM_RETRIES", "3")))
+
         # 尝试通过 generator /generate 接口让 LLM 改进大纲
-        try:
-            sess = _req.Session()
-            sess.trust_env = False
-            resp = sess.post(
-                f"{generator_base}/generate",
-                json={"prompt": improvement_prompt, "max_tokens": 1000},
-                timeout=120,
-            )
-            if resp.status_code == 200:
-                body = resp.json()
-                if body.get("success") and body.get("draft"):
-                    llm_outline = _sanitize_outline_text(str(body["draft"]).strip())
-        except Exception as e:
-            print(f"⚠️  LLM 改进大纲失败（会使用规则降级）: {e}")
+        if use_llm_outline:
+            for attempt in range(1, llm_retries + 1):
+                try:
+                    sess = _req.Session()
+                    sess.trust_env = False
+                    resp = sess.post(
+                        f"{generator_base}/generate",
+                        json={"prompt": improvement_prompt, "max_tokens": 700},
+                        timeout=llm_timeout,
+                    )
+                    if resp.status_code == 200:
+                        body = resp.json()
+                        if body.get("success") and body.get("draft"):
+                            llm_outline = _sanitize_outline_text(str(body["draft"]).strip())
+                            break
+                        llm_error = str(body.get("error") or "llm_generate_unsuccessful")
+                    else:
+                        llm_error = f"HTTP {resp.status_code}"
+                except Exception as e:
+                    llm_error = str(e)
+
+                if attempt < llm_retries:
+                    print(f"⚠️  LLM 改进大纲第{attempt}次失败，准备重试: {llm_error}")
+        else:
+            llm_error = "llm_outline_disabled"
+
+        if not llm_outline and llm_error:
+            print(f"⚠️  LLM 改进大纲失败（会使用规则降级）: {llm_error}")
+
+        anchors = _extract_anchor_terms(original_outline, max_terms=12)
+        failed_lower = str(req.failed_draft or "").lower()
+        missing_anchor_terms = [term for term in anchors if term and term not in failed_lower][:6]
+
+        history_text = "\n".join(req.history[-3:]) if req.history else ""
+        history_terms = set(_extract_anchor_terms(history_text, max_terms=12)) if history_text else set()
+        failed_terms = _extract_anchor_terms(req.failed_draft, max_terms=12)
+        repeated_terms = [term for term in failed_terms if term in history_terms][:5]
 
         fallback_lines = [working_outline or original_outline]
         if rel_score < rel_threshold:
             fallback_lines.append(
                 "补充要求：开头先定义本小节核心结论，再按要点展开，每段都要与本小节主题直接对应。"
             )
+            if missing_anchor_terms:
+                fallback_lines.append("补充要求：必须覆盖关键词：" + "、".join(missing_anchor_terms) + "。")
         if red_score > red_threshold:
             fallback_lines.append(
                 "补充要求：避免复述前文已有信息，改写为新的事实、案例或角度。"
             )
+            if repeated_terms:
+                fallback_lines.append("补充要求：避免重复这些已出现词：" + "、".join(repeated_terms) + "。")
         if "偏离主题" in feedback_text or rel_score < 0.5:
             fallback_lines.append(
                 "补充要求：删除泛泛背景描述，只保留与当前大纲要点直接相关的内容。"
             )
         rule_outline = _sanitize_outline_text("\n".join([line for line in fallback_lines if line and line.strip()]))
+
+        structured_blocks = [
+            "【改纲版本】第{}轮结构化修订".format(iteration),
+            "【核心主题】" + (original_outline[:240] if original_outline else "请紧扣当前小节主题"),
+            "【写作结构】",
+            "1) 先给出本小节的核心定义/结论（1-2句）",
+            "2) 再按 3-5 个要点展开，每个要点必须直接支撑主题",
+            "3) 结尾用 1 段总结该小节新增信息，不复述前文",
+        ]
+        if missing_anchor_terms:
+            structured_blocks.append("【必写关键词】" + "、".join(missing_anchor_terms))
+        if repeated_terms:
+            structured_blocks.append("【禁止重复词】" + "、".join(repeated_terms))
+        if red_score > red_threshold:
+            structured_blocks.append("【差异化要求】每个要点至少包含一个新的事实、案例、数据或机制说明。")
+        if feedback_text:
+            structured_blocks.append("【Verifier反馈约束】" + feedback_text[:180])
+        structured_blocks.append("【质量阈值】relevancy >= {:.2f}, redundancy <= {:.2f}".format(rel_threshold, red_threshold))
+
+        structured_rule_outline = _sanitize_outline_text("\n".join([blk for blk in structured_blocks if blk.strip()]))
 
         baseline_outline = working_outline or original_outline
         baseline_score = _score_outline_candidate(
@@ -419,6 +472,8 @@ async def improve_outline(req: ImproveOutlineRequest):
             candidates.append({"source": "llm", "outline": llm_outline})
         if rule_outline:
             candidates.append({"source": "rule", "outline": rule_outline})
+        if structured_rule_outline:
+            candidates.append({"source": "rule_structured", "outline": structured_rule_outline})
 
         seen = set()
         dedup_candidates: List[Dict[str, Any]] = []
@@ -449,19 +504,65 @@ async def improve_outline(req: ImproveOutlineRequest):
                 }
             )
 
-        min_gain = float(os.getenv("CONTROLLER_MIN_SCORE_GAIN", "0.03"))
+        min_gain = float(os.getenv("CONTROLLER_MIN_SCORE_GAIN", "0.005"))
+        min_rel_anchor_gain = float(os.getenv("CONTROLLER_MIN_REL_ANCHOR_GAIN", "0.01"))
+        min_novelty_gain = float(os.getenv("CONTROLLER_MIN_NOVELTY_GAIN", "0.01"))
+        min_structure_gain = float(os.getenv("CONTROLLER_MIN_STRUCTURE_GAIN", "0.10"))
         chosen = None
         if dedup_candidates:
             chosen = max(dedup_candidates, key=lambda x: x["score"]["total"])
 
         changed = False
         chosen_source = "baseline"
-        if chosen and (chosen["score"]["total"] - baseline_score["total"] >= min_gain):
+        score_gain = (chosen["score"]["total"] - baseline_score["total"]) if chosen else 0.0
+        rel_anchor_gain = (chosen["score"].get("relevance_anchor", 0.0) - baseline_score.get("relevance_anchor", 0.0)) if chosen else 0.0
+        novelty_gain = (chosen["score"].get("novelty", 0.0) - baseline_score.get("novelty", 0.0)) if chosen else 0.0
+        structure_gain = (chosen["score"].get("structure", 0.0) - baseline_score.get("structure", 0.0)) if chosen else 0.0
+
+        rel_needed = rel_score < rel_threshold
+        red_needed = red_score > red_threshold
+        rel_gain_ok = (not rel_needed) or (rel_anchor_gain >= min_rel_anchor_gain) or (structure_gain >= min_structure_gain)
+        novelty_gain_ok = (not red_needed) or (novelty_gain >= min_novelty_gain)
+
+        if chosen and score_gain >= min_gain and rel_gain_ok and novelty_gain_ok:
             improved_outline = chosen["outline"]
             chosen_source = chosen["source"]
             changed = improved_outline.strip() != baseline_outline.strip()
         else:
             improved_outline = baseline_outline
+
+        effective = bool(chosen and score_gain >= min_gain and rel_gain_ok and novelty_gain_ok and changed)
+        if require_llm_source and chosen_source != "llm":
+            effective = False
+
+        if not effective:
+            return {
+                "success": False,
+                "error": "controller_outline_not_effective",
+                "improved_outline": baseline_outline,
+                "source": chosen_source,
+                "changed": changed,
+                "effective": False,
+                "baseline_score": baseline_score,
+                "selected_score": (chosen["score"] if chosen else baseline_score),
+                "selection_min_gain": min_gain,
+                "selection_rel_anchor_gain": round(rel_anchor_gain, 4),
+                "selection_novelty_gain": round(novelty_gain, 4),
+                "selection_structure_gain": round(structure_gain, 4),
+                "selection_rel_gain_ok": rel_gain_ok,
+                "selection_novelty_gain_ok": novelty_gain_ok,
+                "llm_error": llm_error,
+                "candidate_scores": [
+                    {
+                        "source": c["source"],
+                        "total": c["score"]["total"],
+                        "relevance_anchor": c["score"]["relevance_anchor"],
+                        "novelty": c["score"]["novelty"],
+                        "structure": c["score"]["structure"],
+                    }
+                    for c in dedup_candidates
+                ],
+            }
 
         # 改进成功后写回数据库
         _save_improved_outline_to_db(
@@ -477,9 +578,16 @@ async def improve_outline(req: ImproveOutlineRequest):
             "improved_outline": improved_outline,
             "source": chosen_source,
             "changed": changed,
+            "effective": True,
             "baseline_score": baseline_score,
             "selected_score": (chosen["score"] if chosen else baseline_score),
             "selection_min_gain": min_gain,
+            "selection_rel_anchor_gain": round(rel_anchor_gain, 4),
+            "selection_novelty_gain": round(novelty_gain, 4),
+            "selection_structure_gain": round(structure_gain, 4),
+            "selection_rel_gain_ok": rel_gain_ok,
+            "selection_novelty_gain_ok": novelty_gain_ok,
+            "llm_error": llm_error,
             "candidate_scores": [
                 {
                     "source": c["source"],

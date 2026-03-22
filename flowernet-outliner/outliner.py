@@ -46,7 +46,7 @@ class FlowerNetOutliner:
     - 支持 Azure OpenAI、Ollama (本地)、Google Gemini、OpenRouter
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "azure,ollama"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "azure"):
         """
         初始化 Outliner
         
@@ -58,7 +58,7 @@ class FlowerNetOutliner:
                 - Gemini: "models/gemini-2.5-flash"
             provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
         """
-        requested_provider = provider or os.getenv("OUTLINER_PROVIDER_CHAIN", "azure,ollama")
+        requested_provider = provider or os.getenv("OUTLINER_PROVIDER_CHAIN", "azure")
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
         self.provider_chain = parsed_chain or ["azure", "ollama"]
 

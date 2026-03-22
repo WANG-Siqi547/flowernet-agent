@@ -42,8 +42,8 @@ class GenerateDocRequest(BaseModel):
     subsection_count: int = Field(default=3, ge=1, le=8)
     user_background: str = Field(default="普通读者")
     extra_requirements: str = Field(default="")
-    rel_threshold: float = Field(default=0.85, ge=0, le=1)
-    red_threshold: float = Field(default=0.40, ge=0, le=1)
+    rel_threshold: float = Field(default=0.90, ge=0, le=1)
+    red_threshold: float = Field(default=0.42, ge=0, le=1)
 
 
 class DownloadDocxRequest(BaseModel):
@@ -57,8 +57,8 @@ class PofficesGenerateRequest(BaseModel):
     subsection_count: int = Field(default=3, ge=1, le=8)
     user_background: str = Field(default="普通读者")
     extra_requirements: str = Field(default="")
-    rel_threshold: float = Field(default=0.85, ge=0, le=1)
-    red_threshold: float = Field(default=0.40, ge=0, le=1)
+    rel_threshold: float = Field(default=0.90, ge=0, le=1)
+    red_threshold: float = Field(default=0.42, ge=0, le=1)
     async_mode: bool = Field(default=True, description="true=异步任务，false=同步等待结果")
     timeout_seconds: int = Field(default=600, ge=60, le=7200, description="同步模式超时秒数")
 

@@ -54,7 +54,7 @@ class FlowerNetGenerator:
     - Ollama (本地运行，完全免费无限制)
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "azure,ollama"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "azure"):
         """
         初始化生成器
         
@@ -67,7 +67,7 @@ class FlowerNetGenerator:
                 - Ollama: "qwen2.5:7b", "llama3.1:8b", "mistral:7b" 等
             provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
         """
-        requested_provider = provider or os.getenv("GENERATOR_PROVIDER_CHAIN", "azure,ollama")
+        requested_provider = provider or os.getenv("GENERATOR_PROVIDER_CHAIN", "azure")
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
         self.provider_chain = parsed_chain or ["azure", "ollama"]
 

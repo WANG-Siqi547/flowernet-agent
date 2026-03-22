@@ -1,0 +1,394 @@
+from typing import Dict, Any, List, Tuple
+import re
+import time
+import html
+from urllib.parse import unquote, urlparse, parse_qs
+
+import requests
+
+
+class RAGSearchEngine:
+    def __init__(self, max_results: int = 5, timeout: int = 10):
+        self.max_results = max_results
+        self.timeout = timeout
+        self.available = True
+        self.session = requests.Session()
+        self.session.trust_env = False
+        self._user_agent = (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        )
+        self._blocked_hosts = {"duckduckgo.com", "html.duckduckgo.com"}
+        self._query_stopwords = {
+            "section", "subsection", "outline", "prompt", "write", "writing",
+            "chapter", "part", "introduction", "conclusion", "要求", "生成", "内容",
+            "小节", "章节", "大纲", "写作", "说明", "包括", "以及", "关于"
+        }
+
+    def search(self, query: str) -> Dict[str, Any]:
+        try:
+            started_at = time.time()
+            query_candidates = self._build_query_candidates(query)
+            results: List[Dict[str, Any]] = []
+            last_error = "no_results_parsed"
+
+            for query_candidate in query_candidates:
+                raw_html, fetch_error = self._fetch_duckduckgo_html(query_candidate)
+                if raw_html:
+                    results = self._parse_results(raw_html, self.max_results)
+                    if results:
+                        return {
+                            "success": True,
+                            "query": query,
+                            "effective_query": query_candidate,
+                            "results": results,
+                            "search_time": round(time.time() - started_at, 3),
+                            "error": None,
+                        }
+                if fetch_error:
+                    last_error = fetch_error
+
+            fallback_candidates = list(query_candidates)
+            if query:
+                extra_short = self._compact_query(str(query)[:80])
+                if extra_short and extra_short not in fallback_candidates:
+                    fallback_candidates.append(extra_short)
+
+            for fallback_query in fallback_candidates:
+                fallback_results = self._search_wikipedia(fallback_query)
+                if fallback_results:
+                    return {
+                        "success": True,
+                        "query": query,
+                        "effective_query": fallback_query,
+                        "results": fallback_results,
+                        "search_time": round(time.time() - started_at, 3),
+                        "error": "fallback_wikipedia",
+                    }
+
+            return {
+                "success": False,
+                "query": query,
+                "results": [],
+                "search_time": round(time.time() - started_at, 3),
+                "error": last_error,
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "query": query,
+                "results": [],
+                "error": str(exc),
+            }
+
+    def _build_query_candidates(self, query: str) -> List[str]:
+        query_text = " ".join(str(query or "").split())[:300].strip()
+        if not query_text:
+            return []
+
+        compact = self._compact_query(query_text)
+        semantic = self._semantic_query(query_text)
+        first_sentence = re.split(r"[。！？.!?]\s*", query_text)[0].strip()[:140]
+
+        candidates: List[str] = [query_text, compact, semantic, first_sentence]
+        dedup: List[str] = []
+        seen = set()
+        for candidate in candidates:
+            cleaned = " ".join(str(candidate or "").split()).strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            dedup.append(cleaned)
+
+        return dedup[:5]
+
+    def _compact_query(self, query: str) -> str:
+        tokens = re.findall(r"[A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{0,30}", query)
+        if not tokens:
+            return query[:140]
+        return " ".join(tokens[:10])[:140]
+
+    def _semantic_query(self, query: str) -> str:
+        tokens = re.findall(r"[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{1,30}", query or "")
+        refined: List[str] = []
+        for token in tokens:
+            normalized = token.strip().lower()
+            if not normalized or normalized in self._query_stopwords:
+                continue
+            if normalized.isdigit():
+                continue
+            if len(normalized) <= 1:
+                continue
+            if normalized not in refined:
+                refined.append(normalized)
+            if len(refined) >= 8:
+                break
+
+        if not refined:
+            return self._compact_query(query)
+        return " ".join(refined)[:120]
+
+    def _fetch_duckduckgo_html(self, query: str) -> Tuple[str, str]:
+        headers = {"User-Agent": self._user_agent}
+        endpoints = [
+            "https://duckduckgo.com/html/",
+            "https://html.duckduckgo.com/html/",
+            "https://lite.duckduckgo.com/lite/",
+        ]
+
+        last_error = "unknown"
+        for endpoint in endpoints:
+            for attempt in range(1, 3):
+                try:
+                    response = self.session.get(
+                        endpoint,
+                        params={"q": query},
+                        timeout=self.timeout,
+                        headers=headers,
+                    )
+                    if response.status_code == 200 and response.text:
+                        return response.text, ""
+                    last_error = f"http_{response.status_code}"
+                except Exception as exc:
+                    last_error = str(exc)
+
+                if attempt == 1:
+                    time.sleep(0.35)
+
+        return "", f"duckduckgo_html_fetch_failed: {last_error}"
+
+    def _search_wikipedia(self, query: str) -> List[Dict[str, Any]]:
+        if not query:
+            return []
+
+        endpoints = [
+            "https://en.wikipedia.org/w/api.php",
+            "https://zh.wikipedia.org/w/api.php",
+        ]
+        headers = {"User-Agent": self._user_agent}
+        normalized_query = " ".join(str(query).split())[:120]
+
+        seen: set[str] = set()
+        results: List[Dict[str, Any]] = []
+
+        for endpoint in endpoints:
+            try:
+                response = self.session.get(
+                    endpoint,
+                    params={
+                        "action": "query",
+                        "list": "search",
+                        "srsearch": normalized_query,
+                        "srlimit": max(2, self.max_results),
+                        "format": "json",
+                        "utf8": 1,
+                    },
+                    timeout=self.timeout,
+                    headers=headers,
+                )
+                if response.status_code != 200:
+                    continue
+
+                payload = response.json()
+                entries = ((payload or {}).get("query") or {}).get("search") or []
+                wiki_host = urlparse(endpoint).netloc
+
+                for entry in entries:
+                    title = self._strip_html(str(entry.get("title", "")))
+                    if not title:
+                        continue
+                    href = f"https://{wiki_host}/wiki/{title.replace(' ', '_')}"
+                    if href in seen:
+                        continue
+                    seen.add(href)
+
+                    snippet = self._strip_html(str(entry.get("snippet", "")))[:400]
+                    results.append(
+                        {
+                            "title": title,
+                            "body": snippet,
+                            "href": href,
+                            "source": wiki_host,
+                        }
+                    )
+                    if len(results) >= self.max_results:
+                        return results
+            except Exception:
+                continue
+
+        return results
+
+    def _parse_results(self, html_text: str, max_items: int) -> List[Dict[str, Any]]:
+        link_patterns = [
+            re.compile(
+                r'<a[^>]*class="result__a"[^>]*href="(?P<href>[^"]+)"[^>]*>(?P<title>.*?)</a>',
+                flags=re.IGNORECASE | re.DOTALL,
+            ),
+            re.compile(
+                r'<a[^>]*class="result-link"[^>]*href="(?P<href>[^"]+)"[^>]*>(?P<title>.*?)</a>',
+                flags=re.IGNORECASE | re.DOTALL,
+            ),
+            re.compile(
+                r'<a[^>]*href="(?P<href>/l/\?[^\"]+|https?://[^\"]+)"[^>]*>(?P<title>.*?)</a>',
+                flags=re.IGNORECASE | re.DOTALL,
+            ),
+        ]
+        snippet_patterns = [
+            re.compile(
+                r'<a[^>]*class="result__a"[^>]*href="(?P<href>[^"]+)"[^>]*>.*?</a>.*?'
+                r'<a[^>]*class="result__snippet"[^>]*>(?P<snippet>.*?)</a>',
+                flags=re.IGNORECASE | re.DOTALL,
+            ),
+            re.compile(
+                r'<a[^>]*class="result-link"[^>]*href="(?P<href>[^"]+)"[^>]*>.*?</a>.*?'
+                r'<td[^>]*class="result-snippet"[^>]*>(?P<snippet>.*?)</td>',
+                flags=re.IGNORECASE | re.DOTALL,
+            ),
+            re.compile(
+                r'<a[^>]*href="(?P<href>/l/\?[^\"]+|https?://[^\"]+)"[^>]*>.*?</a>.*?'
+                r'<(?:a|td|div)[^>]*class="(?:result__snippet|result-snippet|snippet)"[^>]*>(?P<snippet>.*?)</(?:a|td|div)>',
+                flags=re.IGNORECASE | re.DOTALL,
+            ),
+        ]
+
+        snippets_by_href: Dict[str, str] = {}
+        for snippet_pattern in snippet_patterns:
+            for snippet_match in snippet_pattern.finditer(html_text or ""):
+                href = self._clean_href(snippet_match.group("href"))
+                if not href:
+                    continue
+                snippet_html = snippet_match.group("snippet") or ""
+                snippet_value = self._strip_html(snippet_html)[:400]
+                if snippet_value and href not in snippets_by_href:
+                    snippets_by_href[href] = snippet_value
+
+        parsed: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for link_pattern in link_patterns:
+            for match in link_pattern.finditer(html_text or ""):
+                href = self._clean_href(match.group("href"))
+                if not href or href in seen:
+                    continue
+                seen.add(href)
+
+                title_html = match.group("title") or ""
+                title = self._strip_html(title_html)
+                if not title:
+                    continue
+
+                snippet = snippets_by_href.get(href, "")
+                parsed.append(
+                    {
+                        "title": title,
+                        "body": snippet,
+                        "href": href,
+                        "source": self._extract_domain(href),
+                    }
+                )
+                if len(parsed) >= max_items:
+                    return parsed
+
+        return parsed
+
+    def _strip_html(self, content: str) -> str:
+        without_tags = re.sub(r"<[^>]+>", " ", content or "")
+        normalized = " ".join(html.unescape(without_tags).split())
+        return normalized.strip()
+
+    def _clean_href(self, href: str) -> str:
+        href = (href or "").strip()
+        if not href:
+            return ""
+
+        if href.startswith("//"):
+            href = "https:" + href
+
+        if href.startswith("/"):
+            href = "https://duckduckgo.com" + href
+
+        decoded = unquote(href)
+        resolved = self._resolve_ddg_redirect(decoded)
+
+        parsed = urlparse(resolved)
+        if parsed.scheme not in ("http", "https"):
+            return ""
+        host = (parsed.netloc or "").lower()
+        if host in self._blocked_hosts:
+            return ""
+        return resolved
+
+    def _resolve_ddg_redirect(self, href: str) -> str:
+        parsed = urlparse(href)
+        if parsed.netloc.lower().endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+            query_map = parse_qs(parsed.query)
+            uddg_values = query_map.get("uddg")
+            if uddg_values:
+                return unquote(uddg_values[0]).strip()
+        return href
+
+    def _extract_domain(self, url: str) -> str:
+        if not url:
+            return ""
+        try:
+            domain = (urlparse(url).netloc or "").strip().lower()
+            if domain.startswith("www."):
+                return domain[4:]
+            return domain
+        except Exception:
+            return url
+
+    def format_search_context(self, search_result: Dict[str, Any], max_items: int = 3) -> str:
+        if not search_result.get("success"):
+            return ""
+        items = list(search_result.get("results") or [])[:max_items]
+        if not items:
+            return ""
+
+        context = "【参考资料（可引用来源）】\n"
+        for index, item in enumerate(items, start=1):
+            context += (
+                f"\n[来源{index}]\n"
+                f"站点: {item.get('source', '')}\n"
+                f"标题: {item.get('title', '')}\n"
+                f"摘要: {item.get('body', '')}\n"
+                f"链接: {item.get('href', '')}\n"
+            )
+        return context
+
+    def extract_source_numbers(self, text: str) -> List[int]:
+        matches = re.findall(r"\[来源(\d+)\]", text or "")
+        unique_numbers = sorted({int(value) for value in matches})
+        return unique_numbers
+
+
+class SourceVerifier:
+    def verify(
+        self,
+        text: str,
+        source_results: List[Dict[str, Any]],
+        require_citations: bool = True,
+        min_citations: int = 1,
+    ) -> Dict[str, Any]:
+        refs = sorted({int(value) for value in re.findall(r"\[来源(\d+)\]", text or "")})
+        total_sources = len(source_results or [])
+        invalid_refs = [ref for ref in refs if ref < 1 or ref > total_sources]
+
+        if require_citations:
+            citation_ok = len(refs) >= max(1, int(min_citations))
+        else:
+            citation_ok = True
+
+        valid = citation_ok and len(invalid_refs) == 0
+        return {
+            "valid": valid,
+            "found_references": len(refs),
+            "references": refs,
+            "invalid_references": invalid_refs,
+            "total_sources": total_sources,
+            "required": require_citations,
+            "min_citations": max(1, int(min_citations)),
+        }

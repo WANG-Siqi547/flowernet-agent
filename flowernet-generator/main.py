@@ -10,13 +10,19 @@ import uvicorn
 import os
 import sys
 import threading
+import importlib.util
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root in sys.path:
     sys.path.remove(project_root)
 sys.path.insert(0, project_root)
 
 from generator import FlowerNetGenerator, FlowerNetOrchestrator
-from flowernet_orchestrator import DocumentGenerationOrchestrator
+
+_local_orchestrator_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flowernet_orchestrator.py")
+_local_orchestrator_spec = importlib.util.spec_from_file_location("_flowernet_orchestrator_local", _local_orchestrator_path)
+_local_orchestrator_module = importlib.util.module_from_spec(_local_orchestrator_spec)
+_local_orchestrator_spec.loader.exec_module(_local_orchestrator_module)
+DocumentGenerationOrchestrator = _local_orchestrator_module.DocumentGenerationOrchestrator
 
 # 导入 HistoryManager
 try:
@@ -51,8 +57,8 @@ class GenerateSectionRequest(BaseModel):
     section_id: Optional[str] = None
     subsection_id: Optional[str] = None
     history: List[str] = []
-    rel_threshold: float = 0.80
-    red_threshold: float = 0.40
+    rel_threshold: float = 0.90
+    red_threshold: float = 0.42
 
 
 class GenerateDocumentRequest(BaseModel):
@@ -63,8 +69,8 @@ class GenerateDocumentRequest(BaseModel):
     content_prompts: List[Dict[str, Any]]  # 从 Outliner 返回的 content_prompts
     user_background: str
     user_requirements: str
-    rel_threshold: float = 0.80
-    red_threshold: float = 0.40
+    rel_threshold: float = 0.90
+    red_threshold: float = 0.42
 
 
 # ============ 全局对象 ============
@@ -77,7 +83,7 @@ _provider = "ollama"
 _model = None
 _init_error = None
 
-def init_generator(provider: str = "azure,ollama", model: str = None):
+def init_generator(provider: str = "azure", model: str = None):
     """初始化生成器（支持链式降级，如 Azure -> Ollama）"""
     global generator, _provider, _model, _init_error
     
@@ -115,7 +121,7 @@ def ensure_generator_initialized():
         if generator is not None:
             return generator
         return init_generator(
-            provider=os.getenv("GENERATOR_PROVIDER", "azure,ollama"),
+            provider=os.getenv("GENERATOR_PROVIDER", "azure"),
             model=os.getenv("GENERATOR_MODEL", None),
         )
 
@@ -172,7 +178,7 @@ def get_orchestrator():
         
         # 为 orchestrator 注入本地 generator 实例，避免 HTTP 递归调用
         # 使用与主 Generator 相同的 provider chain 和模型配置
-        provider = os.getenv('GENERATOR_PROVIDER', 'azure,ollama')
+        provider = os.getenv('GENERATOR_PROVIDER', 'azure')
         model = os.getenv('GENERATOR_MODEL', None)
         local_gen = FlowerNetGenerator(provider=provider, model=model)
         orchestrator._local_generator = local_gen
@@ -215,7 +221,7 @@ def get_document_generation_orchestrator():
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化 Generator"""
-    provider = os.getenv('GENERATOR_PROVIDER', 'azure,ollama')
+    provider = os.getenv('GENERATOR_PROVIDER', 'azure')
     model = os.getenv('GENERATOR_MODEL', None)
     ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
     preload_on_startup = os.getenv('GENERATOR_PRELOAD_ON_STARTUP', 'false').lower() == 'true'
@@ -466,7 +472,7 @@ async def generate_document(request: GenerateDocumentRequest):
 if __name__ == "__main__":
     # 优先使用环境变量 PORT（Render 会自动设置），否则使用命令行参数
     port = int(os.getenv("PORT", sys.argv[1] if len(sys.argv) > 1 else 8002))
-    provider = os.getenv("GENERATOR_PROVIDER", sys.argv[2] if len(sys.argv) > 2 else "azure,ollama")
+    provider = os.getenv("GENERATOR_PROVIDER", sys.argv[2] if len(sys.argv) > 2 else "azure")
     model = os.getenv("GENERATOR_MODEL", sys.argv[3] if len(sys.argv) > 3 else None)
     
     # 初始化生成器
