@@ -56,8 +56,9 @@ services:
       - ollama
     environment:
       - PORT=8003
-      - OUTLINER_PROVIDER=azure
-      - OUTLINER_MODEL=gpt-4o-mini
+      - OUTLINER_PROVIDER=ollama
+      - OUTLINER_MODEL=qwen2.5:1.5b
+      - OLLAMA_URL=http://ollama:11434
       - OUTLINER_AZURE_MODEL=gpt-4o-mini
       - OUTLINER_AZURE_API_BASE=https://poffices-ai.openai.azure.com/
       - OUTLINER_AZURE_API_VERSION=2025-01-01-preview
@@ -97,8 +98,9 @@ services:
       - outliner-app
     environment:
       - PORT=8002
-      - GENERATOR_PROVIDER=azure
-      - GENERATOR_MODEL=gpt-4o-mini
+      - GENERATOR_PROVIDER=ollama
+      - GENERATOR_MODEL=qwen2.5:1.5b
+      - OLLAMA_URL=http://ollama:11434
       - GENERATOR_AZURE_MODEL=gpt-4o-mini
       - GENERATOR_AZURE_API_BASE=https://poffices-ai.openai.azure.com/
       - GENERATOR_AZURE_API_VERSION=2025-01-01-preview
