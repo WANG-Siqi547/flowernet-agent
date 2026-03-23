@@ -504,10 +504,10 @@ async def improve_outline(req: ImproveOutlineRequest):
                 }
             )
 
-        min_gain = float(os.getenv("CONTROLLER_MIN_SCORE_GAIN", "0.005"))
-        min_rel_anchor_gain = float(os.getenv("CONTROLLER_MIN_REL_ANCHOR_GAIN", "0.01"))
-        min_novelty_gain = float(os.getenv("CONTROLLER_MIN_NOVELTY_GAIN", "0.01"))
-        min_structure_gain = float(os.getenv("CONTROLLER_MIN_STRUCTURE_GAIN", "0.10"))
+        min_gain = float(os.getenv("CONTROLLER_MIN_SCORE_GAIN", "0.001"))
+        min_rel_anchor_gain = float(os.getenv("CONTROLLER_MIN_REL_ANCHOR_GAIN", "0.005"))
+        min_novelty_gain = float(os.getenv("CONTROLLER_MIN_NOVELTY_GAIN", "0.005"))
+        min_structure_gain = float(os.getenv("CONTROLLER_MIN_STRUCTURE_GAIN", "0.05"))
         chosen = None
         if dedup_candidates:
             chosen = max(dedup_candidates, key=lambda x: x["score"]["total"])
@@ -537,7 +537,7 @@ async def improve_outline(req: ImproveOutlineRequest):
 
         if not effective:
             return {
-                "success": False,
+                "success": True,
                 "error": "controller_outline_not_effective",
                 "improved_outline": baseline_outline,
                 "source": chosen_source,

@@ -35,6 +35,14 @@ services:
       - VERIFIER_URL=http://verifier-app:8000
       - USE_DATABASE=true
       - DATABASE_PATH=/data/flowernet_history.db
+      - CONTROLLER_USE_LLM_OUTLINE=true
+      - CONTROLLER_REQUIRE_LLM_SOURCE=false
+      - CONTROLLER_LLM_TIMEOUT=120
+      - CONTROLLER_LLM_RETRIES=3
+      - CONTROLLER_MIN_SCORE_GAIN=0.001
+      - CONTROLLER_MIN_REL_ANCHOR_GAIN=0.005
+      - CONTROLLER_MIN_NOVELTY_GAIN=0.005
+      - CONTROLLER_MIN_STRUCTURE_GAIN=0.05
     volumes:
       - shared_data:/data
     networks:
@@ -48,14 +56,31 @@ services:
       - ollama
     environment:
       - PORT=8003
-      - OUTLINER_PROVIDER=ollama
-      - OUTLINER_MODEL=qwen2.5:7b
-      - OLLAMA_URL=http://ollama:11434
+      - OUTLINER_PROVIDER=azure
+      - OUTLINER_MODEL=gpt-4o-mini
+      - OUTLINER_AZURE_MODEL=gpt-4o-mini
+      - OUTLINER_AZURE_API_BASE=https://poffices-ai.openai.azure.com/
+      - OUTLINER_AZURE_API_VERSION=2025-01-01-preview
+      - OUTLINER_AZURE_DEPLOYMENT_NAME=gpt-4o-mini
+      - OUTLINER_AZURE_API_KEY=${OUTLINER_AZURE_API_KEY}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_API_BASE=https://poffices-ai.openai.azure.com/
+      - AZURE_OPENAI_API_VERSION=2025-01-01-preview
+      - AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
       - USE_DATABASE=true
       - DATABASE_PATH=/data/flowernet_history.db
       - OLLAMA_RETRIES=6
       - OLLAMA_BACKOFF=3
       - OLLAMA_MAX_BACKOFF=60
+      - PROVIDER_RETRIES=8
+      - PROVIDER_BACKOFF=3.0
+      - PROVIDER_MAX_BACKOFF=180.0
+      - PROVIDER_JITTER=0.4
+      - PROVIDER_MIN_INTERVAL=2.0
+      - OUTLINER_SERIALIZE_TASKS=true
+      - OUTLINER_TASK_WAIT_TIMEOUT=0
+      - OUTLINER_FLOW_RETRIES=4
+      - OUTLINER_FLOW_BACKOFF=3.0
     volumes:
       - shared_data:/data
     networks:
@@ -72,8 +97,17 @@ services:
       - outliner-app
     environment:
       - PORT=8002
-      - GENERATOR_PROVIDER=ollama
-      - GENERATOR_MODEL=qwen2.5:7b
+      - GENERATOR_PROVIDER=azure
+      - GENERATOR_MODEL=gpt-4o-mini
+      - GENERATOR_AZURE_MODEL=gpt-4o-mini
+      - GENERATOR_AZURE_API_BASE=https://poffices-ai.openai.azure.com/
+      - GENERATOR_AZURE_API_VERSION=2025-01-01-preview
+      - GENERATOR_AZURE_DEPLOYMENT_NAME=gpt-4o-mini
+      - GENERATOR_AZURE_API_KEY=${GENERATOR_AZURE_API_KEY}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_API_BASE=https://poffices-ai.openai.azure.com/
+      - AZURE_OPENAI_API_VERSION=2025-01-01-preview
+      - AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
       - OLLAMA_URL=http://ollama:11434
       - VERIFIER_URL=http://verifier-app:8000
       - CONTROLLER_URL=http://controller-app:8001
@@ -83,6 +117,8 @@ services:
       - OLLAMA_RETRIES=6
       - OLLAMA_BACKOFF=3
       - OLLAMA_MAX_BACKOFF=60
+      - MAX_CONTROLLER_RETRIES=2
+      - STRICT_CONTROLLER_EFFECTIVE=false
     volumes:
       - shared_data:/data
     networks:
@@ -102,9 +138,10 @@ services:
       - GENERATOR_URL=http://generator-app:8002
       - REQUEST_TIMEOUT=3600
       - API_AUTH_ENABLED=false
-      - DOWNSTREAM_RETRIES=6
-      - DOWNSTREAM_BACKOFF=2
-      - DOWNSTREAM_MAX_BACKOFF=60
+      - DOWNSTREAM_RETRIES=8
+      - DOWNSTREAM_BACKOFF=3
+      - DOWNSTREAM_MAX_BACKOFF=120
+      - DOWNSTREAM_JITTER=0.6
     volumes:
       - shared_data:/data
     networks:

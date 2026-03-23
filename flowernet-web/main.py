@@ -144,7 +144,20 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
         try:
             response = requests.post(url, json=payload, timeout=timeout)
             response.raise_for_status()
-            body = response.json()
+            try:
+                body = response.json()
+            except ValueError:
+                content_type = response.headers.get("Content-Type", "")
+                response_body = (response.text or "")[:800]
+                last_error = (
+                    f"HTTP {response.status_code} from {url}: 下游返回非JSON响应 "
+                    f"(Content-Type={content_type or 'unknown'}): {response_body or '<empty>'}"
+                )
+                if attempt < DOWNSTREAM_RETRIES:
+                    retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
+                    time.sleep(retry_delay)
+                    continue
+                break
 
             if _is_transient_downstream_payload(body) and attempt < DOWNSTREAM_RETRIES:
                 last_error = f"下游返回可重试失败: {body}"
@@ -598,12 +611,16 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         }
         
         try:
-            outline_http_resp = requests.post(
+            outline_resp = post_json_with_retry(
                 f"{OUTLINER_URL}/outline/generate-and-save",
-                json=outline_payload,
-                timeout=REQUEST_TIMEOUT
+                outline_payload,
+                REQUEST_TIMEOUT,
             )
-            outline_resp = outline_http_resp.json()
+        except HTTPException as e:
+            detail = e.detail if isinstance(e.detail, str) else json.dumps(e.detail, ensure_ascii=False)
+            msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {detail}'})
+            yield f"data: {msg}\n\n"
+            return
         except Exception as e:
             msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {str(e)}'})
             yield f"data: {msg}\n\n"

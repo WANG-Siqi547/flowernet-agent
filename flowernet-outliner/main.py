@@ -10,6 +10,8 @@ from typing import Optional, Dict, Any, List
 import uvicorn
 import os
 import json
+import time
+import threading
 from datetime import datetime
 
 from outliner import FlowerNetOutliner
@@ -142,6 +144,17 @@ app.add_middleware(
 # 全局实例
 outliner = None
 history_manager = None
+outline_generation_lock = threading.Lock()
+
+
+def _is_transient_outliner_error(message: str) -> bool:
+    text = str(message or "").lower()
+    transient_tokens = [
+        "429", "rate", "too many requests", "resource_exhausted", "quota",
+        "timeout", "timed out", "temporarily", "503", "502", "504", "connection",
+        "retry_after",
+    ]
+    return any(token in text for token in transient_tokens)
 
 
 @app.on_event("startup")
@@ -623,19 +636,53 @@ async def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
             "structure": {...}
         }
     """
+    serialize_tasks = os.getenv("OUTLINER_SERIALIZE_TASKS", "true").lower() == "true"
+    wait_timeout = float(os.getenv("OUTLINER_TASK_WAIT_TIMEOUT", "0"))
+    flow_retries = max(1, int(os.getenv("OUTLINER_FLOW_RETRIES", "3")))
+    flow_backoff = max(0.5, float(os.getenv("OUTLINER_FLOW_BACKOFF", "3.0")))
+
+    acquired = True
+    if serialize_tasks:
+        if wait_timeout > 0:
+            acquired = outline_generation_lock.acquire(timeout=wait_timeout)
+        else:
+            outline_generation_lock.acquire()
+
+        if not acquired:
+            raise HTTPException(
+                status_code=429,
+                detail=f"已有大纲生成任务正在执行，请稍后重试（等待上限 {wait_timeout:.0f}s）"
+            )
+
     try:
-        # 第一步：生成整篇文章的大纲
-        print(f"\n📝 第一步：生成整篇文章的大纲...")
-        result = outliner.generate_full_outline(
-            user_background=request.user_background,
-            user_requirements=request.user_requirements,
-            max_sections=request.max_sections,
-            max_subsections_per_section=request.max_subsections_per_section
-        )
-        
-        if not result.get("success"):
-            return result
-        
+        result = None
+        last_error = ""
+        for attempt in range(1, flow_retries + 1):
+            print(f"\n📝 第一步：生成整篇文章的大纲... (attempt {attempt}/{flow_retries})")
+            result = outliner.generate_full_outline(
+                user_background=request.user_background,
+                user_requirements=request.user_requirements,
+                max_sections=request.max_sections,
+                max_subsections_per_section=request.max_subsections_per_section
+            )
+
+            if result.get("success"):
+                break
+
+            last_error = str(result.get("error") or "unknown outliner error")
+            if attempt < flow_retries and _is_transient_outliner_error(last_error):
+                delay = min(flow_backoff * (2 ** (attempt - 1)), 30.0)
+                print(f"⚠️ 大纲生成失败（可重试）: {last_error[:180]}，{delay:.1f}s 后重试")
+                time.sleep(delay)
+                continue
+            break
+
+        if not result or not result.get("success"):
+            return result or {
+                "success": False,
+                "error": last_error or "outliner_generate_failed"
+            }
+
         structure = result["structure"]
         document_title = result["document_title"]
         content_prompts = result["content_prompts"]
@@ -716,11 +763,14 @@ async def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
             "structure": structure,
             "content_prompts": content_prompts
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if serialize_tasks and acquired:
+            outline_generation_lock.release()
 
 
 # ============ Main ============

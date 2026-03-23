@@ -13,7 +13,7 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: GENERATOR_PROVIDER
-        value: azure,ollama
+        value: azure
       - key: GENERATOR_MODEL
         value: gpt-4o-mini
       - key: GENERATOR_AZURE_MODEL
@@ -68,6 +68,10 @@ services:
         value: "false"
       - key: MAX_SUBSECTION_ATTEMPTS
         value: "8"
+      - key: MAX_CONTROLLER_RETRIES
+        value: "2"
+      - key: STRICT_CONTROLLER_EFFECTIVE
+        value: "false"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH

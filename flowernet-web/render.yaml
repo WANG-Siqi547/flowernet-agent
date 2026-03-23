@@ -15,13 +15,13 @@ services:
       - key: REQUEST_TIMEOUT
         value: "3600"
       - key: DOWNSTREAM_RETRIES
-        value: "5"
+        value: "8"
       - key: DOWNSTREAM_BACKOFF
-        value: "2.0"
+        value: "3.0"
       - key: DOWNSTREAM_MAX_BACKOFF
-        value: "60.0"
+        value: "120.0"
       - key: DOWNSTREAM_JITTER
-        value: "0.4"
+        value: "0.6"
       - key: NO_PROXY
         value: "localhost,127.0.0.1"
     healthCheckPath: /health

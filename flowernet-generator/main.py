@@ -262,7 +262,10 @@ async def debug():
         "environment": {
             "GENERATOR_PROVIDER": os.getenv('GENERATOR_PROVIDER', 'NOT SET'),
             "GENERATOR_MODEL": os.getenv('GENERATOR_MODEL', 'NOT SET'),
-            "OLLAMA_URL": os.getenv('OLLAMA_URL', 'NOT SET')
+            "OLLAMA_URL": os.getenv('OLLAMA_URL', 'NOT SET'),
+            "azure_key_present": bool(os.getenv('GENERATOR_AZURE_API_KEY') or os.getenv('AZURE_OPENAI_API_KEY')),
+            "azure_api_base_present": bool(os.getenv('GENERATOR_AZURE_API_BASE') or os.getenv('AZURE_OPENAI_API_BASE')),
+            "azure_deployment_present": bool(os.getenv('GENERATOR_AZURE_DEPLOYMENT_NAME') or os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'))
         }
     }
 

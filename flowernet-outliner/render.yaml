@@ -13,7 +13,7 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: OUTLINER_PROVIDER
-        value: azure,ollama
+        value: azure
       - key: OUTLINER_MODEL
         value: gpt-4o-mini
       - key: OUTLINER_AZURE_MODEL
@@ -39,15 +39,23 @@ services:
       - key: OPENROUTER_APP_NAME
         value: FlowerNet
       - key: PROVIDER_RETRIES
-        value: "4"
+        value: "8"
       - key: PROVIDER_BACKOFF
-        value: "2.0"
+        value: "3.0"
       - key: PROVIDER_MAX_BACKOFF
-        value: "90.0"
+        value: "180.0"
       - key: PROVIDER_JITTER
         value: "0.4"
       - key: PROVIDER_MIN_INTERVAL
-        value: "1.2"
+        value: "2.0"
+      - key: OUTLINER_SERIALIZE_TASKS
+        value: "true"
+      - key: OUTLINER_TASK_WAIT_TIMEOUT
+        value: "0"
+      - key: OUTLINER_FLOW_RETRIES
+        value: "4"
+      - key: OUTLINER_FLOW_BACKOFF
+        value: "3.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
