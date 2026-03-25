@@ -25,6 +25,8 @@ DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "3"))
 DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
 DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
 DOWNSTREAM_JITTER = float(os.getenv("DOWNSTREAM_JITTER", "0.35"))
+DOWNSTREAM_OUTLINER_MIN_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MIN_RETRIES", "10"))
+DOWNSTREAM_OUTLINER_MIN_DELAY_503 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_503", "8.0"))
 GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "1"))
 GENERATOR_RESUME_BACKOFF = float(os.getenv("GENERATOR_RESUME_BACKOFF", "2.0"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
@@ -136,7 +138,10 @@ def _is_transient_downstream_payload(payload: Dict[str, Any]) -> bool:
 
 def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     last_error: str = ""
-    for attempt in range(1, DOWNSTREAM_RETRIES + 1):
+    is_outliner_url = "outliner" in url or "/outline/" in url
+    effective_retries = max(DOWNSTREAM_RETRIES, DOWNSTREAM_OUTLINER_MIN_RETRIES) if is_outliner_url else DOWNSTREAM_RETRIES
+
+    for attempt in range(1, effective_retries + 1):
         retry_delay = DOWNSTREAM_BACKOFF * (2 ** max(0, attempt - 1))
         retry_delay += random.uniform(0, DOWNSTREAM_JITTER)
         retry_after_seconds = None
@@ -153,13 +158,13 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
                     f"HTTP {response.status_code} from {url}: 下游返回非JSON响应 "
                     f"(Content-Type={content_type or 'unknown'}): {response_body or '<empty>'}"
                 )
-                if attempt < DOWNSTREAM_RETRIES:
+                if attempt < effective_retries:
                     retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
                     time.sleep(retry_delay)
                     continue
                 break
 
-            if _is_transient_downstream_payload(body) and attempt < DOWNSTREAM_RETRIES:
+            if _is_transient_downstream_payload(body) and attempt < effective_retries:
                 last_error = f"下游返回可重试失败: {body}"
                 retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
                 time.sleep(retry_delay)
@@ -174,10 +179,12 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After", "")
                     retry_after_seconds = _parse_retry_after_seconds(retry_after)
+                if is_outliner_url and response.status_code == 503:
+                    retry_delay = max(retry_delay, DOWNSTREAM_OUTLINER_MIN_DELAY_503)
             else:
                 last_error = str(exc)
 
-            if attempt < DOWNSTREAM_RETRIES:
+            if attempt < effective_retries:
                 if retry_after_seconds is not None:
                     retry_delay = max(retry_delay, retry_after_seconds)
                 retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
@@ -185,7 +192,7 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
 
     raise HTTPException(
         status_code=502,
-        detail=f"下游服务请求失败(重试{DOWNSTREAM_RETRIES}次): {url}, 错误: {last_error}",
+        detail=f"下游服务请求失败(重试{effective_retries}次): {url}, 错误: {last_error}",
     )
 
 
