@@ -36,7 +36,7 @@
 # Azure OpenAI（主）
 export AZURE_OPENAI_API_KEY="your-azure-api-key"
 export AZURE_OPENAI_API_BASE="https://poffices-ai.openai.azure.com/"
-export AZURE_OPENAI_API_VERSION="2025-01-01-preview"
+export AZURE_OPENAI_API_VERSION="2025-04-01-preview"
 export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
 
 # 可选：显式指定 Provider 链（默认已是 azure,ollama）

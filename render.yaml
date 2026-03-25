@@ -65,15 +65,19 @@ services:
       - key: PORT
         value: 8003
       - key: OUTLINER_PROVIDER
-        value: azure,ollama
+        value: azure,openrouter,gemini
       - key: OUTLINER_MODEL
         value: gpt-4o-mini
+      - key: OUTLINER_OPENROUTER_MODEL
+        value: qwen/qwen3-coder:free
+      - key: OUTLINER_GEMINI_MODEL
+        value: models/gemini-2.5-flash-lite
       - key: OUTLINER_AZURE_MODEL
         value: gpt-4o-mini
       - key: OUTLINER_AZURE_API_BASE
         value: https://poffices-ai.openai.azure.com/
       - key: OUTLINER_AZURE_API_VERSION
-        value: 2025-01-01-preview
+        value: 2025-04-01-preview
       - key: OUTLINER_AZURE_DEPLOYMENT_NAME
         value: gpt-4o-mini
       - key: OUTLINER_AZURE_API_KEY
@@ -83,7 +87,7 @@ services:
       - key: AZURE_OPENAI_API_BASE
         value: https://poffices-ai.openai.azure.com/
       - key: AZURE_OPENAI_API_VERSION
-        value: 2025-01-01-preview
+        value: 2025-04-01-preview
       - key: AZURE_OPENAI_DEPLOYMENT_NAME
         value: gpt-4o-mini
       - key: AZURE_OPENAI_MODEL
@@ -126,15 +130,19 @@ services:
       - key: PORT
         value: 8002
       - key: GENERATOR_PROVIDER
-        value: azure,ollama
+        value: azure,openrouter,gemini
       - key: GENERATOR_MODEL
         value: gpt-4o-mini
+      - key: GENERATOR_OPENROUTER_MODEL
+        value: qwen/qwen3-coder:free
+      - key: GENERATOR_GEMINI_MODEL
+        value: models/gemini-2.5-flash-lite
       - key: GENERATOR_AZURE_MODEL
         value: gpt-4o-mini
       - key: GENERATOR_AZURE_API_BASE
         value: https://poffices-ai.openai.azure.com/
       - key: GENERATOR_AZURE_API_VERSION
-        value: 2025-01-01-preview
+        value: 2025-04-01-preview
       - key: GENERATOR_AZURE_DEPLOYMENT_NAME
         value: gpt-4o-mini
       - key: GENERATOR_AZURE_API_KEY
@@ -144,7 +152,7 @@ services:
       - key: AZURE_OPENAI_API_BASE
         value: https://poffices-ai.openai.azure.com/
       - key: AZURE_OPENAI_API_VERSION
-        value: 2025-01-01-preview
+        value: 2025-04-01-preview
       - key: AZURE_OPENAI_DEPLOYMENT_NAME
         value: gpt-4o-mini
       - key: AZURE_OPENAI_MODEL

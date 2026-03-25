@@ -66,7 +66,7 @@ class FlowerNetOutliner:
         self.azure_model = os.getenv("OUTLINER_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
         self.azure_api_key = os.getenv("OUTLINER_AZURE_API_KEY", os.getenv("AZURE_OPENAI_API_KEY", "")).strip()
         self.azure_api_base = os.getenv("OUTLINER_AZURE_API_BASE", os.getenv("AZURE_OPENAI_API_BASE", "")).strip()
-        self.azure_api_version = os.getenv("OUTLINER_AZURE_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")).strip()
+        self.azure_api_version = os.getenv("OUTLINER_AZURE_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")).strip()
         self.azure_deployment_name = os.getenv("OUTLINER_AZURE_DEPLOYMENT_NAME", os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")).strip()
         self.gemini_model = os.getenv("OUTLINER_GEMINI_MODEL", "models/gemini-2.5-flash-lite")
         self.openrouter_model = os.getenv("OUTLINER_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
