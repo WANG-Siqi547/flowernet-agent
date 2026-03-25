@@ -13,7 +13,7 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: GENERATOR_PROVIDER
-        value: azure,openrouter,gemini
+        value: azure
       - key: GENERATOR_MODEL
         value: gpt-4o-mini
       - key: GENERATOR_OPENROUTER_MODEL
@@ -43,21 +43,21 @@ services:
       - key: OPENROUTER_APP_NAME
         value: FlowerNet
       - key: PROVIDER_RETRIES
-        value: "6"
+        value: "2"
       - key: PROVIDER_BACKOFF
-        value: "3.0"
+        value: "1.2"
       - key: PROVIDER_MAX_BACKOFF
-        value: "180.0"
+        value: "20.0"
       - key: PROVIDER_JITTER
-        value: "0.5"
+        value: "0.3"
       - key: PROVIDER_MIN_INTERVAL
-        value: "2.0"
+        value: "0.8"
       - key: ORCH_GENERATOR_RETRIES
-        value: "6"
+        value: "2"
       - key: ORCH_GENERATOR_BACKOFF
-        value: "3.0"
+        value: "1.5"
       - key: ORCH_GENERATOR_MAX_BACKOFF
-        value: "120.0"
+        value: "20.0"
       - key: SERIALIZE_DOCUMENT_TASKS
         value: "true"
       - key: SERIALIZE_DOCUMENT_WAIT_TIMEOUT
@@ -65,13 +65,13 @@ services:
       - key: DOC_RETRY_BASE_DELAY
         value: "2.0"
       - key: DOC_RETRY_MAX_DELAY
-        value: "90.0"
+        value: "20.0"
       - key: DOC_RETRY_JITTER
         value: "0.5"
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "8"
+        value: "3"
       - key: MAX_CONTROLLER_RETRIES
         value: "2"
       - key: STRICT_CONTROLLER_EFFECTIVE
