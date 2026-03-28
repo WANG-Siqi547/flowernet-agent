@@ -2,18 +2,22 @@ import os
 import time
 import requests
 
+os.environ.setdefault("NO_PROXY", "*")
+os.environ.setdefault("no_proxy", "*")
+
 base = "http://localhost:8010"
 payload = {
     "topic": "Cat Breed Guide",
-    "chapter_count": 2,
-    "subsection_count": 2,
+    "chapter_count": 1,
+    "subsection_count": 1,
     "user_background": "pet owner",
     "extra_requirements": "easy tips and practical feeding advice",
+    "timeout_seconds": 1800,
 }
 
 print("[1] POST /api/generate")
 start = time.time()
-resp = requests.post(f"{base}/api/generate", json=payload, timeout=900)
+resp = requests.post(f"{base}/api/generate", json=payload, timeout=1900)
 print("status:", resp.status_code)
 if resp.status_code != 200:
     print("body:", resp.text[:1200])

@@ -67,9 +67,15 @@ class FlowerNetGenerator:
                 - Ollama: "qwen2.5:7b", "llama3.1:8b", "mistral:7b" 等
             provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
         """
-        requested_provider = provider or os.getenv("GENERATOR_PROVIDER_CHAIN", "azure")
+        provider_chain_env = os.getenv("GENERATOR_PROVIDER_CHAIN", "").strip()
+        requested_provider = provider_chain_env or provider or os.getenv("GENERATOR_PROVIDER", "azure")
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
-        self.provider_chain = parsed_chain or ["azure", "ollama"]
+        allowed_providers = {"azure", "gemini", "dashscope", "openrouter", "claude", "ollama"}
+        normalized_chain: List[str] = []
+        for candidate in parsed_chain:
+            if candidate in allowed_providers and candidate not in normalized_chain:
+                normalized_chain.append(candidate)
+        self.provider_chain = normalized_chain or ["azure", "ollama"]
 
         self.model = model
         self.azure_model = os.getenv("GENERATOR_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -78,6 +84,12 @@ class FlowerNetGenerator:
         self.azure_api_version = os.getenv("GENERATOR_AZURE_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")).strip()
         self.azure_deployment_name = os.getenv("GENERATOR_AZURE_DEPLOYMENT_NAME", os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")).strip()
         self.gemini_model = os.getenv("GENERATOR_GEMINI_MODEL", "models/gemini-2.5-flash-lite")
+        self.dashscope_model = os.getenv("GENERATOR_DASHSCOPE_MODEL", os.getenv("DASHSCOPE_MODEL", "glm-5"))
+        self.dashscope_api_key = os.getenv("GENERATOR_DASHSCOPE_API_KEY", os.getenv("DASHSCOPE_API_KEY", "")).strip()
+        self.dashscope_api_url = os.getenv(
+            "GENERATOR_DASHSCOPE_API_URL",
+            os.getenv("DASHSCOPE_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        ).rstrip("/")
         self.openrouter_model = os.getenv("GENERATOR_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
         self.ollama_model = os.getenv("GENERATOR_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -94,7 +106,15 @@ class FlowerNetGenerator:
         self.provider_max_backoff = float(os.getenv('PROVIDER_MAX_BACKOFF', '90.0'))
         self.provider_jitter = float(os.getenv('PROVIDER_JITTER', '0.35'))
         self.provider_min_interval = float(os.getenv('PROVIDER_MIN_INTERVAL', '1.0'))
+        self.provider_failure_threshold = max(1, int(os.getenv('PROVIDER_FAILURE_THRESHOLD', '2')))
+        self.provider_cooldown_seconds = max(5.0, float(os.getenv('PROVIDER_COOLDOWN_SECONDS', '180')))
+        self.provider_http_timeout = float(os.getenv('PROVIDER_HTTP_TIMEOUT', '90'))
+        self.dashscope_http_timeout = float(os.getenv('DASHSCOPE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self._provider_next_allowed: Dict[str, float] = {}
+        self._provider_failure_streak: Dict[str, int] = {}
+        self._provider_cooldown_until: Dict[str, float] = {}
 
         self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
         self.client = genai.Client(api_key=self.api_key) if (self.api_key and GEMINI_AVAILABLE) else None
@@ -107,6 +127,7 @@ class FlowerNetGenerator:
         print(f"  - Azure model: {self.azure_model}")
         print(f"  - Azure deployment: {self.azure_deployment_name}")
         print(f"  - Gemini model: {self.gemini_model}")
+        print(f"  - DashScope model: {self.dashscope_model}")
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
         print(f"  - Ollama URL: {self.ollama_url}")
@@ -190,6 +211,12 @@ class FlowerNetGenerator:
             errors: List[str] = []
             for provider in self.provider_chain:
                 provider_errors: List[str] = []
+                cooldown_until = self._provider_cooldown_until.get(provider, 0.0)
+                if cooldown_until > time.time():
+                    remain = max(0.0, cooldown_until - time.time())
+                    errors.append(f"{provider}: skipped (cooldown {remain:.1f}s)")
+                    continue
+
                 for attempt in range(1, self.provider_retries + 1):
                     self._wait_for_provider_slot(provider)
 
@@ -197,6 +224,8 @@ class FlowerNetGenerator:
                         result = self._generate_with_azure(prompt, max_tokens)
                     elif provider == "gemini":
                         result = self._generate_with_gemini(prompt, max_tokens)
+                    elif provider == "dashscope":
+                        result = self._generate_with_dashscope(prompt, max_tokens)
                     elif provider == "openrouter":
                         result = self._generate_with_openrouter(prompt, max_tokens)
                     elif provider == "claude":
@@ -208,6 +237,8 @@ class FlowerNetGenerator:
 
                     if result.get("success"):
                         self._mark_provider_slot(provider)
+                        self._provider_failure_streak[provider] = 0
+                        self._provider_cooldown_until[provider] = 0.0
                         self.last_provider_used = provider
                         meta = result.get("metadata") or {}
                         if "fallback_chain" not in meta:
@@ -217,7 +248,16 @@ class FlowerNetGenerator:
 
                     error_message = result.get("error", "unknown error")
                     provider_errors.append(str(error_message))
-                    should_retry = self._is_transient_provider_error(str(error_message)) and attempt < self.provider_retries
+                    transient_error = self._is_transient_provider_error(str(error_message))
+                    if transient_error:
+                        streak = self._provider_failure_streak.get(provider, 0) + 1
+                        self._provider_failure_streak[provider] = streak
+                        if streak >= self.provider_failure_threshold:
+                            self._provider_cooldown_until[provider] = time.time() + self.provider_cooldown_seconds
+                    else:
+                        self._provider_failure_streak[provider] = 0
+
+                    should_retry = transient_error and attempt < self.provider_retries
                     if should_retry:
                         retry_after = result.get("retry_after")
                         if retry_after is None:
@@ -281,7 +321,13 @@ class FlowerNetGenerator:
             }
             params = {"api-version": self.azure_api_version}
 
-            response = requests.post(url, params=params, json=payload, headers=headers, timeout=120)
+            response = requests.post(
+                url,
+                params=params,
+                json=payload,
+                headers=headers,
+                timeout=self.azure_http_timeout,
+            )
             response.raise_for_status()
             data = response.json()
 
@@ -412,7 +458,12 @@ class FlowerNetGenerator:
                 "X-Title": self.openrouter_app_name,
             }
 
-            response = requests.post(self.openrouter_api_url, json=payload, headers=headers, timeout=120)
+            response = requests.post(
+                self.openrouter_api_url,
+                json=payload,
+                headers=headers,
+                timeout=self.openrouter_http_timeout,
+            )
             response.raise_for_status()
             data = response.json()
             choice = ((data.get("choices") or [{}])[0] or {})
@@ -460,6 +511,83 @@ class FlowerNetGenerator:
             return {
                 "success": False,
                 "error": f"OpenRouter API Error: {str(e)}",
+                "draft": ""
+            }
+
+    def _generate_with_dashscope(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
+        """使用 DashScope（OpenAI-compatible）生成内容"""
+        try:
+            if not self.dashscope_api_key:
+                return {
+                    "success": False,
+                    "error": "DASHSCOPE_API_KEY not set",
+                    "draft": ""
+                }
+
+            payload = {
+                "model": self.dashscope_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": max_tokens,
+            }
+            headers = {
+                "Authorization": f"Bearer {self.dashscope_api_key}",
+                "Content-Type": "application/json",
+            }
+
+            response = requests.post(
+                self.dashscope_api_url,
+                json=payload,
+                headers=headers,
+                timeout=self.dashscope_http_timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+            choice = ((data.get("choices") or [{}])[0] or {})
+            msg = choice.get("message") or {}
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
+                content = "".join(parts)
+            draft_text = str(content).strip()
+            if not draft_text:
+                return {
+                    "success": False,
+                    "error": "DashScope empty response",
+                    "draft": ""
+                }
+
+            usage = data.get("usage") or {}
+            return {
+                "success": True,
+                "draft": draft_text,
+                "metadata": {
+                    "model": self.dashscope_model,
+                    "provider": "dashscope",
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+            }
+        except requests.RequestException as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            retry_after = self._parse_retry_after_seconds(
+                getattr(getattr(e, "response", None), "headers", {}).get("Retry-After", "")
+            )
+            error_message = f"DashScope API Error: {str(e)}"
+            if status_code is not None:
+                error_message = f"DashScope HTTP {status_code}: {str(e)}"
+            return {
+                "success": False,
+                "error": error_message,
+                "draft": "",
+                "status_code": status_code,
+                "retry_after": retry_after,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"DashScope API Error: {str(e)}",
                 "draft": ""
             }
     

@@ -8,6 +8,7 @@ import os
 import json
 import time
 import random
+import ast
 import re
 import requests
 from typing import Optional, Dict, Any, List, Tuple
@@ -69,6 +70,12 @@ class FlowerNetOutliner:
         self.azure_api_version = os.getenv("OUTLINER_AZURE_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")).strip()
         self.azure_deployment_name = os.getenv("OUTLINER_AZURE_DEPLOYMENT_NAME", os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")).strip()
         self.gemini_model = os.getenv("OUTLINER_GEMINI_MODEL", "models/gemini-2.5-flash-lite")
+        self.dashscope_model = os.getenv("OUTLINER_DASHSCOPE_MODEL", os.getenv("DASHSCOPE_MODEL", "glm-5"))
+        self.dashscope_api_key = os.getenv("OUTLINER_DASHSCOPE_API_KEY", os.getenv("DASHSCOPE_API_KEY", "")).strip()
+        self.dashscope_api_url = os.getenv(
+            "OUTLINER_DASHSCOPE_API_URL",
+            os.getenv("DASHSCOPE_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        ).rstrip("/")
         self.openrouter_model = os.getenv("OUTLINER_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
         self.ollama_model = os.getenv("OUTLINER_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -96,9 +103,54 @@ class FlowerNetOutliner:
         print(f"  - Azure model: {self.azure_model}")
         print(f"  - Azure deployment: {self.azure_deployment_name}")
         print(f"  - Gemini model: {self.gemini_model}")
+        print(f"  - DashScope model: {self.dashscope_model}")
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
         print(f"  - Ollama URL: {self.ollama_url}")
+
+    @staticmethod
+    def _sanitize_json_text(raw_text: str) -> str:
+        text = (raw_text or "").strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+
+        text = text.strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            text = text[start:end + 1]
+
+        text = re.sub(r"[\x00-\x1F]", "", text)
+        return text.strip()
+
+    def _safe_json_loads(self, raw_text: str) -> Dict[str, Any]:
+        sanitized = self._sanitize_json_text(raw_text)
+        try:
+            return json.loads(sanitized)
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            compact = re.sub(r"\s+", " ", sanitized)
+            return json.loads(compact)
+        except json.JSONDecodeError:
+            pass
+
+        try:
+            py_like = re.sub(r"\btrue\b", "True", sanitized, flags=re.IGNORECASE)
+            py_like = re.sub(r"\bfalse\b", "False", py_like, flags=re.IGNORECASE)
+            py_like = re.sub(r"\bnull\b", "None", py_like, flags=re.IGNORECASE)
+            parsed = ast.literal_eval(py_like)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        raise json.JSONDecodeError("Unable to parse model JSON output", sanitized, 0)
     
     def generate_document_structure(
         self,
@@ -181,20 +233,11 @@ class FlowerNetOutliner:
 """
         
         try:
-            # 调用 LLM 生成大纲（自动降级）
-            structure_text, llm_metadata = self._generate_text_with_fallback(structure_prompt, max_tokens=4000)
-            
-            # 解析 JSON
-            
-            # 移除可能的代码块标记
-            if structure_text.startswith("```json"):
-                structure_text = structure_text[7:]
-            if structure_text.startswith("```"):
-                structure_text = structure_text[3:]
-            if structure_text.endswith("```"):
-                structure_text = structure_text[:-3]
-            
-            structure = json.loads(structure_text.strip())
+            structure, llm_metadata, structure_text = self._generate_json_with_repair(
+                structure_prompt,
+                max_tokens=4000,
+                stage_name="document_structure",
+            )
             
             # 验证结构是否符合要求
             sections = structure.get('sections', [])
@@ -203,6 +246,9 @@ class FlowerNetOutliner:
             # 检查章节数量
             if actual_section_count != max_sections:
                 print(f"⚠️  警告: 大纲的章节数 ({actual_section_count}) 与要求不符 ({max_sections})")
+                if actual_section_count > max_sections:
+                    sections = sections[:max_sections]
+                    actual_section_count = len(sections)
                 # 如果太少，补充空章节
                 while actual_section_count < max_sections:
                     actual_section_count += 1
@@ -226,6 +272,9 @@ class FlowerNetOutliner:
                 actual_subsection_count = len(subsections)
                 if actual_subsection_count != max_subsections_per_section:
                     print(f"⚠️  警告: 章节 '{section.get('title')}' 的小节数 ({actual_subsection_count}) 与要求不符 ({max_subsections_per_section})")
+                    if actual_subsection_count > max_subsections_per_section:
+                        subsections = subsections[:max_subsections_per_section]
+                        actual_subsection_count = len(subsections)
                     # 补充缺少的小节
                     while actual_subsection_count < max_subsections_per_section:
                         actual_subsection_count += 1
@@ -335,14 +384,19 @@ class FlowerNetOutliner:
     def _mark_provider_slot(self, provider: str, extra_delay: float = 0.0):
         self._provider_next_allowed[provider] = time.time() + max(self.provider_min_interval, extra_delay)
 
-    def _generate_text_with_fallback(self, prompt: str, max_tokens: int) -> Tuple[str, Dict[str, Any]]:
+    def _generate_text_with_fallback(self, prompt: str, max_tokens: int, expect_json: bool = False) -> Tuple[str, Dict[str, Any]]:
         errors: List[str] = []
         for provider in self.provider_chain:
             provider_errors: List[str] = []
             for attempt in range(1, self.provider_retries + 1):
                 try:
                     self._wait_for_provider_slot(provider)
-                    text, metadata = self._generate_text_with_provider(provider=provider, prompt=prompt, max_tokens=max_tokens)
+                    text, metadata = self._generate_text_with_provider(
+                        provider=provider,
+                        prompt=prompt,
+                        max_tokens=max_tokens,
+                        expect_json=expect_json,
+                    )
                     self._mark_provider_slot(provider)
                     self.last_provider_used = provider
                     return text, metadata
@@ -363,7 +417,8 @@ class FlowerNetOutliner:
 
         raise Exception("所有 LLM 提供商都失败: " + " | ".join(errors))
 
-    def _generate_text_with_provider(self, provider: str, prompt: str, max_tokens: int) -> Tuple[str, Dict[str, Any]]:
+    def _generate_text_with_provider(self, provider: str, prompt: str, max_tokens: int, expect_json: bool = False) -> Tuple[str, Dict[str, Any]]:
+        temperature = 0.1 if expect_json else 0.7
         if provider == "azure":
             if not self.azure_api_key:
                 raise Exception("AZURE_OPENAI_API_KEY 未配置")
@@ -380,9 +435,11 @@ class FlowerNetOutliner:
             payload = {
                 "model": self.azure_model,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.7,
+                "temperature": temperature,
                 "max_tokens": max_tokens,
             }
+            if expect_json:
+                payload["response_format"] = {"type": "json_object"}
             headers = {
                 "api-key": self.azure_api_key,
                 "Content-Type": "application/json",
@@ -432,7 +489,7 @@ class FlowerNetOutliner:
                 model=self.gemini_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.7,
+                    temperature=temperature,
                     max_output_tokens=max_tokens
                 )
             )
@@ -446,6 +503,54 @@ class FlowerNetOutliner:
                 "output_tokens": response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0,
             }
 
+        if provider == "dashscope":
+            if not self.dashscope_api_key:
+                raise Exception("DASHSCOPE_API_KEY 未配置")
+            try:
+                payload = {
+                    "model": self.dashscope_model,
+                    "messages": [
+                        {"role": "system", "content": "你是严格的JSON输出助手。仅输出合法JSON对象，不要输出任何解释、代码块或额外文本。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if expect_json:
+                    payload["response_format"] = {"type": "json_object"}
+                headers = {
+                    "Authorization": f"Bearer {self.dashscope_api_key}",
+                    "Content-Type": "application/json",
+                }
+                response = requests.post(self.dashscope_api_url, json=payload, headers=headers, timeout=120)
+                response.raise_for_status()
+                data = response.json()
+                choice = ((data.get("choices") or [{}])[0] or {})
+                msg = choice.get("message") or {}
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
+                    content = "".join(parts)
+                text = str(content).strip()
+                if not text:
+                    raise Exception("DashScope 返回空响应")
+                usage = data.get("usage") or {}
+                return text, {
+                    "provider": "dashscope",
+                    "model": self.dashscope_model,
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                }
+            except requests.HTTPError as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                retry_after_raw = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
+                retry_after = self._parse_retry_after_seconds(retry_after_raw)
+                if retry_after is not None:
+                    raise Exception(f"DashScope HTTP {status}, retry_after={retry_after}")
+                raise Exception(f"DashScope HTTP {status}: {str(exc)}")
+            except requests.RequestException as exc:
+                raise Exception(f"DashScope request error: {str(exc)}")
+
         if provider == "openrouter":
             if not self.openrouter_api_key:
                 raise Exception("OPENROUTER_API_KEY 未配置")
@@ -453,9 +558,11 @@ class FlowerNetOutliner:
                 payload = {
                     "model": self.openrouter_model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.7,
+                    "temperature": temperature,
                     "max_tokens": max_tokens,
                 }
+                if expect_json:
+                    payload["response_format"] = {"type": "json_object"}
                 headers = {
                     "Authorization": f"Bearer {self.openrouter_api_key}",
                     "Content-Type": "application/json",
@@ -501,6 +608,58 @@ class FlowerNetOutliner:
             }
 
         raise Exception(f"不支持的 provider: {provider}")
+
+    def _generate_json_with_repair(self, prompt: str, max_tokens: int, stage_name: str) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+        retries = max(1, int(os.getenv("OUTLINER_JSON_RETRIES", "3")))
+        strict_prompt = (
+            f"{prompt}\n\n"
+            "【严格输出要求】\n"
+            "- 仅输出一个JSON对象\n"
+            "- 不要输出```代码块\n"
+            "- 不要输出任何解释文字\n"
+            "- 必须是可被 json.loads 直接解析的标准JSON\n"
+        )
+
+        last_error = ""
+        last_text = ""
+        last_metadata: Dict[str, Any] = {}
+
+        for attempt in range(1, retries + 1):
+            text, metadata = self._generate_text_with_fallback(strict_prompt, max_tokens=max_tokens, expect_json=True)
+            last_text = text
+            last_metadata = metadata
+            try:
+                return self._safe_json_loads(text), metadata, text
+            except json.JSONDecodeError as exc:
+                last_error = str(exc)
+                if attempt >= retries:
+                    break
+
+                repair_prompt = f"""
+你将收到一段“本应为JSON但不合法”的文本，请修复成合法JSON。
+
+要求：
+1. 仅输出修复后的 JSON 对象
+2. 保持字段语义不变，缺失字段可在不改变意图前提下补齐
+3. 不要输出任何解释文字
+
+待修复文本：
+{text}
+"""
+                repaired_text, repaired_meta = self._generate_text_with_fallback(
+                    repair_prompt,
+                    max_tokens=max_tokens,
+                    expect_json=True,
+                )
+                last_text = repaired_text
+                last_metadata = repaired_meta
+                try:
+                    return self._safe_json_loads(repaired_text), repaired_meta, repaired_text
+                except json.JSONDecodeError as exc2:
+                    last_error = str(exc2)
+                    continue
+
+        raise Exception(f"{stage_name} JSON 生成失败（重试 {retries} 次）: {last_error}; raw={last_text[:300]}")
     
     def generate_detailed_section_outlines(
             self,
@@ -556,16 +715,11 @@ class FlowerNetOutliner:
     
     请直接输出 JSON，不要输出额外解释，不要修改任何 id。
     """
-            detailed_text, llm_metadata = self._generate_text_with_fallback(detailed_prompt, max_tokens=5000)
-    
-            if detailed_text.startswith("```json"):
-                detailed_text = detailed_text[7:]
-            if detailed_text.startswith("```"):
-                detailed_text = detailed_text[3:]
-            if detailed_text.endswith("```"):
-                detailed_text = detailed_text[:-3]
-    
-            detailed = json.loads(detailed_text.strip())
+            detailed, llm_metadata, detailed_text = self._generate_json_with_repair(
+                detailed_prompt,
+                max_tokens=5000,
+                stage_name="detailed_section_outlines",
+            )
             detailed.setdefault("title", structure.get("title", ""))
     
             base_sections = structure.get("sections", []) if isinstance(structure.get("sections", []), list) else []

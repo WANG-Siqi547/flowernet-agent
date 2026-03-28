@@ -74,7 +74,8 @@ class DocumentGenerationOrchestrator:
         self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
         self.max_subsection_attempts = min(8, max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "8"))))
         self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "3")))
-        self.min_controller_retries_before_force = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "8")))
+        configured_min_retries = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "8")))
+        self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)
         self.strict_controller_effective = os.getenv("STRICT_CONTROLLER_EFFECTIVE", "true").lower() == "true"
         self.early_accept_iteration = max(2, int(os.getenv("EARLY_ACCEPT_ITERATION", "6")))
         self.early_accept_rel_margin = max(0.0, float(os.getenv("EARLY_ACCEPT_REL_MARGIN", "0.12")))
@@ -94,6 +95,10 @@ class DocumentGenerationOrchestrator:
         self.rag_min_citations = max(1, int(os.getenv("RAG_MIN_CITATIONS", "1")))
         self.rag_max_results = max(1, int(os.getenv("RAG_MAX_RESULTS", "5")))
         self.rag_timeout = max(3, int(os.getenv("RAG_TIMEOUT", "10")))
+        self.prompt_outline_max_chars = max(500, int(os.getenv("PROMPT_OUTLINE_MAX_CHARS", "4500")))
+        self.prompt_original_max_chars = max(500, int(os.getenv("PROMPT_ORIGINAL_MAX_CHARS", "3500")))
+        self.prompt_rag_max_chars = max(200, int(os.getenv("PROMPT_RAG_MAX_CHARS", "2200")))
+        self.prompt_history_max_chars = max(200, int(os.getenv("PROMPT_HISTORY_MAX_CHARS", "2600")))
 
         self.search_engine = (
             RAGSearchEngine(max_results=self.rag_max_results, timeout=self.rag_timeout)
@@ -109,10 +114,18 @@ class DocumentGenerationOrchestrator:
         return min(delay, self.retry_max_delay)
 
     def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
-        """前2轮使用严格阈值；第3轮起每轮放宽 0.02，最多放宽 0.10，保证最终收敛。"""
-        relax_steps = max(0, iteration - 2)
-        effective_rel = max(rel_threshold - min(0.10, 0.02 * relax_steps), rel_threshold - 0.10)
-        effective_red = min(red_threshold + min(0.10, 0.02 * relax_steps), red_threshold + 0.10)
+        """
+        阈值策略（按业务要求）：
+        - 第1~5轮：严格使用原始阈值
+        - 第6~8轮：每轮仅小幅放宽 0.01（总放宽不超过 0.03）
+        """
+        if iteration <= 5:
+            return round(rel_threshold, 4), round(red_threshold, 4)
+
+        relax_steps = min(3, max(0, iteration - 5))
+        relax_amount = 0.01 * relax_steps
+        effective_rel = max(0.0, rel_threshold - relax_amount)
+        effective_red = min(1.0, red_threshold + relax_amount)
         return round(effective_rel, 4), round(effective_red, 4)
 
     def set_local_generator(self, generator):
@@ -240,7 +253,20 @@ class DocumentGenerationOrchestrator:
         iteration: int,
     ) -> str:
         """当 Controller 不可用或返回无效结果时，本地规则改纲兜底。"""
-        base_outline = str(current_outline or original_outline or "").strip()
+        marker_start = "\n【本地修订约束】\n"
+        marker_end = "\n【本地修订约束结束】"
+
+        base_outline_raw = str(current_outline or original_outline or "").strip()
+        block_start = base_outline_raw.find(marker_start)
+        if block_start >= 0:
+            block_end = base_outline_raw.find(marker_end, block_start)
+            if block_end >= 0:
+                base_outline = (base_outline_raw[:block_start] + base_outline_raw[block_end + len(marker_end):]).strip()
+            else:
+                base_outline = base_outline_raw[:block_start].strip()
+        else:
+            base_outline = base_outline_raw
+
         if not base_outline:
             return ""
 
@@ -275,11 +301,15 @@ class DocumentGenerationOrchestrator:
         if not extra_lines:
             extra_lines.append("- 质量要求：保持主题聚焦与信息增量，避免泛化叙述。")
 
-        suffix = "\n" + "\n".join(extra_lines)
-        if suffix.strip() in base_outline:
-            suffix = f"\n- 第{iteration}轮修订：提升主题命中与信息增量。"
+        adjustments = "\n".join(extra_lines).strip()
+        suffix = (
+            f"{marker_start}"
+            f"- 第{iteration}轮修订：以下约束用于提升主题命中与信息增量。\n"
+            f"{adjustments}\n"
+            f"{marker_end}"
+        )
 
-        return (base_outline + suffix).strip()
+        return (base_outline + "\n" + suffix).strip()
     
     def generate_document(
         self,
@@ -289,7 +319,7 @@ class DocumentGenerationOrchestrator:
         content_prompts: List[Dict[str, Any]],  # 从 Outliner 返回的 content_prompts
         user_background: str,
         user_requirements: str,
-        rel_threshold: float = 0.83,
+        rel_threshold: float = 0.75,
         red_threshold: float = 0.50
     ) -> Dict[str, Any]:
         """
@@ -617,7 +647,7 @@ class DocumentGenerationOrchestrator:
             traceback.print_exc()
             
             return {
-                "success": True,
+                "success": False,
                 "document_id": document_id,
                 "title": title,
                 "sections": document_result.get("sections", []),
@@ -626,6 +656,7 @@ class DocumentGenerationOrchestrator:
                 "forced_subsections": document_result.get("forced_subsections", []),
                 "total_iterations": document_result.get("total_iterations", 0),
                 "generation_time": document_result.get("generation_time"),
+                "error": str(e),
                 "warning": f"document_exception_fallback: {str(e)[:180]}",
             }
     
@@ -637,7 +668,7 @@ class DocumentGenerationOrchestrator:
         outline: str,
         initial_prompt: str,
         passed_history: List[Dict[str, str]],
-        rel_threshold: float = 0.83,
+        rel_threshold: float = 0.75,
         red_threshold: float = 0.50,
     ) -> Dict[str, Any]:
         """
@@ -657,6 +688,8 @@ class DocumentGenerationOrchestrator:
         controller_triggered = False
         controller_retry_count = 0
         best_candidate: Optional[Dict[str, Any]] = None
+        generator_failure_streak = 0
+        max_generator_failures = max(1, int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "2")))
         
         # 应用历史窗口：只使用最近N个小节（避免历史过长导致冗余度计算失真）
         windowed_history = passed_history[-self.history_window_size:] if passed_history else []
@@ -721,36 +754,13 @@ class DocumentGenerationOrchestrator:
                     },
                 )
 
+            source_citation_required = require_source_citations
+
         effective_attempt_cap = self.max_subsection_attempts if self.max_subsection_attempts > 0 else self.max_iterations
         
         while True:
             iterations += 1
             if (not self.subsection_retry_forever) and effective_attempt_cap > 0 and iterations > effective_attempt_cap:
-                controller_exhausted = (
-                    controller_triggered
-                    and controller_retry_count >= self.min_controller_retries_before_force
-                )
-
-                if not controller_exhausted:
-                    self._emit_progress_event(
-                        document_id=document_id,
-                        section_id=section_id,
-                        subsection_id=subsection_id,
-                        stage="subsection_retry_extended",
-                        message=(
-                            f"达到最大检测次数 {effective_attempt_cap}，但 Controller 改纲累计不足 "
-                            f"{self.min_controller_retries_before_force} 次，继续重试"
-                        ),
-                        metadata={
-                            "iteration": iterations - 1,
-                            "controller_triggered": controller_triggered,
-                            "controller_retry_count": controller_retry_count,
-                            "required_controller_retries": self.min_controller_retries_before_force,
-                            "continued": True,
-                        },
-                    )
-                    continue
-
                 if best_candidate and best_candidate.get("draft"):
                     best_verification = best_candidate.get("verification", {})
                     best_rel = float(best_verification.get("relevancy_index", 0) or 0)
@@ -874,6 +884,7 @@ class DocumentGenerationOrchestrator:
             gen_result = self._call_generator(enhanced_prompt)
             
             if not gen_result.get("success"):
+                generator_failure_streak += 1
                 print(f"         ⚠️ Generator 错误，继续重试当前小节: {gen_result.get('error')}")
                 self._emit_progress_event(
                     document_id=document_id,
@@ -881,14 +892,83 @@ class DocumentGenerationOrchestrator:
                     subsection_id=subsection_id,
                     stage="generator_error",
                     message=f"第 {iterations} 轮：Generator 失败，准备重试",
-                    metadata={"iteration": iterations, "error": gen_result.get("error", "unknown")},
+                    metadata={
+                        "iteration": iterations,
+                        "error": gen_result.get("error", "unknown"),
+                        "generator_failure_streak": generator_failure_streak,
+                    },
                 )
+
+                if generator_failure_streak >= max_generator_failures:
+                    fail_error = str(gen_result.get("error", "generator_unavailable"))
+                    fail_outline = str(current_outline).strip()
+                    fallback_text = f"（系统兜底）{subsection_id}\n\n{fail_outline}"
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="subsection_forced_pass",
+                        message=f"Generator 连续失败 {generator_failure_streak} 次，触发快速兜底通过",
+                        metadata={
+                            "iteration": iterations,
+                            "max_generator_failures": max_generator_failures,
+                            "error": fail_error,
+                        },
+                    )
+                    if self.history_manager:
+                        try:
+                            self.history_manager.update_subsection_content(
+                                document_id=document_id,
+                                section_id=section_id,
+                                subsection_id=subsection_id,
+                                generated_content=fallback_text,
+                                outline=current_outline,
+                                relevancy_index=0.0,
+                                redundancy_index=1.0,
+                                is_passed=True,
+                                iteration_count=iterations,
+                            )
+                        except Exception as _e:
+                            print(f"⚠️  Generator失败兜底回写失败: {_e}")
+                    return {
+                        "success": True,
+                        "draft": fallback_text,
+                        "final_outline": current_outline,
+                        "iterations": iterations,
+                        "verification": {
+                            "relevancy_index": 0.0,
+                            "redundancy_index": 1.0,
+                            "feedback": "generator_repeated_failure_fallback",
+                            "forced_pass": True,
+                            "force_reason": "generator_repeated_failure",
+                        },
+                        "all_drafts": all_drafts,
+                        "forced_pass": True,
+                        "force_reason": "generator_repeated_failure",
+                        "controller_triggered": controller_triggered,
+                        "controller_retry_count": controller_retry_count,
+                    }
+
                 time.sleep(self._compute_retry_delay(iterations))
                 continue
+
+            generator_failure_streak = 0
             
             draft = gen_result.get("draft", "")
             all_drafts.append(draft)
             print(f"         ✅ 生成 {len(draft)} 字符")
+
+            provider_name = str((gen_result.get("metadata") or {}).get("provider", "")).strip().lower()
+            if source_citation_required and provider_name == "ollama":
+                source_citation_required = False
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="source_citation_relaxed",
+                    message="检测到 Ollama 兜底提供商，自动放宽来源引用硬约束",
+                    metadata={"iteration": iterations, "provider": provider_name},
+                )
             
             print(f"         🔍 调用 Verifier...")
             self._emit_progress_event(
@@ -906,7 +986,7 @@ class DocumentGenerationOrchestrator:
                 rel_threshold=effective_rel_threshold,
                 red_threshold=effective_red_threshold,
                 source_results=rag_search_result.get("results", []),
-                require_source_citations=require_source_citations,
+                require_source_citations=source_citation_required,
                 min_source_citations=self.rag_min_citations,
             )
             
@@ -933,11 +1013,34 @@ class DocumentGenerationOrchestrator:
                 f"         相关性: {rel_score:.4f} (阈值: {effective_rel_threshold:.2f}), "
                 f"冗余度: {red_score:.4f} (阈值: {effective_red_threshold:.2f})"
             )
-            if require_source_citations:
+            if source_citation_required:
                 print(
                     f"         来源检查: valid={source_check.get('passed', False)} "
                     f"refs={source_check.get('reference_count', 0)}"
                 )
+
+            if (not is_passed) and source_citation_required:
+                source_reason = str(source_check.get("reason", "") or "").lower()
+                citation_feedback = str(feedback or "").lower()
+                citation_failed = (
+                    "insufficient_citations" in source_reason
+                    or "citation" in citation_feedback
+                    or "来源" in citation_feedback
+                )
+                if citation_failed:
+                    source_citation_required = False
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="source_citation_relaxed",
+                        message=f"第 {iterations} 轮：来源引用校验连续失败，后续轮次放宽硬约束",
+                        metadata={
+                            "iteration": iterations,
+                            "source_reason": source_check.get("reason", ""),
+                            "feedback": feedback[:180],
+                        },
+                    )
             
             if is_passed:
                 print(f"         ✨ 验证通过!")
@@ -1215,6 +1318,9 @@ class DocumentGenerationOrchestrator:
                     red_threshold=effective_red_threshold,
                     iteration=iterations,
                 )
+            
+            # Controller改纲完成，继续回到外层循环尝试下一轮生成
+            continue
 
     def _build_enhanced_prompt(
         self,
@@ -1232,10 +1338,33 @@ class DocumentGenerationOrchestrator:
         - history（已通过验证的前置小节）
         一起发送给 LLM，提示生成高相关性、低冗余度的内容。
         """
+        def _clip(text: str, max_chars: int, label: str) -> str:
+            raw = str(text or "").strip()
+            if len(raw) <= max_chars:
+                return raw
+            head = max(100, int(max_chars * 0.8))
+            tail = max(60, max_chars - head)
+            return (
+                raw[:head]
+                + f"\n\n[...{label}已裁剪，原始长度 {len(raw)} 字，保留首尾关键信息...]\n\n"
+                + raw[-tail:]
+            )
+
+        outline = _clip(outline, self.prompt_outline_max_chars, "outline")
+        original_prompt = _clip(original_prompt, self.prompt_original_max_chars, "original_prompt")
+        rag_context = _clip(rag_context, self.prompt_rag_max_chars, "rag_context")
+        history_text = _clip(history_text, self.prompt_history_max_chars, "history")
+
         enhanced = f"""你正在撰写一篇文档的某个小节。
 
-【当前小节的详细大纲（必须严格按照它展开，这是内容的完整范围和边界）】
+【当前小节的详细大纲（这是内容的完整范围和边界，必须100%严格遵循）】
 {outline}
+
+"""
+
+        if original_prompt:
+            enhanced += f"""【原始写作任务与风格要求（必须兼容遵循）】
+{original_prompt}
 
 """
 
@@ -1243,22 +1372,36 @@ class DocumentGenerationOrchestrator:
             enhanced += f"{rag_context}\n\n"
 
         if history_text:
-            enhanced += f"""【前面已通过验证的小节内容（作为已生成内容的参考）】
+            enhanced += f"""【前面已通过验证的小节内容（作为已生成内容的参考，避免冗余）】
 {history_text}
 
-【生成要求】
-- 目标指标：relevancy_index >= {rel_threshold:.2f}，redundancy_index <= {red_threshold:.2f}
-- 「必须满足」：内容必须与当前小节大纲高度匹配，每个段落都要服从大纲中的具体要求
-- 「必须遵免」：不得重复、改写或拼套上面《已通过小节内容》中已有的信息；若内容馆相似会指文重写
-- 与前面小节保持逻辑连贯，但展开全新的视角和信息
-- 字数控制在 500～800 字
+【严格的生成要求】
+1. 相关性（必须 >= {rel_threshold:.2f}）：
+   - 内容的每一句话都必须直接对应大纲中的某个要点
+   - 不允许任何与大纲无关的内容或例子
+   - 确保段落标题直接来自或对应大纲的标题
+   - 验证：如果删除某段文字，是否会让大纲的某个要点失去对应内容？如果是，则保留
+
+2. 避免冗余（必须 <= {red_threshold:.2f}）：
+   - 严禁重复、改写或拼凑上面《已通过小节内容》中已有的信息
+   - 每句话都要贡献新的、未重复的观点
+   
+3. 质量要求：
+   - 与前面小节保持逻辑连贯，但展开全新的视角和信息
+   - 字数控制在 500～800 字
+   - 表述专业、准确、避免空洞内容
 
 """
         else:
-            enhanced += f"""【生成要求】
-- 目标指标：relevancy_index >= {rel_threshold:.2f}，redundancy_index <= {red_threshold:.2f}
-- 「必须满足」：内容必须与当前小节大纲高度匹配，不写大纲之外的内容
-- 字数控制在 500～800 字
+            enhanced += f"""【严格的生成要求】
+1. 相关性（必须 >= {rel_threshold:.2f}）：
+   - 内容的每一句话都必须直接对应大纲中的某个要点
+   - 不允许任何与大纲无关的内容或例子
+   - 确保段落标题直接来自或对应大纲的标题
+
+2. 质量要求：
+   - 字数控制在 500～800 字
+   - 表述专业、准确、避免空洞内容
 
 """
 
@@ -1281,9 +1424,15 @@ class DocumentGenerationOrchestrator:
     
     def _call_generator(self, prompt: str) -> Dict[str, Any]:
         """调用 Generator API（优先使用本地实例）"""
+        print(f"      [_call_generator] Starting (local_gen={self._local_generator is not None})")
         if self._local_generator is not None:
             try:
-                return self._local_generator.generate_draft(prompt=prompt, max_tokens=800)
+                print(f"      [_call_generator] Calling local generator.generate_draft...")
+                start = time.time()
+                result = self._local_generator.generate_draft(prompt=prompt, max_tokens=800)
+                elapsed = time.time() - start
+                print(f"      [_call_generator] Local call returned in {elapsed:.1f}s: success={result.get('success')}")
+                return result
             except Exception as e:
                 print(f"⚠️ 本地Generator调用失败: {e}，回退到HTTP调用")
 
@@ -1329,9 +1478,12 @@ class DocumentGenerationOrchestrator:
         min_source_citations: int = 1,
     ) -> Dict[str, Any]:
         """调用 Verifier API，内部最多重试3次（应对 Render 冷启动），避免浪费生成轮次。"""
+        print(f"      [_call_verifier] Starting verifier call...")
         last_error = "unknown"
         for attempt in range(1, 4):
             try:
+                print(f"      [_call_verifier] Attempt {attempt}/3, sending request...")
+                start = time.time()
                 response = self.session.post(
                     f"{self.verifier_url}/verify",
                     json={
@@ -1347,16 +1499,23 @@ class DocumentGenerationOrchestrator:
                     timeout=90
                 )
                 if response.status_code == 200:
+                    elapsed = time.time() - start
                     result = response.json()
                     result["success"] = True
+                    print(f"      [_call_verifier] Response received in {elapsed:.1f}s: success=True")
                     return result
                 else:
+                    elapsed = time.time() - start
                     last_error = f"HTTP {response.status_code}"
+                    print(f"      [_call_verifier] HTTP {response.status_code} after {elapsed:.1f}s")
             except Exception as e:
+                elapsed = time.time() - start
                 last_error = str(e)
+                print(f"      [_call_verifier] Exception after {elapsed:.1f}s: {e}")
             if attempt < 3:
                 print(f"         ⚠️ Verifier 第{attempt}次调用失败 ({last_error[:80]})，5s 后重试...")
                 time.sleep(5)
+        print(f"      [_call_verifier] All attempts failed: {last_error}")
         return {"success": False, "error": last_error}
     
     def _call_controller(

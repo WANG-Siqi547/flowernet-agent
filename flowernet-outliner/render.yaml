@@ -13,9 +13,11 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: OUTLINER_PROVIDER
-        value: azure
+        value: dashscope
+      - key: OUTLINER_PROVIDER_CHAIN
+        value: dashscope
       - key: OUTLINER_MODEL
-        value: gpt-4o-mini
+        value: glm-5
       - key: OUTLINER_OPENROUTER_MODEL
         value: qwen/qwen3-coder:free
       - key: OUTLINER_GEMINI_MODEL
@@ -29,6 +31,18 @@ services:
       - key: OUTLINER_AZURE_DEPLOYMENT_NAME
         value: gpt-4o-mini
       - key: OUTLINER_AZURE_API_KEY
+        sync: false
+      - key: OUTLINER_DASHSCOPE_MODEL
+        value: glm-5
+      - key: OUTLINER_DASHSCOPE_API_URL
+        value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      - key: OUTLINER_DASHSCOPE_API_KEY
+        sync: false
+      - key: DASHSCOPE_MODEL
+        value: glm-5
+      - key: DASHSCOPE_API_URL
+        value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      - key: DASHSCOPE_API_KEY
         sync: false
       - key: AZURE_OPENAI_API_BASE
         value: https://poffices-ai.openai.azure.com/

@@ -16,10 +16,8 @@ services:
     restart: unless-stopped
     environment:
       - PORT=8000
-      - USE_DATABASE=true
-      - DATABASE_PATH=/data/flowernet_history.db
+      - USE_DATABASE=false
     volumes:
-      - shared_data:/data
       - verifier_cache:/root/.cache
     networks:
       - flowernet
@@ -33,8 +31,7 @@ services:
     environment:
       - PORT=8001
       - VERIFIER_URL=http://verifier-app:8000
-      - USE_DATABASE=true
-      - DATABASE_PATH=/data/flowernet_history.db
+      - USE_DATABASE=false
       - CONTROLLER_USE_LLM_OUTLINE=true
       - CONTROLLER_REQUIRE_LLM_SOURCE=false
       - CONTROLLER_LLM_TIMEOUT=120
@@ -43,8 +40,6 @@ services:
       - CONTROLLER_MIN_REL_ANCHOR_GAIN=0.005
       - CONTROLLER_MIN_NOVELTY_GAIN=0.005
       - CONTROLLER_MIN_STRUCTURE_GAIN=0.05
-    volumes:
-      - shared_data:/data
     networks:
       - flowernet
 
@@ -52,12 +47,15 @@ services:
     build: ./flowernet-outliner
     container_name: flower-outliner
     restart: unless-stopped
-    depends_on:
-      - ollama
+    ports:
+      - "8003:8003"
     environment:
       - PORT=8003
-      - OUTLINER_PROVIDER=azure
-      - OUTLINER_MODEL=gpt-4o-mini
+      - OUTLINER_PROVIDER=dashscope
+      - OUTLINER_PROVIDER_CHAIN=dashscope
+      - OUTLINER_OLLAMA_MODEL=qwen2.5:1.5b
+      - OLLAMA_MODEL=qwen2.5:1.5b
+      - OUTLINER_MODEL=glm-5
       - OLLAMA_URL=http://ollama:11434
       - OUTLINER_AZURE_MODEL=gpt-4o-mini
       - OUTLINER_AZURE_API_BASE=https://poffices-ai.openai.azure.com/
@@ -68,22 +66,27 @@ services:
       - AZURE_OPENAI_API_BASE=https://poffices-ai.openai.azure.com/
       - AZURE_OPENAI_API_VERSION=2025-04-01-preview
       - AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+      - OUTLINER_DASHSCOPE_MODEL=glm-5
+      - OUTLINER_DASHSCOPE_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      - OUTLINER_DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - DASHSCOPE_MODEL=glm-5
+      - DASHSCOPE_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - USE_DATABASE=true
       - DATABASE_PATH=/data/flowernet_history.db
       - OLLAMA_RETRIES=6
       - OLLAMA_BACKOFF=3
       - OLLAMA_MAX_BACKOFF=60
-      - PROVIDER_RETRIES=10
-      - PROVIDER_BACKOFF=4.0
-      - PROVIDER_MAX_BACKOFF=240.0
+      - PROVIDER_RETRIES=2
+      - PROVIDER_BACKOFF=1.2
+      - PROVIDER_MAX_BACKOFF=20.0
       - PROVIDER_JITTER=0.3
-      - PROVIDER_MIN_INTERVAL=3.0
+      - PROVIDER_MIN_INTERVAL=0.8
       - OUTLINER_SERIALIZE_TASKS=true
       - OUTLINER_TASK_WAIT_TIMEOUT=5
       - OUTLINER_FLOW_RETRIES=6
       - OUTLINER_FLOW_BACKOFF=5.0
-    volumes:
-      - shared_data:/data
+      - USE_DATABASE=false
     networks:
       - flowernet
 
@@ -92,14 +95,18 @@ services:
     container_name: flower-generator
     restart: unless-stopped
     depends_on:
-      - ollama
       - verifier-app
       - controller-app
       - outliner-app
+    ports:
+      - "8002:8002"
     environment:
       - PORT=8002
-      - GENERATOR_PROVIDER=azure
-      - GENERATOR_MODEL=gpt-4o-mini
+      - GENERATOR_PROVIDER=dashscope
+      - GENERATOR_PROVIDER_CHAIN=dashscope,ollama
+      - GENERATOR_OLLAMA_MODEL=qwen2.5:1.5b
+      - OLLAMA_MODEL=qwen2.5:1.5b
+      - GENERATOR_MODEL=glm-5
       - OLLAMA_URL=http://ollama:11434
       - GENERATOR_AZURE_MODEL=gpt-4o-mini
       - GENERATOR_AZURE_API_BASE=https://poffices-ai.openai.azure.com/
@@ -110,17 +117,39 @@ services:
       - AZURE_OPENAI_API_BASE=https://poffices-ai.openai.azure.com/
       - AZURE_OPENAI_API_VERSION=2025-04-01-preview
       - AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+      - GENERATOR_DASHSCOPE_MODEL=glm-5
+      - GENERATOR_DASHSCOPE_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      - GENERATOR_DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - DASHSCOPE_MODEL=glm-5
+      - DASHSCOPE_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - OLLAMA_URL=http://ollama:11434
       - VERIFIER_URL=http://verifier-app:8000
       - CONTROLLER_URL=http://controller-app:8001
       - OUTLINER_URL=http://outliner-app:8003
-      - USE_DATABASE=true
-      - DATABASE_PATH=/data/flowernet_history.db
+      - USE_REMOTE_HISTORY=false
+      - HISTORY_HTTP_TIMEOUT=300
+      - USE_DATABASE=false
       - OLLAMA_RETRIES=6
       - OLLAMA_BACKOFF=3
       - OLLAMA_MAX_BACKOFF=60
+      - PROVIDER_RETRIES=2
+      - PROVIDER_BACKOFF=1.2
+      - PROVIDER_MAX_BACKOFF=20.0
+      - PROVIDER_FAILURE_THRESHOLD=2
+      - PROVIDER_COOLDOWN_SECONDS=180
+      - PROVIDER_HTTP_TIMEOUT=45
+      - DASHSCOPE_HTTP_TIMEOUT=45
+      - PROMPT_OUTLINE_MAX_CHARS=4500
+      - PROMPT_ORIGINAL_MAX_CHARS=3500
+      - PROMPT_RAG_MAX_CHARS=2200
+      - PROMPT_HISTORY_MAX_CHARS=2600
+      - MAX_SUBSECTION_ATTEMPTS=8
       - MAX_CONTROLLER_RETRIES=2
+      - MIN_CONTROLLER_RETRIES_BEFORE_FORCE=2
+      - MAX_GENERATOR_FAILURES_PER_SUBSECTION=2
       - STRICT_CONTROLLER_EFFECTIVE=false
+      - SERIALIZE_DOCUMENT_WAIT_TIMEOUT=180
     volumes:
       - shared_data:/data
     networks:
@@ -136,6 +165,7 @@ services:
     ports:
       - "8010:8010"
     environment:
+      - PORT=8010
       - OUTLINER_URL=http://outliner-app:8003
       - GENERATOR_URL=http://generator-app:8002
       - REQUEST_TIMEOUT=3600

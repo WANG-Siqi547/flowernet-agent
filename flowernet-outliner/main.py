@@ -198,7 +198,7 @@ async def root():
 
 
 @app.post("/generate-outline")
-async def generate_outline(request: OutlineRequest):
+def generate_outline(request: OutlineRequest):
     """
     生成完整的文档大纲和 Content Prompts
     
@@ -226,7 +226,7 @@ async def generate_outline(request: OutlineRequest):
 
 
 @app.post("/generate-structure")
-async def generate_structure(request: OutlineRequest):
+def generate_structure(request: OutlineRequest):
     """
     仅生成文档结构（不生成 Content Prompts）
     
@@ -252,7 +252,7 @@ async def generate_structure(request: OutlineRequest):
 
 
 @app.post("/history/add")
-async def add_history(entry: HistoryEntry):
+def add_history(entry: HistoryEntry):
     """
     添加一条 History 记录
     
@@ -281,7 +281,7 @@ async def add_history(entry: HistoryEntry):
 
 
 @app.post("/history/get")
-async def get_history(query: HistoryQuery):
+def get_history(query: HistoryQuery):
     """
     获取某个文档的所有 History
     
@@ -311,7 +311,7 @@ async def get_history(query: HistoryQuery):
 
 
 @app.post("/history/get-text")
-async def get_history_text(query: HistoryQuery):
+def get_history_text(query: HistoryQuery):
     """
     获取某个文档的 History 纯文本（用于传给 Verifier）
     
@@ -341,7 +341,7 @@ async def get_history_text(query: HistoryQuery):
 
 
 @app.post("/history/clear")
-async def clear_history(query: HistoryQuery):
+def clear_history(query: HistoryQuery):
     """
     清空某个文档的 History（文档完成后调用）
     
@@ -364,7 +364,7 @@ async def clear_history(query: HistoryQuery):
 
 
 @app.post("/history/statistics")
-async def get_statistics(query: HistoryQuery):
+def get_statistics(query: HistoryQuery):
     """
     获取文档的统计信息
     
@@ -394,7 +394,7 @@ async def get_statistics(query: HistoryQuery):
 
 
 @app.post("/history/progress")
-async def get_progress_events(query: ProgressQuery):
+def get_progress_events(query: ProgressQuery):
     """
     获取文档流程事件（增量），用于前端实时展示生成细节。
     """
@@ -418,7 +418,7 @@ async def get_progress_events(query: ProgressQuery):
 
 
 @app.post("/progress/add")
-async def add_progress_event(request: ProgressEventCreateRequest):
+def add_progress_event(request: ProgressEventCreateRequest):
     try:
         history_manager.add_progress_event(
             document_id=request.document_id,
@@ -437,7 +437,7 @@ async def add_progress_event(request: ProgressEventCreateRequest):
 
 
 @app.post("/subsection-tracking/create")
-async def create_subsection_tracking(request: SubsectionTrackingCreateRequest):
+def create_subsection_tracking(request: SubsectionTrackingCreateRequest):
     try:
         history_manager.create_subsection_tracking(
             document_id=request.document_id,
@@ -454,7 +454,7 @@ async def create_subsection_tracking(request: SubsectionTrackingCreateRequest):
 
 
 @app.post("/subsection-tracking/update")
-async def update_subsection_tracking(request: SubsectionTrackingUpdateRequest):
+def update_subsection_tracking(request: SubsectionTrackingUpdateRequest):
     try:
         history_manager.update_subsection_content(
             document_id=request.document_id,
@@ -477,7 +477,7 @@ async def update_subsection_tracking(request: SubsectionTrackingUpdateRequest):
 
 
 @app.post("/subsection-tracking/get")
-async def get_subsection_tracking(request: SubsectionTrackingQuery):
+def get_subsection_tracking(request: SubsectionTrackingQuery):
     try:
         tracking = history_manager.get_subsection_tracking(
             document_id=request.document_id,
@@ -493,7 +493,7 @@ async def get_subsection_tracking(request: SubsectionTrackingQuery):
 
 
 @app.post("/passed-history/add")
-async def add_passed_history(entry: PassedHistoryEntry):
+def add_passed_history(entry: PassedHistoryEntry):
     try:
         history_manager.add_passed_history(
             document_id=entry.document_id,
@@ -511,7 +511,7 @@ async def add_passed_history(entry: PassedHistoryEntry):
 
 
 @app.post("/passed-history/get")
-async def get_passed_history(query: HistoryQuery):
+def get_passed_history(query: HistoryQuery):
     try:
         history = history_manager.get_passed_history(query.document_id)
         return {
@@ -525,7 +525,7 @@ async def get_passed_history(query: HistoryQuery):
 
 
 @app.post("/passed-history/get-text")
-async def get_passed_history_text(query: HistoryQuery):
+def get_passed_history_text(query: HistoryQuery):
     try:
         text = history_manager.get_passed_history_text(query.document_id)
         return {
@@ -539,7 +539,7 @@ async def get_passed_history_text(query: HistoryQuery):
 
 
 @app.post("/passed-history/clear")
-async def clear_passed_history(query: HistoryQuery):
+def clear_passed_history(query: HistoryQuery):
     try:
         history_manager.clear_passed_history(query.document_id)
         return {
@@ -553,7 +553,7 @@ async def clear_passed_history(query: HistoryQuery):
 # ============ 新增：大纲管理接口 ============
 
 @app.post("/outline/save")
-async def save_outline(request: SaveOutlineRequest):
+def save_outline(request: SaveOutlineRequest):
     """
     保存大纲到数据库
     
@@ -583,7 +583,7 @@ async def save_outline(request: SaveOutlineRequest):
 
 
 @app.post("/outline/get")
-async def get_outline(request: GetOutlineRequest):
+def get_outline(request: GetOutlineRequest):
     """
     获取已保存的大纲
     
@@ -613,7 +613,7 @@ async def get_outline(request: GetOutlineRequest):
 
 
 @app.post("/outline/generate-and-save")
-async def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
+def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
     """
     生成大纲并自动保存到数据库，同时为每个 section/subsection 的大纲也保存
     

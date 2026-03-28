@@ -13,9 +13,11 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: GENERATOR_PROVIDER
-        value: azure
+        value: dashscope
+      - key: GENERATOR_PROVIDER_CHAIN
+        value: dashscope
       - key: GENERATOR_MODEL
-        value: gpt-4o-mini
+        value: glm-5
       - key: GENERATOR_OPENROUTER_MODEL
         value: qwen/qwen3-coder:free
       - key: GENERATOR_GEMINI_MODEL
@@ -29,6 +31,18 @@ services:
       - key: GENERATOR_AZURE_DEPLOYMENT_NAME
         value: gpt-4o-mini
       - key: GENERATOR_AZURE_API_KEY
+        sync: false
+      - key: GENERATOR_DASHSCOPE_MODEL
+        value: glm-5
+      - key: GENERATOR_DASHSCOPE_API_URL
+        value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      - key: GENERATOR_DASHSCOPE_API_KEY
+        sync: false
+      - key: DASHSCOPE_MODEL
+        value: glm-5
+      - key: DASHSCOPE_API_URL
+        value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+      - key: DASHSCOPE_API_KEY
         sync: false
       - key: AZURE_OPENAI_API_BASE
         value: https://poffices-ai.openai.azure.com/
@@ -44,10 +58,28 @@ services:
         value: FlowerNet
       - key: PROVIDER_RETRIES
         value: "2"
+      - key: GENERATOR_PROVIDER_CHAIN
+        value: "azure,dashscope,openrouter"
       - key: PROVIDER_BACKOFF
         value: "1.2"
       - key: PROVIDER_MAX_BACKOFF
         value: "20.0"
+      - key: PROVIDER_FAILURE_THRESHOLD
+        value: "2"
+      - key: PROVIDER_COOLDOWN_SECONDS
+        value: "180"
+      - key: PROVIDER_HTTP_TIMEOUT
+        value: "45"
+      - key: DASHSCOPE_HTTP_TIMEOUT
+        value: "45"
+      - key: PROMPT_OUTLINE_MAX_CHARS
+        value: "4500"
+      - key: PROMPT_ORIGINAL_MAX_CHARS
+        value: "3500"
+      - key: PROMPT_RAG_MAX_CHARS
+        value: "2200"
+      - key: PROMPT_HISTORY_MAX_CHARS
+        value: "2600"
       - key: PROVIDER_JITTER
         value: "0.3"
       - key: PROVIDER_MIN_INTERVAL
@@ -61,7 +93,7 @@ services:
       - key: SERIALIZE_DOCUMENT_TASKS
         value: "true"
       - key: SERIALIZE_DOCUMENT_WAIT_TIMEOUT
-        value: "0"
+        value: "180"
       - key: DOC_RETRY_BASE_DELAY
         value: "2.0"
       - key: DOC_RETRY_MAX_DELAY
@@ -71,9 +103,11 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "3"
-      - key: MAX_CONTROLLER_RETRIES
+        value: "8"
+      - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
         value: "2"
+      - key: MAX_CONTROLLER_RETRIES
+        value: "3"
       - key: STRICT_CONTROLLER_EFFECTIVE
         value: "false"
       - key: USE_DATABASE

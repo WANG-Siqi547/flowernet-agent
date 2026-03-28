@@ -310,7 +310,7 @@ def read_root_head():
 
 
 @app.post("/generate")
-async def generate(request: GenerateRequest):
+def generate(request: GenerateRequest):
     """
     简单生成：只根据 prompt 生成 draft，不进行验证
     """
@@ -330,7 +330,7 @@ async def generate(request: GenerateRequest):
 
 
 @app.post("/generate_with_context")
-async def generate_with_context(request: GenerateWithContextRequest):
+def generate_with_context(request: GenerateWithContextRequest):
     """
     带上下文的生成：考虑大纲和历史内容
     """
@@ -352,7 +352,7 @@ async def generate_with_context(request: GenerateWithContextRequest):
 
 
 @app.post("/generate_section")
-async def generate_section(request: GenerateSectionRequest):
+def generate_section(request: GenerateSectionRequest):
     """
     生成一个subsection（完整的生成-验证-修改循环）
     验证通过后自动存入 History Database
@@ -392,7 +392,7 @@ async def generate_section(request: GenerateSectionRequest):
 
 
 @app.post("/generate_document")
-async def generate_document(request: GenerateDocumentRequest):
+def generate_document(request: GenerateDocumentRequest):
     """
     生成完整文档 - 新版本（完整流程）
     
@@ -431,7 +431,7 @@ async def generate_document(request: GenerateDocumentRequest):
             orchestrator.set_local_generator(generator)
 
         serialize_tasks = os.getenv("SERIALIZE_DOCUMENT_TASKS", "true").lower() == "true"
-        lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "0"))
+        lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "30"))
 
         acquired = True
         if serialize_tasks:
@@ -464,6 +464,8 @@ async def generate_document(request: GenerateDocumentRequest):
             if serialize_tasks and acquired:
                 document_generation_lock.release()
         
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

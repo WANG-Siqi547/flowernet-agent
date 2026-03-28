@@ -46,6 +46,7 @@ class GenerateDocRequest(BaseModel):
     extra_requirements: str = Field(default="")
     rel_threshold: float = Field(default=0.90, ge=0, le=1)
     red_threshold: float = Field(default=0.42, ge=0, le=1)
+    timeout_seconds: int = Field(default=600, ge=60, le=7200, description="同步模式超时秒数")
 
 
 class DownloadDocxRequest(BaseModel):
@@ -1103,7 +1104,8 @@ def generate_document(
     authorization: str = Header(default="", alias="Authorization"),
 ) -> Dict[str, Any]:
     verify_auth(x_api_key=x_api_key, authorization=authorization)
-    return _build_document(req=req, timeout_seconds=REQUEST_TIMEOUT)
+    effective_timeout = req.timeout_seconds or REQUEST_TIMEOUT
+    return _build_document(req=req, timeout_seconds=effective_timeout)
 
 
 @app.post("/api/download-docx")
