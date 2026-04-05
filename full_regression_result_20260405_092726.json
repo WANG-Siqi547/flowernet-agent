@@ -1,0 +1,105 @@
+{
+  "timestamp": "2026-04-05 09:27:26",
+  "overall_pass": false,
+  "all_health_ok": true,
+  "stability_ok": false,
+  "module_smoke_ok": false,
+  "e2e_complete_ok": true,
+  "health": {
+    "web_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.021,
+      "body": "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>FlowerNet 文档生成器</title>\n  <style>\n    * { marg"
+    },
+    "web_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.004,
+      "body": "{\"status\":\"ok\",\"service\":\"flowernet-web\"}"
+    },
+    "generator_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.014,
+      "body": "{\"status\":\"online\",\"message\":\"FlowerNet Generator API is ready.\",\"endpoints\":{\"/generate\":\"Simple draft generation\",\"/generate_with_context\":\"Draft generation with context\",\"/generate_section\":\"Genera"
+    },
+    "outliner_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.017,
+      "body": "{\"service\":\"FlowerNet Outliner\",\"status\":\"running\",\"version\":\"1.0.0\",\"timestamp\":\"2026-04-04T16:15:16.277160\"}"
+    },
+    "generator_debug": {
+      "ok": false,
+      "status": 404,
+      "elapsed": 0.002,
+      "body": "{\"detail\":\"Not Found\"}"
+    }
+  },
+  "stability": {
+    "rounds": 20,
+    "failures": 4,
+    "avg_latency": 35.577,
+    "p95_latency": 120.007,
+    "samples": [
+      [
+        "generator_generate",
+        1,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 120.007,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ],
+      [
+        "generator_generate",
+        3,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 120.007,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ],
+      [
+        "generator_generate",
+        6,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 119.883,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ],
+      [
+        "generator_generate",
+        9,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 120.004,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ]
+    ]
+  },
+  "module": {
+    "generator_ok": true,
+    "outliner_ok": false
+  },
+  "e2e": {
+    "http_status": 200,
+    "elapsed_seconds": 32104.65,
+    "success": true,
+    "partial": null,
+    "title": "大学新生时间管理与学习习惯指南",
+    "content_length": 3388,
+    "expected_subsections": 4,
+    "passed_subsections": 4,
+    "forced_subsections": 4,
+    "failed_subsections": 0,
+    "error": null
+  }
+}

@@ -65,9 +65,9 @@ services:
       - key: PORT
         value: 8003
       - key: OUTLINER_PROVIDER
-        value: dashscope
+        value: openrouter
       - key: OUTLINER_PROVIDER_CHAIN
-        value: dashscope
+        value: openrouter,dashscope,azure,gemini
       - key: OUTLINER_MODEL
         value: glm-5
       - key: OUTLINER_OPENROUTER_MODEL
@@ -144,9 +144,9 @@ services:
       - key: PORT
         value: 8002
       - key: GENERATOR_PROVIDER
-        value: dashscope
+        value: openrouter
       - key: GENERATOR_PROVIDER_CHAIN
-        value: dashscope
+        value: openrouter,dashscope,azure,gemini
       - key: GENERATOR_MODEL
         value: glm-5
       - key: GENERATOR_OPENROUTER_MODEL

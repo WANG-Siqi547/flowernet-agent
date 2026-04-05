@@ -13,9 +13,9 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: OUTLINER_PROVIDER
-        value: dashscope
+        value: azure
       - key: OUTLINER_PROVIDER_CHAIN
-        value: dashscope
+        value: "azure,dashscope,openrouter"
       - key: OUTLINER_MODEL
         value: glm-5
       - key: OUTLINER_OPENROUTER_MODEL

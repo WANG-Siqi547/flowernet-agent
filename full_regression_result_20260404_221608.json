@@ -1,0 +1,115 @@
+{
+  "timestamp": "2026-04-04 22:16:08",
+  "overall_pass": false,
+  "all_health_ok": false,
+  "stability_ok": false,
+  "module_smoke_ok": false,
+  "e2e_complete_ok": false,
+  "health": {
+    "web_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.025,
+      "body": "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>FlowerNet 文档生成器</title>\n  <style>\n    * { marg"
+    },
+    "web_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.004,
+      "body": "{\"status\":\"ok\",\"service\":\"flowernet-web\"}"
+    },
+    "generator_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.09,
+      "body": "{\"status\":\"online\",\"message\":\"FlowerNet Generator API is ready.\",\"endpoints\":{\"/generate\":\"Simple draft generation\",\"/generate_with_context\":\"Draft generation with context\",\"/generate_section\":\"Genera"
+    },
+    "generator_debug": {
+      "ok": false,
+      "status": 404,
+      "elapsed": 0.01,
+      "body": "{\"detail\":\"Not Found\"}"
+    },
+    "outliner_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.057,
+      "body": "{\"service\":\"FlowerNet Outliner\",\"status\":\"running\",\"version\":\"1.0.0\",\"timestamp\":\"2026-04-03T16:21:55.676656\"}"
+    }
+  },
+  "stability": {
+    "rounds": 20,
+    "failures": 7,
+    "avg_latency": 54.018,
+    "p95_latency": 120.004,
+    "samples": [
+      [
+        "generator_generate",
+        2,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 120.002,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ],
+      [
+        "generator_generate",
+        3,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 120.042,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ],
+      [
+        "generator_generate",
+        5,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 120.003,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ],
+      [
+        "generator_generate",
+        6,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 120.003,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ],
+      [
+        "generator_generate",
+        7,
+        {
+          "ok": false,
+          "status": null,
+          "elapsed": 120.003,
+          "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8002): Read timed out. (read timeout=120)"
+        }
+      ]
+    ]
+  },
+  "module": {
+    "generator_ok": false,
+    "outliner_ok": true
+  },
+  "e2e": {
+    "http_status": 502,
+    "elapsed_seconds": 77305.37,
+    "success": false,
+    "partial": null,
+    "title": "",
+    "content_length": 0,
+    "expected_subsections": null,
+    "passed_subsections": null,
+    "forced_subsections": null,
+    "failed_subsections": null,
+    "error": "下游服务请求失败(重试10次): http://outliner-app:8003/outline/generate-and-save, 错误: HTTP 429 from http://outliner-app:8003/outline/generate-and-save: 已有大纲生成任务正在执行，请稍后重试（等待上限 5s）"
+  }
+}

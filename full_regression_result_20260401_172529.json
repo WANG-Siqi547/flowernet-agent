@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-04-01 17:25:29",
+  "overall_pass": false,
+  "all_health_ok": false,
+  "stability_ok": true,
+  "module_smoke_ok": false,
+  "e2e_complete_ok": false,
+  "health": {
+    "web_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.046,
+      "body": "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>FlowerNet 文档生成器</title>\n  <style>\n    * { marg"
+    },
+    "web_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.005,
+      "body": "{\"status\":\"ok\",\"service\":\"flowernet-web\"}"
+    },
+    "generator_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.092,
+      "body": "{\"status\":\"online\",\"message\":\"FlowerNet Generator API is ready.\",\"endpoints\":{\"/generate\":\"Simple draft generation\",\"/generate_with_context\":\"Draft generation with context\",\"/generate_section\":\"Genera"
+    },
+    "generator_debug": {
+      "ok": false,
+      "status": 404,
+      "elapsed": 0.009,
+      "body": "{\"detail\":\"Not Found\"}"
+    },
+    "outliner_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.068,
+      "body": "{\"service\":\"FlowerNet Outliner\",\"status\":\"running\",\"version\":\"1.0.0\",\"timestamp\":\"2026-04-01T06:17:42.026195\"}"
+    }
+  },
+  "stability": {
+    "rounds": 20,
+    "failures": 0,
+    "avg_latency": 3.631,
+    "p95_latency": 11.206,
+    "samples": []
+  },
+  "module": {
+    "generator_ok": true,
+    "outliner_ok": false
+  },
+  "e2e": {
+    "http_status": 500,
+    "elapsed_seconds": 11166.61,
+    "success": false,
+    "partial": null,
+    "title": "",
+    "content_length": 0,
+    "expected_subsections": null,
+    "passed_subsections": null,
+    "forced_subsections": null,
+    "failed_subsections": null,
+    "error": null
+  }
+}

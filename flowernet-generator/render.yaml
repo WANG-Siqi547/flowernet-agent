@@ -13,9 +13,7 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: GENERATOR_PROVIDER
-        value: dashscope
-      - key: GENERATOR_PROVIDER_CHAIN
-        value: dashscope
+        value: azure
       - key: GENERATOR_MODEL
         value: glm-5
       - key: GENERATOR_OPENROUTER_MODEL
