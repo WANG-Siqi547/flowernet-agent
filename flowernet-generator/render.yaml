@@ -31,13 +31,13 @@ services:
       - key: GENERATOR_AZURE_API_KEY
         sync: false
       - key: GENERATOR_DASHSCOPE_MODEL
-        value: glm-5
+        value: qwen-plus
       - key: GENERATOR_DASHSCOPE_API_URL
         value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       - key: GENERATOR_DASHSCOPE_API_KEY
         sync: false
       - key: DASHSCOPE_MODEL
-        value: glm-5
+        value: qwen-plus
       - key: DASHSCOPE_API_URL
         value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       - key: DASHSCOPE_API_KEY

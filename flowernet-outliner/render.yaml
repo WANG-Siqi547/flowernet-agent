@@ -33,13 +33,13 @@ services:
       - key: OUTLINER_AZURE_API_KEY
         sync: false
       - key: OUTLINER_DASHSCOPE_MODEL
-        value: glm-5
+        value: qwen-plus
       - key: OUTLINER_DASHSCOPE_API_URL
         value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       - key: OUTLINER_DASHSCOPE_API_KEY
         sync: false
       - key: DASHSCOPE_MODEL
-        value: glm-5
+        value: qwen-plus
       - key: DASHSCOPE_API_URL
         value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       - key: DASHSCOPE_API_KEY
