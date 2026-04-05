@@ -103,8 +103,10 @@ echo -e "  ${BLUE}Generator:${NC}  logs/Generator.log"
 echo -e "  ${BLUE}Verifier:${NC}   logs/Verifier.log"
 echo -e "  ${BLUE}Controller:${NC} logs/Controller.log"
 
-echo -e "\n🧪 运行测试:"
-echo -e "  ${BLUE}python3 test_flowernet_e2e.py${NC}"
+echo -e "\n🧪 快速检查:"
+echo -e "  ${BLUE}curl -s http://localhost:8002/health${NC}"
+echo -e "  ${BLUE}curl -s http://localhost:8000/health${NC}"
+echo -e "  ${BLUE}curl -s http://localhost:8001/health${NC}"
 
 echo -e "\n🛑 停止所有服务:"
 echo -e "  ${BLUE}bash stop-flowernet.sh${NC}"

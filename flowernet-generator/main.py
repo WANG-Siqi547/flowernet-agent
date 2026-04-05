@@ -18,8 +18,8 @@ sys.path.insert(0, project_root)
 
 from generator import FlowerNetGenerator, FlowerNetOrchestrator
 
-_local_orchestrator_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flowernet_orchestrator.py")
-_local_orchestrator_spec = importlib.util.spec_from_file_location("_flowernet_orchestrator_local", _local_orchestrator_path)
+_local_orchestrator_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flowernet_orchestrator_impl.py")
+_local_orchestrator_spec = importlib.util.spec_from_file_location("_flowernet_orchestrator_impl_local", _local_orchestrator_path)
 _local_orchestrator_module = importlib.util.module_from_spec(_local_orchestrator_spec)
 _local_orchestrator_spec.loader.exec_module(_local_orchestrator_module)
 DocumentGenerationOrchestrator = _local_orchestrator_module.DocumentGenerationOrchestrator

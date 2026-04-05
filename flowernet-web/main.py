@@ -278,8 +278,16 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
     if not isinstance(structure, dict) or not isinstance(content_prompts, list):
         raise HTTPException(status_code=500, detail=f"大纲结果格式异常: {outline_resp}")
 
+    structure, content_prompts, source_subsections, normalized_subsections = ensure_exact_structure_and_prompts(
+        title=title,
+        structure=structure,
+        content_prompts=content_prompts,
+        chapter_count=req.chapter_count,
+        subsection_count=req.subsection_count,
+    )
+
     expected_subsections = req.chapter_count * req.subsection_count
-    outlined_subsections = len(content_prompts)
+    outlined_subsections = normalized_subsections
     if outlined_subsections <= 0:
         raise HTTPException(status_code=500, detail="大纲生成结果为空，无法开始内容生成")
 
@@ -1105,7 +1113,16 @@ def generate_document(
 ) -> Dict[str, Any]:
     verify_auth(x_api_key=x_api_key, authorization=authorization)
     effective_timeout = req.timeout_seconds or REQUEST_TIMEOUT
-    return _build_document(req=req, timeout_seconds=effective_timeout)
+    try:
+        result = _build_document(req=req, timeout_seconds=effective_timeout)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[generate_document] UNEXPECTED ERROR: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"文档生成异常: {str(e)[:200]}")
 
 
 @app.post("/api/download-docx")

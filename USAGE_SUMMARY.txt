@@ -31,15 +31,19 @@
 【快速开始】
 ================================================================================
 
-Step 1: 设置 API Key
-    export ANTHROPIC_API_KEY="sk-ant-your-key-here"
+Step 1: 设置 API Key（按你使用的 provider）
+   export AZURE_OPENAI_API_KEY="your-key"
+   # 或
+   export GOOGLE_API_KEY="your-key"
 
 Step 2: 启动所有服务
     cd flowernet-agent
     python3 start_services.py
 
-Step 3: 运行测试
-    python3 test_flowernet_e2e.py
+Step 3: 快速检查
+   curl -s http://localhost:8002/health
+   curl -s http://localhost:8000/health
+   curl -s http://localhost:8001/health
 
 Step 4: 使用客户端生成内容
     from flowernet_client import FlowerNetClient
@@ -56,7 +60,7 @@ Step 4: 使用客户端生成内容
 
 输入: 大纲 + 初始 Prompt
   ↓
-[Generator] 调用 Claude LLM 生成 Draft
+[Generator] 调用当前 provider 生成 Draft
   ↓
 [Verifier] 验证 (相关性 ≥ 0.6 且 冗余度 ≤ 0.7)
   ├─→ ✅ 通过 → 返回结果
@@ -151,7 +155,7 @@ max_iterations (最大循环次数)
 ================================================================================
 
 ❌ "API Key not found"
-   → export ANTHROPIC_API_KEY="your-key"
+   → 检查当前 provider 对应的 key（如 `AZURE_OPENAI_API_KEY` / `GOOGLE_API_KEY`）
 
 ❌ "Connection refused"
    → python3 start_services.py
@@ -179,10 +183,7 @@ max_iterations (最大循环次数)
   flowernet_client.py                  - Python 客户端
 
 文档文件:
-  FLOWERNET_GUIDE.md                   - 快速使用指南 ⭐
-  CONFIG_GUIDE.md                      - 配置和调试
-  README_FLOWERNET.md                  - 完整文档
-  test_flowernet_e2e.py               - 端到端测试
+   README.md                            - 完整文档与使用说明
 
 启动脚本:
   start_services.py                    - Python 启动脚本 ⭐
@@ -202,7 +203,7 @@ max_iterations (最大循环次数)
 - 5 段文档: 约 2.5-3 分钟
 
 内存占用:
-- Generator: 500MB (因为加载 Claude SDK)
+- Generator: 500MB (取决于 provider 与模型配置)
 - Verifier: 200MB (轻量级模型)
 - Controller: 50MB
 
@@ -258,14 +259,13 @@ max_iterations (最大循环次数)
 ================================================================================
 
 立即可做:
-  1. python3 start_services.py - 启动服务
-  2. python3 test_flowernet_e2e.py - 运行测试
-  3. python3 -c "from flowernet_client import *; ..." - 生成内容
+   1. python3 start_services.py - 启动服务
+   2. curl -s http://localhost:8002/health - 健康检查
+   3. python3 -c "from flowernet_client import *; ..." - 生成内容
 
 需要时:
-  1. 查看 FLOWERNET_GUIDE.md - 快速指南
-  2. 查看 CONFIG_GUIDE.md - 参数配置
-  3. 查看 flowernet_client.py - API 文档
+   1. 查看 README.md - 快速指南与参数说明
+   2. 查看 flowernet_client.py - API 文档
 
 生产部署:
   1. 使用 Docker: docker-compose up -d
@@ -278,23 +278,22 @@ max_iterations (最大循环次数)
 ================================================================================
 
 问题诊断:
-  1. 查看 /tmp/*.log 错误日志
-  2. 运行 test_flowernet_e2e.py 进行诊断
-  3. 查看 CONFIG_GUIDE.md 的故障排除部分
+   1. 查看 /tmp/*.log 错误日志
+   2. 运行服务健康检查接口
+   3. 查看 README.md 的故障排查部分
 
 文档参考:
-  - Anthropic 文档: https://docs.anthropic.com/
-  - FastAPI 文档: https://fastapi.tiangolo.com/
-  - Python Requests: https://requests.readthedocs.io/
+   - FastAPI 文档: https://fastapi.tiangolo.com/
+   - Python Requests: https://requests.readthedocs.io/
 
 ================================================================================
 
 🎉 现在你已准备好使用 FlowerNet 系统！
 
 快速开始 3 步：
-  1. export ANTHROPIC_API_KEY="your-key"
-  2. python3 start_services.py
-  3. python3 test_flowernet_e2e.py
+   1. 设置 provider 对应 API key（如 Azure 或 Google）
+   2. python3 start_services.py
+   3. curl -s http://localhost:8002/health
 
 祝你使用愉快！ 🚀
 

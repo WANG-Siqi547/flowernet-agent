@@ -168,21 +168,27 @@ if [ "$ALL_OK" = true ]; then
     echo ""
     echo "=============================================================="
     echo ""
-    read -p "🧪 是否立即运行测试? [Y/n]: " -n 1 -r
+    read -p "🧪 是否立即运行快速健康检查? [Y/n]: " -n 1 -r
     echo
     
     if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
         echo ""
         echo "=============================================================="
-        echo "🧪 运行 Database Integration 测试"
+        echo "🧪 运行服务健康检查"
         echo "=============================================================="
         echo ""
         sleep 2
-        python3 test_database_quick.py
+        curl -s http://localhost:8000/health
+        curl -s http://localhost:8001/health
+        curl -s http://localhost:8002/health
+        curl -s http://localhost:8003/health
     else
         echo ""
-        echo "手动运行测试:"
-        echo "  python3 test_database_quick.py"
+        echo "手动运行健康检查:"
+        echo "  curl -s http://localhost:8000/health"
+        echo "  curl -s http://localhost:8001/health"
+        echo "  curl -s http://localhost:8002/health"
+        echo "  curl -s http://localhost:8003/health"
         echo ""
         echo "停止所有服务:"
         echo "  pkill -f 'flowernet-.*main.py'"

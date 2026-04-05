@@ -59,7 +59,11 @@ class FlowerNetOutliner:
                 - Gemini: "models/gemini-2.5-flash"
             provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
         """
-        requested_provider = provider or os.getenv("OUTLINER_PROVIDER_CHAIN", "azure")
+        requested_provider = (
+            os.getenv("OUTLINER_PROVIDER_CHAIN", "").strip()
+            or provider
+            or os.getenv("OUTLINER_PROVIDER", "azure")
+        )
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
         self.provider_chain = parsed_chain or ["azure", "ollama"]
 
@@ -92,7 +96,15 @@ class FlowerNetOutliner:
         self.provider_max_backoff = float(os.getenv('PROVIDER_MAX_BACKOFF', '90.0'))
         self.provider_jitter = float(os.getenv('PROVIDER_JITTER', '0.35'))
         self.provider_min_interval = float(os.getenv('PROVIDER_MIN_INTERVAL', '1.2'))
+        self.provider_failure_threshold = max(1, int(os.getenv('PROVIDER_FAILURE_THRESHOLD', '2')))
+        self.provider_cooldown_seconds = max(5.0, float(os.getenv('PROVIDER_COOLDOWN_SECONDS', '180')))
+        self.provider_http_timeout = float(os.getenv('PROVIDER_HTTP_TIMEOUT', '90'))
+        self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.dashscope_http_timeout = float(os.getenv('DASHSCOPE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self._provider_next_allowed: Dict[str, float] = {}
+        self._provider_failure_streak: Dict[str, int] = {}
+        self._provider_cooldown_until: Dict[str, float] = {}
 
         self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
         self.client = genai.Client(api_key=self.api_key) if (self.api_key and GEMINI_AVAILABLE) else None
@@ -326,7 +338,10 @@ class FlowerNetOutliner:
         text = (message or "").lower()
         transient_tokens = [
             "429", "rate", "resource_exhausted", "quota", "too many requests",
-            "timeout", "timed out", "temporarily", "503", "502", "504", "connection"
+            "timeout", "timed out", "temporarily", "500", "502", "503", "504", "408", "connection",
+            "connection reset", "remote disconnected", "temporarily unavailable", "service unavailable",
+            "read timed out", "ssl", "tls", "econnreset", "broken pipe", "network is unreachable",
+            "name or service not known", "temporary failure in name resolution"
         ]
         return any(token in text for token in transient_tokens)
 
@@ -388,6 +403,12 @@ class FlowerNetOutliner:
         errors: List[str] = []
         for provider in self.provider_chain:
             provider_errors: List[str] = []
+            cooldown_until = self._provider_cooldown_until.get(provider, 0.0)
+            if cooldown_until > time.time():
+                remain = max(0.0, cooldown_until - time.time())
+                errors.append(f"{provider}: skipped (cooldown {remain:.1f}s)")
+                continue
+
             for attempt in range(1, self.provider_retries + 1):
                 try:
                     self._wait_for_provider_slot(provider)
@@ -398,6 +419,8 @@ class FlowerNetOutliner:
                         expect_json=expect_json,
                     )
                     self._mark_provider_slot(provider)
+                    self._provider_failure_streak[provider] = 0
+                    self._provider_cooldown_until[provider] = 0.0
                     self.last_provider_used = provider
                     return text, metadata
                 except Exception as exc:
@@ -405,7 +428,16 @@ class FlowerNetOutliner:
                     provider_errors.append(error_message)
                     retry_after = self._extract_retry_after_from_message(error_message)
 
-                    should_retry = self._is_transient_provider_error(error_message) and attempt < self.provider_retries
+                    transient_error = self._is_transient_provider_error(error_message)
+                    if transient_error:
+                        streak = self._provider_failure_streak.get(provider, 0) + 1
+                        self._provider_failure_streak[provider] = streak
+                        if streak >= self.provider_failure_threshold:
+                            self._provider_cooldown_until[provider] = time.time() + self.provider_cooldown_seconds
+                    else:
+                        self._provider_failure_streak[provider] = 0
+
+                    should_retry = transient_error and attempt < self.provider_retries
                     if should_retry:
                         retry_delay = self._compute_retry_delay(attempt, retry_after=retry_after)
                         self._mark_provider_slot(provider, extra_delay=retry_delay)
@@ -447,7 +479,7 @@ class FlowerNetOutliner:
             params = {"api-version": self.azure_api_version}
 
             try:
-                response = requests.post(url, params=params, json=payload, headers=headers, timeout=120)
+                response = requests.post(url, params=params, json=payload, headers=headers, timeout=self.azure_http_timeout)
                 response.raise_for_status()
                 data = response.json()
                 choice = ((data.get("choices") or [{}])[0] or {})
@@ -522,7 +554,7 @@ class FlowerNetOutliner:
                     "Authorization": f"Bearer {self.dashscope_api_key}",
                     "Content-Type": "application/json",
                 }
-                response = requests.post(self.dashscope_api_url, json=payload, headers=headers, timeout=120)
+                response = requests.post(self.dashscope_api_url, json=payload, headers=headers, timeout=self.dashscope_http_timeout)
                 response.raise_for_status()
                 data = response.json()
                 choice = ((data.get("choices") or [{}])[0] or {})
@@ -569,7 +601,7 @@ class FlowerNetOutliner:
                     "HTTP-Referer": self.openrouter_referrer,
                     "X-Title": self.openrouter_app_name,
                 }
-                response = requests.post(self.openrouter_api_url, json=payload, headers=headers, timeout=120)
+                response = requests.post(self.openrouter_api_url, json=payload, headers=headers, timeout=self.openrouter_http_timeout)
                 response.raise_for_status()
                 data = response.json()
                 choice = ((data.get("choices") or [{}])[0] or {})

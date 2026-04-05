@@ -1,13 +1,12 @@
 """
 FlowerNet Generator - LLM驱动的内容生成模块
 根据prompt使用LLM生成draft内容
-支持多种 LLM 提供商: Azure OpenAI, Anthropic Claude, Google Gemini, OpenRouter, Ollama
+支持多种 LLM 提供商: Azure OpenAI, Google Gemini, OpenRouter, Ollama
 """
 
 import os
 import requests
 import json
-import subprocess
 import time
 import random
 import re
@@ -32,12 +31,6 @@ def _is_local_ollama_url(url: str) -> bool:
     )
 
 try:
-    import anthropic
-    ANTHROPIC_AVAILABLE = True
-except ImportError:
-    ANTHROPIC_AVAILABLE = False
-
-try:
     from google import genai
     from google.genai import types
     GEMINI_AVAILABLE = True
@@ -49,7 +42,6 @@ class FlowerNetGenerator:
     """
     内容生成器：支持多种 LLM 提供商
     - Azure OpenAI (需要 AZURE_OPENAI_API_KEY)
-    - Anthropic Claude (需要 ANTHROPIC_API_KEY)
     - Google Gemini (需要 GOOGLE_API_KEY)
     - Ollama (本地运行，完全免费无限制)
     """
@@ -62,7 +54,6 @@ class FlowerNetGenerator:
             api_key: API key，如果不提供则从环境变量读取
             model: 使用的模型名称
                 - Azure OpenAI: "gpt-4o-mini"（部署名由 AZURE_OPENAI_DEPLOYMENT_NAME 指定）
-                - Claude: "claude-3-5-sonnet-20241022"
                 - Gemini: "models/gemini-2.5-flash" (免费, 最新), "models/gemini-2.5-pro" (免费但有限制)
                 - Ollama: "qwen2.5:7b", "llama3.1:8b", "mistral:7b" 等
             provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
@@ -70,7 +61,7 @@ class FlowerNetGenerator:
         provider_chain_env = os.getenv("GENERATOR_PROVIDER_CHAIN", "").strip()
         requested_provider = provider_chain_env or provider or os.getenv("GENERATOR_PROVIDER", "azure")
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
-        allowed_providers = {"azure", "gemini", "dashscope", "openrouter", "claude", "ollama"}
+        allowed_providers = {"azure", "gemini", "dashscope", "openrouter", "ollama"}
         normalized_chain: List[str] = []
         for candidate in parsed_chain:
             if candidate in allowed_providers and candidate not in normalized_chain:
@@ -118,8 +109,6 @@ class FlowerNetGenerator:
 
         self.api_key = api_key or os.getenv('GOOGLE_API_KEY', '')
         self.client = genai.Client(api_key=self.api_key) if (self.api_key and GEMINI_AVAILABLE) else None
-        self.claude_api_key = os.getenv('ANTHROPIC_API_KEY', '')
-        self.claude_client = anthropic.Anthropic(api_key=self.claude_api_key) if (self.claude_api_key and ANTHROPIC_AVAILABLE) else None
         self.last_provider_used = ""
 
         print("✅ Generator 初始化:")
@@ -138,7 +127,10 @@ class FlowerNetGenerator:
         text = (message or "").lower()
         transient_tokens = [
             "429", "rate", "resource_exhausted", "quota", "too many requests",
-            "timeout", "timed out", "temporarily", "503", "502", "504", "connection"
+            "timeout", "timed out", "temporarily", "500", "502", "503", "504", "408", "connection",
+            "connection reset", "remote disconnected", "temporarily unavailable", "service unavailable",
+            "read timed out", "ssl", "tls", "econnreset", "broken pipe", "network is unreachable",
+            "name or service not known", "temporary failure in name resolution"
         ]
         return any(token in text for token in transient_tokens)
 
@@ -228,8 +220,6 @@ class FlowerNetGenerator:
                         result = self._generate_with_dashscope(prompt, max_tokens)
                     elif provider == "openrouter":
                         result = self._generate_with_openrouter(prompt, max_tokens)
-                    elif provider == "claude":
-                        result = self._generate_with_claude(prompt, max_tokens)
                     elif provider == "ollama":
                         result = self._generate_with_ollama(prompt, max_tokens)
                     else:
@@ -588,46 +578,6 @@ class FlowerNetGenerator:
             return {
                 "success": False,
                 "error": f"DashScope API Error: {str(e)}",
-                "draft": ""
-            }
-    
-    def _generate_with_claude(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
-        """使用 Anthropic Claude 生成内容"""
-        try:
-            if self.claude_client is None:
-                return {
-                    "success": False,
-                    "error": "ANTHROPIC_API_KEY not set or anthropic sdk not installed",
-                    "draft": ""
-                }
-            message = self.claude_client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
-            
-            draft_text = message.content[0].text
-            
-            return {
-                "success": True,
-                "draft": draft_text,
-                "metadata": {
-                    "model": self.model,
-                    "provider": "claude",
-                    "input_tokens": message.usage.input_tokens,
-                    "output_tokens": message.usage.output_tokens,
-                    "stop_reason": message.stop_reason,
-                }
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Claude API Error: {str(e)}",
                 "draft": ""
             }
     
@@ -1057,20 +1007,18 @@ class FlowerNetOrchestrator:
                     "rel_threshold": rel_threshold,
                     "red_threshold": red_threshold
                 }
-                cmd = [
-                    "curl", "-s", "-X", "POST", f"{self.verifier_url}/verify",
-                    "-H", "Content-Type: application/json",
-                    "-d", json.dumps(payload, ensure_ascii=False),
-                    "--max-time", "90"
-                ]
-                completed = subprocess.run(cmd, capture_output=True, text=True, timeout=95)
-                if completed.returncode != 0:
-                    last_error = f"Verifier curl 执行失败: {completed.stderr.strip()[:80]}"
-                elif not completed.stdout.strip():
+                response = self.session.post(
+                    f"{self.verifier_url}/verify",
+                    json=payload,
+                    timeout=90,
+                )
+                if response.status_code != 200:
+                    last_error = f"Verifier HTTP {response.status_code}: {response.text[:120]}"
+                elif not response.text.strip():
                     last_error = "Verifier 返回空响应"
                 else:
-                    data = json.loads(completed.stdout)
-                    print(f"   响应长度: {len(completed.stdout)}")
+                    data = response.json()
+                    print(f"   响应长度: {len(response.text)}")
                     return {"success": True, **data}
             except Exception as e:
                 last_error = f"{type(e).__name__}: {str(e)[:80]}"
@@ -1098,27 +1046,26 @@ class FlowerNetOrchestrator:
                 "outline": outline,
                 "history": history
             }
-            cmd = [
-                "curl", "-s", "-X", "POST", f"{self.controller_url}/refine_prompt",
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps(payload, ensure_ascii=False)
-            ]
-            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            response = self.session.post(
+                f"{self.controller_url}/refine_prompt",
+                json=payload,
+                timeout=60,
+            )
 
-            if completed.returncode != 0:
+            if response.status_code != 200:
                 return {
                     "success": False,
-                    "error": f"Controller curl 执行失败: {completed.stderr.strip()}"
+                    "error": f"Controller HTTP {response.status_code}: {response.text[:200]}"
                 }
 
-            if not completed.stdout.strip():
+            if not response.text.strip():
                 return {
                     "success": False,
                     "error": "Controller 返回空响应"
                 }
 
-            print(f"   响应长度: {len(completed.stdout)}")
-            return json.loads(completed.stdout)
+            print(f"   响应长度: {len(response.text)}")
+            return response.json()
         except Exception as e:
             print(f"   ❌ Controller 异常: {type(e).__name__}: {str(e)[:100]}")
             return {

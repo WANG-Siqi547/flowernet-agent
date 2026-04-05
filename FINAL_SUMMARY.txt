@@ -12,7 +12,7 @@
 FlowerNet 是一个基于 LLM 的智能文档生成系统，实现了：
 
 ✅ 完整的生成-验证-修改循环流程
-✅ LLM 驱动的内容生成（使用 Claude API）
+✅ LLM 驱动的内容生成（支持多 provider）
 ✅ 多维度质量验证（相关性 + 冗余度）
 ✅ 动态 Prompt 优化和自适应学习
 ✅ 支持单段落和完整文档生成
@@ -43,7 +43,7 @@ FlowerNet 是一个基于 LLM 的智能文档生成系统，实现了：
    ✅ Dockerfile - Docker 配置
    
    功能:
-   • 使用 Claude LLM 生成内容
+  • 使用当前 provider 生成内容
    • 支持简单生成、带上下文生成、完整循环生成
    • 支持单段落和多段落文档生成
    • 完整的流程编排和控制
@@ -78,20 +78,16 @@ FlowerNet 是一个基于 LLM 的智能文档生成系统，实现了：
       • 7 个实用示例
       • 涵盖各种使用场景
       
-   ✅ test_flowernet_e2e.py (300 行)
-      • 完整的端到端测试
-      • 单元测试、集成测试
-      • 性能测试
+  ✅ 启动与健康检查脚本
+    • 服务健康检查
+    • API 可达性验证
 
 5. 启动脚本
    ✅ start-flowernet.sh - 自动启动所有服务
    ✅ stop-flowernet.sh - 优雅停止所有服务
 
 6. 完整文档
-   ✅ README_FLOWERNET.md (400+ 行) - 完整使用指南
-   ✅ CONFIG_GUIDE.md (500+ 行) - 配置和故障排除
-   ✅ QUICKSTART.md - 快速开始指南
-   ✅ COMPLETION_SUMMARY.md - 实现总结
+  ✅ README.md - 完整使用指南
 
 
 🎯 核心功能
@@ -142,13 +138,9 @@ FlowerNet 是一个基于 LLM 的智能文档生成系统，实现了：
 客户端和工具:
   flowernet_client.py      300 行
   flowernet_examples.py    400 行
-  test_flowernet_e2e.py    300 行
 
 文档:
-  README_FLOWERNET.md      400+ 行
-  CONFIG_GUIDE.md          500+ 行
-  QUICKSTART.md            200+ 行
-  COMPLETION_SUMMARY.md    300+ 行
+  README.md                完整文档
 
 总计: 3500+ 行代码和文档
 
@@ -157,13 +149,15 @@ FlowerNet 是一个基于 LLM 的智能文档生成系统，实现了：
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1. 设置环境
-   export ANTHROPIC_API_KEY="sk-ant-..."
+  配置当前 provider 对应 API Key（如 AZURE_OPENAI_API_KEY / GOOGLE_API_KEY）
 
 2. 启动服务
    ./start-flowernet.sh
 
 3. 验证（在另一个终端）
-   python3 test_flowernet_e2e.py
+  curl -s http://localhost:8002/health
+  curl -s http://localhost:8000/health
+  curl -s http://localhost:8001/health
 
 4. 使用
    python3 flowernet_examples.py
@@ -216,14 +210,8 @@ Swagger UI:
 📚 文档和示例
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-快速开始：
-  QUICKSTART.md - 5 分钟快速上手
-
 完整指南：
-  README_FLOWERNET.md - 详细使用手册 (400+ 行)
-
-配置指南：
-  CONFIG_GUIDE.md - 配置和故障排除 (500+ 行)
+  README.md - 详细使用手册
 
 示例代码：
   flowernet_examples.py - 7 个实用示例
@@ -233,7 +221,7 @@ API 文档：
   Swagger UI：http://localhost:8002/docs
 
 测试：
-  test_flowernet_e2e.py - 完整的端到端测试
+  使用健康检查与实际生成接口进行验证
 
 
 ✨ 主要特性
@@ -264,9 +252,9 @@ API 文档：
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 快速验证（5 分钟）:
-  1. export ANTHROPIC_API_KEY="..."
+  1. 设置 provider 对应 API key
   2. ./start-flowernet.sh
-  3. python3 test_flowernet_e2e.py
+  3. curl -s http://localhost:8002/health
 
 开始使用（10 分钟）:
   1. python3 flowernet_examples.py
@@ -274,9 +262,8 @@ API 文档：
   3. 修改参数进行测试
 
 深度学习（30 分钟）:
-  1. 阅读 README_FLOWERNET.md
-  2. 查看 CONFIG_GUIDE.md
-  3. 修改 prompt 和参数
+  1. 阅读 README.md
+  2. 修改 prompt 和参数
 
 生产部署:
   1. docker-compose up -d
@@ -308,8 +295,10 @@ FlowerNet 系统已完全实现、测试和文档化。
 停止服务:
   ./stop-flowernet.sh
 
-运行测试:
-  python3 test_flowernet_e2e.py
+运行健康检查:
+  curl -s http://localhost:8002/health
+  curl -s http://localhost:8000/health
+  curl -s http://localhost:8001/health
 
 运行示例:
   python3 flowernet_examples.py

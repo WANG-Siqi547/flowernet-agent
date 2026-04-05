@@ -96,8 +96,9 @@ def main():
         print("  /tmp/Generator.log")
         print("  /tmp/Web.log")
 
-        print("\n🧪 运行测试:")
-        print("  python3 quick_e2e_web_test.py")
+        print("\n🧪 快速检查:")
+        print("  curl -s http://localhost:8010/health")
+        print("  curl -s http://localhost:8002/health")
         
         print("\n按 Ctrl+C 停止所有服务...\n")
         
