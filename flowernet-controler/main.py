@@ -371,7 +371,7 @@ async def improve_outline(req: ImproveOutlineRequest):
         llm_outline = None
 
         llm_error = ""
-        use_llm_outline = os.getenv("CONTROLLER_USE_LLM_OUTLINE", "false").lower() == "true"
+        use_llm_outline = os.getenv("CONTROLLER_USE_LLM_OUTLINE", "true").lower() == "true"
         require_llm_source = os.getenv("CONTROLLER_REQUIRE_LLM_SOURCE", "false").lower() == "true"
         llm_timeout = max(20, int(os.getenv("CONTROLLER_LLM_TIMEOUT", "90")))
         llm_retries = max(1, int(os.getenv("CONTROLLER_LLM_RETRIES", "3")))

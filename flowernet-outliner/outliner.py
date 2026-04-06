@@ -575,11 +575,14 @@ class FlowerNetOutliner:
                 }
             except requests.HTTPError as exc:
                 status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                response_text = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
                 retry_after_raw = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
                 retry_after = self._parse_retry_after_seconds(retry_after_raw)
                 if retry_after is not None:
-                    raise Exception(f"DashScope HTTP {status}, retry_after={retry_after}")
-                raise Exception(f"DashScope HTTP {status}: {str(exc)}")
+                    suffix = f" | response={response_text[:500]}" if response_text else ""
+                    raise Exception(f"DashScope HTTP {status}, retry_after={retry_after}{suffix}")
+                suffix = f" | response={response_text[:500]}" if response_text else ""
+                raise Exception(f"DashScope HTTP {status}: {str(exc)}{suffix}")
             except requests.RequestException as exc:
                 raise Exception(f"DashScope request error: {str(exc)}")
 

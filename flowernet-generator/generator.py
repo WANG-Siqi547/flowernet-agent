@@ -561,12 +561,15 @@ class FlowerNetGenerator:
             }
         except requests.RequestException as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
+            response_text = (getattr(getattr(e, "response", None), "text", "") or "").strip()
             retry_after = self._parse_retry_after_seconds(
                 getattr(getattr(e, "response", None), "headers", {}).get("Retry-After", "")
             )
             error_message = f"DashScope API Error: {str(e)}"
             if status_code is not None:
                 error_message = f"DashScope HTTP {status_code}: {str(e)}"
+            if response_text:
+                error_message = f"{error_message} | response={response_text[:500]}"
             return {
                 "success": False,
                 "error": error_message,

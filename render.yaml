@@ -45,6 +45,20 @@ services:
         value: https://flowernet-controller.onrender.com
       - key: VERIFIER_URL
         value: https://flowernet-verifier.onrender.com
+      - key: CONTROLLER_USE_LLM_OUTLINE
+        value: "true"
+      - key: CONTROLLER_LLM_RETRIES
+        value: "2"
+      - key: CONTROLLER_LLM_TIMEOUT
+        value: "60"
+      - key: CONTROLLER_MIN_SCORE_GAIN
+        value: "0.0"
+      - key: CONTROLLER_MIN_REL_ANCHOR_GAIN
+        value: "0.0"
+      - key: CONTROLLER_MIN_NOVELTY_GAIN
+        value: "0.0"
+      - key: CONTROLLER_MIN_STRUCTURE_GAIN
+        value: "0.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH

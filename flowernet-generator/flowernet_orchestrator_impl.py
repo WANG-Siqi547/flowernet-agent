@@ -348,7 +348,10 @@ class DocumentGenerationOrchestrator:
             "failed_subsections": [],
             "forced_subsections": [],
             "total_iterations": 0,
-            "generation_time": None
+            "generation_time": None,
+            "rag_used_subsections": 0,
+            "rag_search_success_subsections": 0,
+            "controller_effective_subsections": 0,
         }
         
         start_time = datetime.now()
@@ -466,6 +469,16 @@ class DocumentGenerationOrchestrator:
                             force_reason = str(subsection_gen_result.get("force_reason", "") or "")
                             controller_triggered = bool(subsection_gen_result.get("controller_triggered", False))
                             controller_retry_count = int(subsection_gen_result.get("controller_retry_count", 0) or 0)
+                            rag_used = bool(subsection_gen_result.get("rag_used", False))
+                            rag_search_success = bool(subsection_gen_result.get("rag_search_success", False))
+                            controller_effective = bool(subsection_gen_result.get("controller_effective", False))
+
+                            if rag_used:
+                                document_result["rag_used_subsections"] += 1
+                            if rag_search_success:
+                                document_result["rag_search_success_subsections"] += 1
+                            if controller_effective:
+                                document_result["controller_effective_subsections"] += 1
                             
                             if self.history_manager:
                                 self.history_manager.add_entry(
@@ -527,6 +540,9 @@ class DocumentGenerationOrchestrator:
                                 "force_reason": force_reason,
                                 "controller_triggered": controller_triggered,
                                 "controller_retry_count": controller_retry_count,
+                                "rag_used": rag_used,
+                                "rag_search_success": rag_search_success,
+                                "controller_effective": controller_effective,
                                 "length": len(generated_content)
                             })
                             
@@ -544,6 +560,9 @@ class DocumentGenerationOrchestrator:
                                 "verification": subsection_gen_result.get("verification", {}),
                                 "forced_pass": True,
                                 "force_reason": "subsection_fallback_on_error",
+                                "rag_used": bool(subsection_gen_result.get("rag_used", False)),
+                                "rag_search_success": bool(subsection_gen_result.get("rag_search_success", False)),
+                                "controller_effective": bool(subsection_gen_result.get("controller_effective", False)),
                                 "length": len(fallback_content),
                             })
                             document_result["passed_subsections"] += 1
@@ -620,6 +639,9 @@ class DocumentGenerationOrchestrator:
             print(f"   - 通过: {document_result['passed_subsections']}")
             print(f"   - 失败: {len(document_result['failed_subsections'])}")
             print(f"   - 兜底通过: {len(document_result['forced_subsections'])}")
+            print(f"   - RAG 命中: {document_result['rag_search_success_subsections']}/{len(content_prompts)}")
+            print(f"   - RAG 使用: {document_result['rag_used_subsections']}/{len(content_prompts)}")
+            print(f"   - Controller 有效: {document_result['controller_effective_subsections']}/{len(content_prompts)}")
             print(f"   - 总迭代: {document_result['total_iterations']} 次")
             print(f"   - 耗时: {document_result['generation_time']}")
             print(f"{'='*70}")
@@ -656,6 +678,9 @@ class DocumentGenerationOrchestrator:
                 "forced_subsections": document_result.get("forced_subsections", []),
                 "total_iterations": document_result.get("total_iterations", 0),
                 "generation_time": document_result.get("generation_time"),
+                "rag_used_subsections": document_result.get("rag_used_subsections", 0),
+                "rag_search_success_subsections": document_result.get("rag_search_success_subsections", 0),
+                "controller_effective_subsections": document_result.get("controller_effective_subsections", 0),
                 "error": str(e),
                 "warning": f"document_exception_fallback: {str(e)[:180]}",
             }
@@ -707,6 +732,8 @@ class DocumentGenerationOrchestrator:
         rag_search_result: Dict[str, Any] = {"success": False, "results": []}
         rag_context = ""
         require_source_citations = False
+        rag_used = False
+        rag_selected_query = ""
 
         if self.rag_enabled and self.search_engine is not None:
             rag_query_candidates = self._build_rag_query_candidates(
@@ -719,6 +746,8 @@ class DocumentGenerationOrchestrator:
                 rag_search_result = self.search_engine.search(rag_query)
                 if rag_search_result.get("success") and rag_search_result.get("results"):
                     selected_query = rag_query
+                    rag_used = True
+                    rag_selected_query = selected_query
                     break
                 rag_error = str(rag_search_result.get("error", "unknown"))
 
@@ -837,6 +866,12 @@ class DocumentGenerationOrchestrator:
                     "final_outline": current_outline,
                     "iterations": iterations - 1,
                     "all_drafts": all_drafts,
+                    "rag_used": rag_used,
+                    "rag_search_success": bool(rag_search_result.get("success", False)),
+                    "rag_result_count": len(rag_search_result.get("results", [])),
+                    "rag_selected_query": rag_selected_query,
+                    "controller_effective": bool(controller_last_result.get("effective", False)),
+                    "controller_source": controller_last_result.get("source", ""),
                     "verification": {
                         "relevancy_index": 0.0,
                         "redundancy_index": 1.0,
@@ -935,6 +970,12 @@ class DocumentGenerationOrchestrator:
                         "draft": fallback_text,
                         "final_outline": current_outline,
                         "iterations": iterations,
+                        "rag_used": rag_used,
+                        "rag_search_success": bool(rag_search_result.get("success", False)),
+                        "rag_result_count": len(rag_search_result.get("results", [])),
+                        "rag_selected_query": rag_selected_query,
+                        "controller_effective": bool(controller_last_result.get("effective", False)),
+                        "controller_source": controller_last_result.get("source", ""),
                         "verification": {
                             "relevancy_index": 0.0,
                             "redundancy_index": 1.0,
@@ -1075,6 +1116,12 @@ class DocumentGenerationOrchestrator:
                     "draft": draft,
                     "final_outline": current_outline,
                     "iterations": iterations,
+                    "rag_used": rag_used,
+                    "rag_search_success": bool(rag_search_result.get("success", False)),
+                    "rag_result_count": len(rag_search_result.get("results", [])),
+                    "rag_selected_query": rag_selected_query,
+                    "controller_effective": bool(controller_last_result.get("effective", False)),
+                    "controller_source": controller_last_result.get("source", ""),
                     "verification": {
                         "relevancy_index": rel_score,
                         "redundancy_index": red_score,
@@ -1089,6 +1136,12 @@ class DocumentGenerationOrchestrator:
                 }
 
             current_candidate = {
+                    "rag_used": rag_used,
+                    "rag_search_success": bool(rag_search_result.get("success", False)),
+                    "rag_result_count": len(rag_search_result.get("results", [])),
+                    "rag_selected_query": rag_selected_query,
+                    "controller_effective": bool(controller_last_result.get("effective", False)),
+                    "controller_source": controller_last_result.get("source", ""),
                 "draft": draft,
                 "outline": current_outline,
                 "iteration": iterations,
@@ -1131,6 +1184,12 @@ class DocumentGenerationOrchestrator:
                     "draft": draft,
                     "final_outline": current_outline,
                     "iterations": iterations,
+                    "rag_used": rag_used,
+                    "rag_search_success": bool(rag_search_result.get("success", False)),
+                    "rag_result_count": len(rag_search_result.get("results", [])),
+                    "rag_selected_query": rag_selected_query,
+                    "controller_effective": bool(controller_last_result.get("effective", False)),
+                    "controller_source": controller_last_result.get("source", ""),
                     "verification": {
                         "relevancy_index": rel_score,
                         "redundancy_index": red_score,
@@ -1139,6 +1198,12 @@ class DocumentGenerationOrchestrator:
                         "best_effort_pass": True,
                     },
                     "all_drafts": all_drafts,
+                    "rag_used": rag_used,
+                    "rag_search_success": bool(rag_search_result.get("success", False)),
+                    "rag_result_count": len(rag_search_result.get("results", [])),
+                    "rag_selected_query": rag_selected_query,
+                    "controller_effective": controller_effective,
+                    "controller_source": controller_last_result.get("source", ""),
                     "forced_pass": False,
                     "force_reason": "best_effort_pass",
                     "controller_triggered": controller_triggered,
@@ -1161,6 +1226,7 @@ class DocumentGenerationOrchestrator:
 
             controller_retry = 0
             controller_updated = False
+            controller_last_result: Dict[str, Any] = {}
             while True:
                 controller_retry += 1
                 controller_retry_count += 1
@@ -1222,6 +1288,7 @@ class DocumentGenerationOrchestrator:
                     section_id=section_id,
                     subsection_id=subsection_id,
                 )
+                controller_last_result = controller_result
 
                 improved_outline = str(controller_result.get("improved_outline", "")).strip()
                 controller_effective = bool(controller_result.get("effective", controller_result.get("success", False)))

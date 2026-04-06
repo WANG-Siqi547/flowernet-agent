@@ -117,6 +117,56 @@
       gap: 12px;
       margin-top: 28px;
     }
+
+    .estimate-box {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+      border: 1px solid #c7d2fe;
+      color: #1e3a8a;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .progress-wrap {
+      margin-top: 14px;
+    }
+
+    .progress-topline {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: #475569;
+      font-weight: 600;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 12px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid #cbd5e1;
+    }
+
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #1d4ed8 0%, #0ea5e9 55%, #14b8a6 100%);
+      transition: width 0.35s ease;
+    }
+
+    .progress-note {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.5;
+    }
     
     button {
       padding: 14px 24px;
@@ -294,6 +344,19 @@
         <button id="downloadBtn" disabled>下载 DOCX</button>
       </div>
 
+      <div id="estimateBox" class="estimate-box">预估时长会在点击“开始生成”后显示。</div>
+
+      <div class="progress-wrap">
+        <div class="progress-topline">
+          <span id="progressLabel">进度：0%</span>
+          <span id="progressHint">等待开始</span>
+        </div>
+        <div class="progress-bar" aria-label="生成进度条">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div id="progressNote" class="progress-note">当前尚未开始生成。</div>
+      </div>
+
       <div id="status" class="status"></div>
     </div>
 
@@ -310,11 +373,105 @@
     const statusEl = document.getElementById('status');
     const resultEl = document.getElementById('result');
     const metaEl = document.getElementById('meta');
+    const estimateBoxEl = document.getElementById('estimateBox');
+    const progressFillEl = document.getElementById('progressFill');
+    const progressLabelEl = document.getElementById('progressLabel');
+    const progressHintEl = document.getElementById('progressHint');
+    const progressNoteEl = document.getElementById('progressNote');
 
     let currentTitle = '';
     let currentContent = '';
     let eventSource = null;
     let seenSubsectionEvents = new Set();
+    let completedSubsections = new Set();
+    let expectedSubsections = 0;
+    let generationStartAt = 0;
+    let estimateMinSeconds = 0;
+    let estimateMaxSeconds = 0;
+
+    function formatDuration(seconds) {
+      const total = Math.max(0, Math.round(seconds));
+      const minutes = Math.floor(total / 60);
+      const remaining = total % 60;
+      if (minutes <= 0) {
+        return `${remaining} 秒`;
+      }
+      if (remaining === 0) {
+        return `${minutes} 分钟`;
+      }
+      return `${minutes} 分 ${remaining} 秒`;
+    }
+
+    function estimateDuration(chapters, subsections) {
+      const total = Math.max(1, chapters * subsections);
+      const minSeconds = Math.max(45, (total * 50) + (chapters * 20));
+      const maxSeconds = Math.max(minSeconds + 45, (total * 120) + (chapters * 40));
+      return {
+        minSeconds,
+        maxSeconds,
+        text: `当前配置约需 ${formatDuration(minSeconds)} ~ ${formatDuration(maxSeconds)}。实际耗时会受主题复杂度、网络和模型重试影响。`,
+      };
+    }
+
+    function resetProgress() {
+      completedSubsections = new Set();
+      expectedSubsections = 0;
+      setProgress(0, 0, '等待开始', '当前尚未开始生成。');
+    }
+
+    function setEstimateText(text) {
+      estimateBoxEl.textContent = text;
+    }
+
+    function setProgress(current, total, hint, note) {
+      const safeTotal = Math.max(0, Number(total) || 0);
+      const safeCurrent = Math.max(0, Number(current) || 0);
+      const percent = safeTotal > 0 ? Math.min(100, Math.round((safeCurrent / safeTotal) * 100)) : 0;
+      progressFillEl.style.width = `${percent}%`;
+      progressLabelEl.textContent = `进度：${percent}% (${safeCurrent}/${safeTotal || 0})`;
+      progressHintEl.textContent = hint || '进行中';
+      progressNoteEl.textContent = note || '';
+    }
+
+    function computeRemainingText() {
+      if (!generationStartAt || (!estimateMinSeconds && !estimateMaxSeconds)) {
+        return '';
+      }
+      const elapsed = Math.max(0, Math.floor((Date.now() - generationStartAt) / 1000));
+      const remainMin = Math.max(0, estimateMinSeconds - elapsed);
+      const remainMax = Math.max(0, estimateMaxSeconds - elapsed);
+      return `预计剩余 ${formatDuration(remainMin)} ~ ${formatDuration(remainMax)}`;
+    }
+
+    function parseProgressMessage(message) {
+      const match = String(message || '').match(/(\d+)\/(\d+)\s*小节已完成\s*\((\d+)%\)/);
+      if (!match) return null;
+      return {
+        current: Number(match[1]),
+        total: Number(match[2]),
+        percent: Number(match[3]),
+      };
+    }
+
+    function completionKey(data) {
+      const meta = data.metadata || {};
+      const sectionId = meta.section_id || '';
+      const subsectionId = meta.subsection_id || '';
+      const order = meta.subsection_order || '';
+      return `${sectionId}::${subsectionId}::${order}`;
+    }
+
+    function handleCompletedSubsection(data, fallbackTotal) {
+      const key = completionKey(data);
+      if (!completedSubsections.has(key)) {
+        completedSubsections.add(key);
+      }
+      const total = expectedSubsections || Number(fallbackTotal) || 0;
+      return {
+        current: completedSubsections.size,
+        total,
+      };
+    }
 
     function stripEmojis(text) {
       if (!text) return '';
@@ -446,6 +603,8 @@
       const subsectionCount = Number(document.getElementById('subCount').value);
       const userBackground = document.getElementById('background').value.trim() || '普通读者';
       const extraRequirements = document.getElementById('extra').value.trim();
+      const safeChapterCount = Number.isFinite(chapterCount) && chapterCount > 0 ? chapterCount : 1;
+      const safeSubsectionCount = Number.isFinite(subsectionCount) && subsectionCount > 0 ? subsectionCount : 1;
 
       if (!topic) {
         setStatus('请先输入主题。', 'err');
@@ -454,16 +613,25 @@
 
       startBtn.disabled = true;
       downloadBtn.disabled = true;
+      resetProgress();
       setStatus('正在生成中，请等待（可能需要 1-5 分钟）...');
       resultEl.textContent = '正在连接到生成服务...\n';
       metaEl.textContent = '';
       seenSubsectionEvents = new Set();
+      expectedSubsections = Math.max(1, safeChapterCount * safeSubsectionCount);
+      generationStartAt = Date.now();
+
+      const estimate = estimateDuration(safeChapterCount, safeSubsectionCount);
+      estimateMinSeconds = estimate.minSeconds;
+      estimateMaxSeconds = estimate.maxSeconds;
+      setEstimateText(`预估时长：${estimate.text}`);
+      setProgress(0, expectedSubsections, '已开始', `预计 ${formatDuration(estimate.minSeconds)} ~ ${formatDuration(estimate.maxSeconds)} 完成。`);
 
       // 构建查询参数
       const params = new URLSearchParams({
         topic,
-        chapter_count: chapterCount,
-        subsection_count: subsectionCount,
+        chapter_count: safeChapterCount,
+        subsection_count: safeSubsectionCount,
         user_background: userBackground,
         extra_requirements: extraRequirements
       });
@@ -478,11 +646,23 @@
             
             if (data.type === 'start') {
               appendLog(`[开始] ${data.message}`);
+              setProgress(0, expectedSubsections, '开始生成', `${computeRemainingText()}。`);
             } else if (data.type === 'progress') {
               appendLog(`[进度] ${data.message}`);
+              const parsed = parseProgressMessage(data.message);
+              if (parsed) {
+                const total = parsed.total || expectedSubsections;
+                setProgress(parsed.current, total, '生成中', `当前已完成 ${parsed.current}/${total} 个小节，${computeRemainingText()}。`);
+              }
             } else if (data.type === 'outline') {
               appendLog(`[大纲] ${data.message}`);
+              setProgress(0, expectedSubsections, '大纲已完成', `正在进入正文生成阶段，${computeRemainingText()}。`);
             } else if (data.type === 'detail') {
+              const stage = data.stage || '';
+              if (stage === 'subsection_passed' || stage === 'subsection_forced_pass' || stage === 'subsection_exception' || stage === 'subsection_failed') {
+                const snapshot = handleCompletedSubsection(data, expectedSubsections);
+                setProgress(snapshot.current, snapshot.total, '正在生成中', `已完成 ${snapshot.current}/${snapshot.total || 0} 个小节，${computeRemainingText()}。`);
+              }
               const line = formatDetailLine(data);
               if (line) {
                 appendLog(line);
@@ -504,12 +684,20 @@
               const statusStr = expected > 0 ? `${generated}/${expected}` : `${passed}`;
               
               metaEl.textContent = `文档ID: ${result.document_id} | 标题: ${result.title} | 小节: ${statusStr} (通过: ${passed}, 失败: ${failed}) | 迭代: ${stats.total_iterations} | 耗时: ${stats.generation_time}`;
+              setProgress(expected, expected, '完成', `已完成 ${expected}/${expected} 个小节。`);
+              estimateMinSeconds = 0;
+              estimateMaxSeconds = 0;
+              generationStartAt = 0;
               setStatus('生成成功，可以下载 DOCX。', 'ok');
               downloadBtn.disabled = false;
               startBtn.disabled = false;
               eventSource.close();
             } else if (data.type === 'error') {
               appendLog(`[错误] ${data.message}`);
+              setProgress(completedSubsections.size, expectedSubsections, '生成失败', data.message || '生成失败。');
+              estimateMinSeconds = 0;
+              estimateMaxSeconds = 0;
+              generationStartAt = 0;
               setStatus('生成失败：' + data.message, 'err');
               startBtn.disabled = false;
               eventSource.close();
@@ -522,6 +710,10 @@
         eventSource.addEventListener('error', (event) => {
           setStatus('连接错误，生成可能失败。', 'err');
           appendLog('\n[错误] 连接中断\n');
+          setProgress(completedSubsections.size, expectedSubsections, '连接中断', 'SSE 连接中断，可能仍在后台生成。');
+          estimateMinSeconds = 0;
+          estimateMaxSeconds = 0;
+          generationStartAt = 0;
           if (eventSource) {
             eventSource.close();
           }
