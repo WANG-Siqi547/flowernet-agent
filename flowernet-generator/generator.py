@@ -66,7 +66,7 @@ class FlowerNetGenerator:
         for candidate in parsed_chain:
             if candidate in allowed_providers and candidate not in normalized_chain:
                 normalized_chain.append(candidate)
-        self.provider_chain = normalized_chain or ["azure", "ollama"]
+        self.provider_chain = normalized_chain or ["azure", "gemini", "dashscope", "openrouter", "ollama"]
 
         self.model = model
         self.azure_model = os.getenv("GENERATOR_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -75,7 +75,7 @@ class FlowerNetGenerator:
         self.azure_api_version = os.getenv("GENERATOR_AZURE_API_VERSION", os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")).strip()
         self.azure_deployment_name = os.getenv("GENERATOR_AZURE_DEPLOYMENT_NAME", os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "")).strip()
         self.gemini_model = os.getenv("GENERATOR_GEMINI_MODEL", "models/gemini-2.5-flash-lite")
-        self.dashscope_model = os.getenv("GENERATOR_DASHSCOPE_MODEL", os.getenv("DASHSCOPE_MODEL", "qwen-plus"))
+        self.dashscope_model = os.getenv("GENERATOR_DASHSCOPE_MODEL", os.getenv("DASHSCOPE_MODEL", "glm-5"))
         self.dashscope_api_key = os.getenv("GENERATOR_DASHSCOPE_API_KEY", os.getenv("DASHSCOPE_API_KEY", "")).strip()
         self.dashscope_api_url = os.getenv(
             "GENERATOR_DASHSCOPE_API_URL",

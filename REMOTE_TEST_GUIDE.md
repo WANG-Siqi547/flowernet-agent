@@ -51,8 +51,8 @@ curl -m 45 https://flowernet-web.onrender.com/health
 检查 Render 环境变量是否正确设置：
 - `AZURE_OPENAI_API_KEY` ✅（必需）
 - `DASHSCOPE_API_KEY` ✅（必需）
-- `GENERATOR_PROVIDER_CHAIN: azure,dashscope,openrouter` ✅（已修复）
-- `OUTLINER_PROVIDER_CHAIN: azure,dashscope,openrouter` ✅（已修复）
+- `GENERATOR_PROVIDER_CHAIN: azure,gemini,dashscope,openrouter` ✅（已修复）
+- `OUTLINER_PROVIDER_CHAIN: azure,gemini,dashscope,openrouter` ✅（已修复）
 
 ### API Key 过期或不足额
 如果反复失败，检查：
