@@ -1060,6 +1060,9 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 "total_generated": total_generated,
                 "total_iterations": gen_resp.get("total_iterations", 0),
                 "generation_time": gen_resp.get("generation_time", ""),
+                "controller_effective_subsections": gen_resp.get("controller_effective_subsections", 0),
+                "rag_used_subsections": gen_resp.get("rag_used_subsections", 0),
+                "rag_search_success_subsections": gen_resp.get("rag_search_success_subsections", 0),
             },
         }
         

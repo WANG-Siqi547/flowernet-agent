@@ -167,6 +167,21 @@
       color: #64748b;
       line-height: 1.5;
     }
+
+    .compact-progress {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .compact-estimate {
+      font-size: 12px;
+      color: #334155;
+      margin-bottom: 8px;
+      line-height: 1.5;
+    }
     
     button {
       padding: 14px 24px;
@@ -362,6 +377,17 @@
 
     <div class="card">
       <div class="result-label">生成结果</div>
+      <div class="compact-progress">
+        <div id="estimateBoxMirror" class="compact-estimate">预估时长会在点击“开始生成”后显示。</div>
+        <div class="progress-topline">
+          <span id="progressLabelMirror">进度：0%</span>
+          <span id="progressHintMirror">等待开始</span>
+        </div>
+        <div class="progress-bar" aria-label="生成进度条（结果区）">
+          <div id="progressFillMirror" class="progress-fill"></div>
+        </div>
+        <div id="progressNoteMirror" class="progress-note">当前尚未开始生成。</div>
+      </div>
       <div id="meta" class="meta"></div>
       <pre id="result">生成结果会显示在这里...</pre>
     </div>
@@ -374,10 +400,15 @@
     const resultEl = document.getElementById('result');
     const metaEl = document.getElementById('meta');
     const estimateBoxEl = document.getElementById('estimateBox');
+    const estimateBoxMirrorEl = document.getElementById('estimateBoxMirror');
     const progressFillEl = document.getElementById('progressFill');
+    const progressFillMirrorEl = document.getElementById('progressFillMirror');
     const progressLabelEl = document.getElementById('progressLabel');
+    const progressLabelMirrorEl = document.getElementById('progressLabelMirror');
     const progressHintEl = document.getElementById('progressHint');
+    const progressHintMirrorEl = document.getElementById('progressHintMirror');
     const progressNoteEl = document.getElementById('progressNote');
+    const progressNoteMirrorEl = document.getElementById('progressNoteMirror');
 
     let currentTitle = '';
     let currentContent = '';
@@ -421,6 +452,9 @@
 
     function setEstimateText(text) {
       estimateBoxEl.textContent = text;
+      if (estimateBoxMirrorEl) {
+        estimateBoxMirrorEl.textContent = text;
+      }
     }
 
     function setProgress(current, total, hint, note) {
@@ -428,9 +462,21 @@
       const safeCurrent = Math.max(0, Number(current) || 0);
       const percent = safeTotal > 0 ? Math.min(100, Math.round((safeCurrent / safeTotal) * 100)) : 0;
       progressFillEl.style.width = `${percent}%`;
+      if (progressFillMirrorEl) {
+        progressFillMirrorEl.style.width = `${percent}%`;
+      }
       progressLabelEl.textContent = `进度：${percent}% (${safeCurrent}/${safeTotal || 0})`;
+      if (progressLabelMirrorEl) {
+        progressLabelMirrorEl.textContent = `进度：${percent}% (${safeCurrent}/${safeTotal || 0})`;
+      }
       progressHintEl.textContent = hint || '进行中';
+      if (progressHintMirrorEl) {
+        progressHintMirrorEl.textContent = hint || '进行中';
+      }
       progressNoteEl.textContent = note || '';
+      if (progressNoteMirrorEl) {
+        progressNoteMirrorEl.textContent = note || '';
+      }
     }
 
     function computeRemainingText() {
@@ -554,7 +600,19 @@
         return `[${stageLabel}]${suffix} ${data.message || ''}`.trim();
       }
 
-      if (stage === 'verifier_failed' || stage === 'controller_start' || stage === 'controller_success' || stage === 'controller_error' || stage === 'verifier_passed') {
+      if (
+        stage === 'verifier_failed' ||
+        stage === 'controller_start' ||
+        stage === 'controller_success' ||
+        stage === 'controller_error' ||
+        stage === 'controller_ineffective' ||
+        stage === 'controller_exhausted' ||
+        stage === 'controller_fallback_outline' ||
+        stage === 'verifier_passed' ||
+        stage === 'verifier_best_effort_pass' ||
+        stage === 'verifier_forced_pass' ||
+        stage === 'source_citation_relaxed'
+      ) {
         const iteration = meta.iteration ? ` · 轮次${meta.iteration}` : '';
         const retry = meta.controller_retry ? ` · 控制器重试${meta.controller_retry}` : '';
         const tag = orderTextGlobal || (order > 0 ? `#${order}` : '');
@@ -584,14 +642,21 @@
         verifier_passed: '校验通过',
         verifier_failed: '校验未通过',
         verifier_error: '校验异常',
+        verifier_best_effort_pass: '最佳努力通过',
+        verifier_forced_pass: '强制通过',
         controller_start: '控制器',
         controller_success: '控制器完成',
         controller_error: '控制器重试',
+        controller_ineffective: '控制器无效',
+        controller_exhausted: '控制器耗尽',
+        controller_fallback_outline: '控制器本地兜底',
+        source_citation_relaxed: '来源约束放宽',
         history_loaded: '历史加载',
         history_saved: '写入History',
         subsection_passed: '小节完成',
         subsection_failed: '小节失败',
         subsection_exception: '小节异常',
+        subsection_forced_pass: '小节兜底通过',
         document_complete: '文档完成'
       };
       return stageMap[stage] || '流程';
@@ -682,8 +747,12 @@
               const failed = stats.failed_subsections || 0;
               const generated = stats.total_generated || (passed + failed);
               const statusStr = expected > 0 ? `${generated}/${expected}` : `${passed}`;
+              const forced = stats.forced_subsections || 0;
+              const controllerEffective = stats.controller_effective_subsections || 0;
+              const ragUsed = stats.rag_used_subsections || 0;
+              const ragHit = stats.rag_search_success_subsections || 0;
               
-              metaEl.textContent = `文档ID: ${result.document_id} | 标题: ${result.title} | 小节: ${statusStr} (通过: ${passed}, 失败: ${failed}) | 迭代: ${stats.total_iterations} | 耗时: ${stats.generation_time}`;
+              metaEl.textContent = `文档ID: ${result.document_id} | 标题: ${result.title} | 小节: ${statusStr} (通过: ${passed}, 失败: ${failed}, 兜底: ${forced}) | Controller有效: ${controllerEffective} | RAG使用: ${ragUsed} | RAG命中: ${ragHit} | 迭代: ${stats.total_iterations} | 耗时: ${stats.generation_time}`;
               setProgress(expected, expected, '完成', `已完成 ${expected}/${expected} 个小节。`);
               estimateMinSeconds = 0;
               estimateMaxSeconds = 0;

@@ -101,11 +101,11 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "8"
+        value: "12"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
         value: "2"
       - key: MAX_CONTROLLER_RETRIES
-        value: "3"
+        value: "4"
       - key: STRICT_CONTROLLER_EFFECTIVE
         value: "false"
       - key: USE_DATABASE

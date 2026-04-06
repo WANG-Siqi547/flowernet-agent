@@ -72,11 +72,13 @@ class DocumentGenerationOrchestrator:
         self.retry_max_delay = float(os.getenv("DOC_RETRY_MAX_DELAY", "90.0"))
         self.retry_jitter = float(os.getenv("DOC_RETRY_JITTER", "0.5"))
         self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
-        self.max_subsection_attempts = min(8, max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "8"))))
+        # 不再硬编码封顶 8 轮，由环境变量决定上限（默认提升到 12）。
+        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "12")))
         self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "3")))
         configured_min_retries = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "8")))
         self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)
-        self.strict_controller_effective = os.getenv("STRICT_CONTROLLER_EFFECTIVE", "true").lower() == "true"
+        # 默认采用宽松模式：只要 Controller 给出有效改纲且发生变更，就允许继续下一轮。
+        self.strict_controller_effective = os.getenv("STRICT_CONTROLLER_EFFECTIVE", "false").lower() == "true"
         self.early_accept_iteration = max(2, int(os.getenv("EARLY_ACCEPT_ITERATION", "6")))
         self.early_accept_rel_margin = max(0.0, float(os.getenv("EARLY_ACCEPT_REL_MARGIN", "0.12")))
         self.early_accept_red_margin = max(0.0, float(os.getenv("EARLY_ACCEPT_RED_MARGIN", "0.18")))
@@ -712,6 +714,8 @@ class DocumentGenerationOrchestrator:
         all_drafts = []
         controller_triggered = False
         controller_retry_count = 0
+        controller_last_result: Dict[str, Any] = {}
+        controller_effective = False
         best_candidate: Optional[Dict[str, Any]] = None
         generator_failure_streak = 0
         max_generator_failures = max(1, int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "2")))
@@ -1226,7 +1230,6 @@ class DocumentGenerationOrchestrator:
 
             controller_retry = 0
             controller_updated = False
-            controller_last_result: Dict[str, Any] = {}
             while True:
                 controller_retry += 1
                 controller_retry_count += 1
@@ -1294,7 +1297,14 @@ class DocumentGenerationOrchestrator:
                 controller_effective = bool(controller_result.get("effective", controller_result.get("success", False)))
                 controller_changed = bool(controller_result.get("changed", True))
 
-                if controller_result.get("success") and improved_outline and controller_effective and controller_changed:
+                controller_ok_for_next_round = (
+                    controller_result.get("success")
+                    and improved_outline
+                    and controller_changed
+                    and (controller_effective or (not self.strict_controller_effective))
+                )
+
+                if controller_ok_for_next_round:
                     current_outline = improved_outline
                     controller_updated = True
                     # 回写 controller 改进的大纲到数据库
@@ -1321,6 +1331,7 @@ class DocumentGenerationOrchestrator:
                             "controller_retry": controller_retry,
                             "effective": controller_effective,
                             "changed": controller_changed,
+                            "strict_controller_effective": self.strict_controller_effective,
                         },
                     )
                     break
@@ -1347,7 +1358,7 @@ class DocumentGenerationOrchestrator:
                         )
                         break
 
-                if controller_result.get("success") and (not controller_effective or not controller_changed):
+                if controller_result.get("success") and (not controller_changed or (self.strict_controller_effective and not controller_effective)):
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
