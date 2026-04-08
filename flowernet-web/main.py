@@ -33,6 +33,8 @@ API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
+WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.65"))
+WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.80"))
 
 POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
@@ -44,8 +46,8 @@ class GenerateDocRequest(BaseModel):
     subsection_count: int = Field(default=3, ge=1, le=8)
     user_background: str = Field(default="普通读者")
     extra_requirements: str = Field(default="")
-    rel_threshold: float = Field(default=0.90, ge=0, le=1)
-    red_threshold: float = Field(default=0.42, ge=0, le=1)
+    rel_threshold: float = Field(default=WEB_DEFAULT_REL_THRESHOLD, ge=0, le=1)
+    red_threshold: float = Field(default=WEB_DEFAULT_RED_THRESHOLD, ge=0, le=1)
     timeout_seconds: int = Field(default=600, ge=60, le=7200, description="同步模式超时秒数")
 
 
@@ -60,8 +62,8 @@ class PofficesGenerateRequest(BaseModel):
     subsection_count: int = Field(default=3, ge=1, le=8)
     user_background: str = Field(default="普通读者")
     extra_requirements: str = Field(default="")
-    rel_threshold: float = Field(default=0.90, ge=0, le=1)
-    red_threshold: float = Field(default=0.42, ge=0, le=1)
+    rel_threshold: float = Field(default=WEB_DEFAULT_REL_THRESHOLD, ge=0, le=1)
+    red_threshold: float = Field(default=WEB_DEFAULT_RED_THRESHOLD, ge=0, le=1)
     async_mode: bool = Field(default=True, description="true=异步任务，false=同步等待结果")
     timeout_seconds: int = Field(default=600, ge=60, le=7200, description="同步模式超时秒数")
 
