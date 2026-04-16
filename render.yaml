@@ -45,6 +45,10 @@ services:
         value: https://flowernet-controller.onrender.com
       - key: VERIFIER_URL
         value: https://flowernet-verifier.onrender.com
+      - key: OUTLINER_URL
+        value: https://flowernet-outliner.onrender.com
+      - key: GENERATOR_URL
+        value: https://flowernet-generator.onrender.com
       - key: CONTROLLER_USE_LLM_OUTLINE
         value: "true"
       - key: CONTROLLER_LLM_RETRIES
@@ -81,7 +85,7 @@ services:
       - key: OUTLINER_PROVIDER
         value: sensenova
       - key: OUTLINER_PROVIDER_CHAIN
-        value: sensenova,openrouter,dashscope,azure,gemini
+        value: sensenova
       - key: OUTLINER_MODEL
         value: glm-5
       - key: OUTLINER_OPENROUTER_MODEL
@@ -172,7 +176,7 @@ services:
       - key: GENERATOR_PROVIDER
         value: sensenova
       - key: GENERATOR_PROVIDER_CHAIN
-        value: sensenova,openrouter,dashscope,azure,gemini
+        value: sensenova
       - key: GENERATOR_MODEL
         value: glm-5
       - key: GENERATOR_OPENROUTER_MODEL
@@ -234,7 +238,7 @@ services:
       - key: PROVIDER_RETRIES
         value: "2"
       - key: GENERATOR_PROVIDER_CHAIN
-        value: "sensenova,azure,gemini,dashscope,openrouter"
+        value: "sensenova"
       - key: PROVIDER_BACKOFF
         value: "1.2"
       - key: PROVIDER_MAX_BACKOFF

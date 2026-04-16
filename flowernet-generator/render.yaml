@@ -69,7 +69,7 @@ services:
       - key: PROVIDER_RETRIES
         value: "2"
       - key: GENERATOR_PROVIDER_CHAIN
-        value: "sensenova,azure,gemini,dashscope,openrouter"
+        value: "sensenova"
       - key: PROVIDER_BACKOFF
         value: "1.2"
       - key: PROVIDER_MAX_BACKOFF
