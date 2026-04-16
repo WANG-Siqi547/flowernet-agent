@@ -1090,11 +1090,19 @@ class FlowerNetOrchestrator:
         rel_threshold: float = 0.80,
         red_threshold: float = 0.40
     ) -> Dict[str, Any]:
-        """调用 Verifier API，内部最多重试3次应对 Render 冷启动。"""
+        """
+        调用 Verifier API，内部最多重试5次应对 Render 冷启动。
+        
+        超时配置优化：
+        - 单次请求超时：180秒（原 90秒，增加 2 倍）
+        - 重试次数：5 次（原 3 次）
+        - 重试间隔：8秒（原 5秒）
+        """
         last_error = "unknown"
-        for attempt in range(1, 4):
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
             try:
-                print(f"🔗 [Orchestrator] 调用 Verifier API: {self.verifier_url}/verify (第{attempt}次)")
+                print(f"🔗 [Orchestrator] 调用 Verifier API: {self.verifier_url}/verify (第{attempt}次，超时180s)")
                 payload = {
                     "draft": draft,
                     "outline": outline,
@@ -1105,7 +1113,7 @@ class FlowerNetOrchestrator:
                 response = self.session.post(
                     f"{self.verifier_url}/verify",
                     json=payload,
-                    timeout=90,
+                    timeout=180,  # 增加从 90s → 180s
                 )
                 if response.status_code != 200:
                     last_error = f"Verifier HTTP {response.status_code}: {response.text[:120]}"
@@ -1117,10 +1125,12 @@ class FlowerNetOrchestrator:
                     return {"success": True, **data}
             except Exception as e:
                 last_error = f"{type(e).__name__}: {str(e)[:80]}"
-            if attempt < 3:
-                print(f"   ⚠️ Verifier 第{attempt}次调用失败 ({last_error})，5s 后重试...")
-                import time as _t; _t.sleep(5)
-        print(f"   ❌ Verifier 全部重试失败: {last_error}")
+            
+            if attempt < max_retries:
+                print(f"   ⚠️ Verifier 第{attempt}次调用失败 ({last_error})，8s 后重试...")
+                import time as _t; _t.sleep(8)  # 增加从 5s → 8s
+        
+        print(f"   ❌ Verifier 全部重试失败 ({max_retries}次): {last_error}")
         return {"success": False, "error": last_error}
 
     def _call_controller(

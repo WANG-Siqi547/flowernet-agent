@@ -1503,12 +1503,25 @@ class DocumentGenerationOrchestrator:
         require_source_citations: bool = False,
         min_source_citations: int = 1,
     ) -> Dict[str, Any]:
-        """调用 Verifier API，内部最多重试3次（应对 Render 冷启动），避免浪费生成轮次。"""
-        print(f"      [_call_verifier] Starting verifier call...")
+        """
+        调用 Verifier API，内部最多重试5次（应对 Render 冷启动），避免浪费生成轮次。
+        
+        超时配置优化：
+        - 单次请求超时：180秒（原 90秒，增加 2 倍）
+        - 重试次数：5 次（原 3 次）
+        - 重试间隔：8秒（原 5秒）
+        - 总容忍时间：180 + 5*8 = 220 秒
+        
+        这样可以容忍 Render Free Plan 的冷启动延迟（30-60s）和高负载情况。
+        """
+        print(f"      [_call_verifier] Starting verifier call (timeout=180s, max_retries=5)...")
         last_error = "unknown"
-        for attempt in range(1, 4):
+        max_retries = 5
+        retry_delay = 8  # 增加到 8s 让 Render 有充足恢复时间
+        
+        for attempt in range(1, max_retries + 1):
             try:
-                print(f"      [_call_verifier] Attempt {attempt}/3, sending request...")
+                print(f"      [_call_verifier] Attempt {attempt}/{max_retries}, sending request...")
                 start = time.time()
                 response = self.session.post(
                     f"{self.verifier_url}/verify",
@@ -1522,7 +1535,7 @@ class DocumentGenerationOrchestrator:
                         "require_source_citations": require_source_citations,
                         "min_source_citations": max(1, int(min_source_citations)),
                     },
-                    timeout=90
+                    timeout=180  # 增加从 90s → 180s
                 )
                 if response.status_code == 200:
                     elapsed = time.time() - start
@@ -1538,10 +1551,12 @@ class DocumentGenerationOrchestrator:
                 elapsed = time.time() - start
                 last_error = str(e)
                 print(f"      [_call_verifier] Exception after {elapsed:.1f}s: {e}")
-            if attempt < 3:
-                print(f"         ⚠️ Verifier 第{attempt}次调用失败 ({last_error[:80]})，5s 后重试...")
-                time.sleep(5)
-        print(f"      [_call_verifier] All attempts failed: {last_error}")
+            
+            if attempt < max_retries:
+                print(f"         ⚠️ Verifier 第{attempt}次调用失败 ({last_error[:80]})，{retry_delay}s 后重试...")
+                time.sleep(retry_delay)
+        
+        print(f"      [_call_verifier] All {max_retries} attempts failed: {last_error}")
         return {"success": False, "error": last_error}
     
     def _call_controller(
