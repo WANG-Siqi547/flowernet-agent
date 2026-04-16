@@ -13,7 +13,7 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: GENERATOR_PROVIDER
-        value: azure
+        value: sensenova
       - key: GENERATOR_MODEL
         value: glm-5
       - key: GENERATOR_OPENROUTER_MODEL
@@ -42,6 +42,18 @@ services:
         value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       - key: DASHSCOPE_API_KEY
         sync: false
+      - key: GENERATOR_SENSENOVA_MODEL
+        value: SenseNova-V6-5-Turbo
+      - key: GENERATOR_SENSENOVA_API_URL
+        value: https://api.sensenova.cn/v1/llm/chat-completions
+      - key: GENERATOR_SENSENOVA_API_KEY
+        sync: false
+      - key: SENSENOVA_MODEL
+        value: SenseNova-V6-5-Turbo
+      - key: SENSENOVA_API_URL
+        value: https://api.sensenova.cn/v1/llm/chat-completions
+      - key: SENSENOVA_API_KEY
+        sync: false
       - key: AZURE_OPENAI_API_BASE
         value: https://poffices-ai.openai.azure.com/
       - key: AZURE_OPENAI_API_VERSION
@@ -57,7 +69,7 @@ services:
       - key: PROVIDER_RETRIES
         value: "2"
       - key: GENERATOR_PROVIDER_CHAIN
-        value: "azure,gemini,dashscope,openrouter"
+        value: "sensenova,azure,gemini,dashscope,openrouter"
       - key: PROVIDER_BACKOFF
         value: "1.2"
       - key: PROVIDER_MAX_BACKOFF

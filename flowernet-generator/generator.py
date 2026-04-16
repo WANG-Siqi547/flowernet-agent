@@ -1,7 +1,7 @@
 """
 FlowerNet Generator - LLM驱动的内容生成模块
 根据prompt使用LLM生成draft内容
-支持多种 LLM 提供商: Azure OpenAI, Google Gemini, OpenRouter, Ollama
+支持多种 LLM 提供商: SenseNova, Azure OpenAI, Google Gemini, OpenRouter, Ollama
 """
 
 import os
@@ -46,7 +46,7 @@ class FlowerNetGenerator:
     - Ollama (本地运行，完全免费无限制)
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "azure"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "sensenova"):
         """
         初始化生成器
         
@@ -59,14 +59,14 @@ class FlowerNetGenerator:
             provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
         """
         provider_chain_env = os.getenv("GENERATOR_PROVIDER_CHAIN", "").strip()
-        requested_provider = provider_chain_env or provider or os.getenv("GENERATOR_PROVIDER", "azure")
+        requested_provider = provider_chain_env or provider or os.getenv("GENERATOR_PROVIDER", "sensenova")
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
-        allowed_providers = {"azure", "gemini", "dashscope", "openrouter", "ollama"}
+        allowed_providers = {"azure", "gemini", "dashscope", "sensenova", "openrouter", "ollama"}
         normalized_chain: List[str] = []
         for candidate in parsed_chain:
             if candidate in allowed_providers and candidate not in normalized_chain:
                 normalized_chain.append(candidate)
-        self.provider_chain = normalized_chain or ["azure", "gemini", "dashscope", "openrouter", "ollama"]
+        self.provider_chain = normalized_chain or ["sensenova", "azure", "gemini", "dashscope", "openrouter", "ollama"]
 
         self.model = model
         self.azure_model = os.getenv("GENERATOR_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -80,6 +80,12 @@ class FlowerNetGenerator:
         self.dashscope_api_url = os.getenv(
             "GENERATOR_DASHSCOPE_API_URL",
             os.getenv("DASHSCOPE_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        ).rstrip("/")
+        self.sensenova_model = os.getenv("GENERATOR_SENSENOVA_MODEL", os.getenv("SENSENOVA_MODEL", "SenseNova-V6-5-Turbo"))
+        self.sensenova_api_key = os.getenv("GENERATOR_SENSENOVA_API_KEY", os.getenv("SENSENOVA_API_KEY", "")).strip()
+        self.sensenova_api_url = os.getenv(
+            "GENERATOR_SENSENOVA_API_URL",
+            os.getenv("SENSENOVA_API_URL", "https://api.sensenova.cn/v1/llm/chat-completions")
         ).rstrip("/")
         self.openrouter_model = os.getenv("GENERATOR_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
         self.ollama_model = os.getenv("GENERATOR_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
@@ -117,6 +123,7 @@ class FlowerNetGenerator:
         print(f"  - Azure deployment: {self.azure_deployment_name}")
         print(f"  - Gemini model: {self.gemini_model}")
         print(f"  - DashScope model: {self.dashscope_model}")
+        print(f"  - SenseNova model: {self.sensenova_model}")
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
         print(f"  - Ollama URL: {self.ollama_url}")
@@ -218,6 +225,8 @@ class FlowerNetGenerator:
                         result = self._generate_with_gemini(prompt, max_tokens)
                     elif provider == "dashscope":
                         result = self._generate_with_dashscope(prompt, max_tokens)
+                    elif provider == "sensenova":
+                        result = self._generate_with_sensenova(prompt, max_tokens)
                     elif provider == "openrouter":
                         result = self._generate_with_openrouter(prompt, max_tokens)
                     elif provider == "ollama":
@@ -581,6 +590,89 @@ class FlowerNetGenerator:
             return {
                 "success": False,
                 "error": f"DashScope API Error: {str(e)}",
+                "draft": ""
+            }
+
+    def _generate_with_sensenova(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
+        """使用 SenseNova 生成内容"""
+        try:
+            if not self.sensenova_api_key:
+                return {
+                    "success": False,
+                    "error": "SENSENOVA_API_KEY not set",
+                    "draft": ""
+                }
+
+            payload = {
+                "model": self.sensenova_model,
+                "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+                "temperature": 0.7,
+                "stream": False,
+                "max_tokens": max_tokens,
+            }
+            headers = {
+                "Authorization": f"Bearer {self.sensenova_api_key}",
+                "Content-Type": "application/json",
+            }
+
+            response = requests.post(
+                self.sensenova_api_url,
+                json=payload,
+                headers=headers,
+                timeout=self.provider_http_timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+            container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+            choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
+            msg = choice.get("message") if isinstance(choice, dict) else None
+            content = ""
+            if isinstance(msg, str):
+                content = msg
+            elif isinstance(msg, dict):
+                content = msg.get("content", "")
+            if isinstance(content, list):
+                parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
+                content = "".join(parts)
+            draft_text = str(content).strip()
+            if not draft_text:
+                return {
+                    "success": False,
+                    "error": "SenseNova empty response",
+                    "draft": ""
+                }
+
+            usage = container.get("usage") if isinstance(container, dict) else {}
+            usage = usage or {}
+            return {
+                "success": True,
+                "draft": draft_text,
+                "metadata": {
+                    "model": self.sensenova_model,
+                    "provider": "sensenova",
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+            }
+        except requests.RequestException as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            response_text = (getattr(getattr(e, "response", None), "text", "") or "").strip()
+            error_message = f"SenseNova API Error: {str(e)}"
+            if status_code is not None:
+                error_message = f"SenseNova HTTP {status_code}: {str(e)}"
+            if response_text:
+                error_message = f"{error_message} | response={response_text[:500]}"
+            return {
+                "success": False,
+                "error": error_message,
+                "draft": "",
+                "status_code": status_code,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"SenseNova API Error: {str(e)}",
                 "draft": ""
             }
     

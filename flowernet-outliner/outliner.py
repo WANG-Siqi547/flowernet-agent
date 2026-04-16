@@ -1,7 +1,7 @@
 """
 FlowerNet Outliner - 文档大纲生成与内容提示词管理
 根据用户需求生成文档结构，并为每个段落生成专用的 Content Prompt
-支持多种 LLM: Azure OpenAI, Ollama (本地), Google Gemini, OpenRouter
+支持多种 LLM: SenseNova, Azure OpenAI, Ollama (本地), Google Gemini, OpenRouter
 """
 
 import os
@@ -47,7 +47,7 @@ class FlowerNetOutliner:
     - 支持 Azure OpenAI、Ollama (本地)、Google Gemini、OpenRouter
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "azure"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "sensenova"):
         """
         初始化 Outliner
         
@@ -62,10 +62,10 @@ class FlowerNetOutliner:
         requested_provider = (
             os.getenv("OUTLINER_PROVIDER_CHAIN", "").strip()
             or provider
-            or os.getenv("OUTLINER_PROVIDER", "azure")
+            or os.getenv("OUTLINER_PROVIDER", "sensenova")
         )
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
-        self.provider_chain = parsed_chain or ["azure", "gemini", "dashscope", "openrouter", "ollama"]
+        self.provider_chain = parsed_chain or ["sensenova", "azure", "gemini", "dashscope", "openrouter", "ollama"]
 
         self.model = model
         self.azure_model = os.getenv("OUTLINER_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -79,6 +79,12 @@ class FlowerNetOutliner:
         self.dashscope_api_url = os.getenv(
             "OUTLINER_DASHSCOPE_API_URL",
             os.getenv("DASHSCOPE_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")
+        ).rstrip("/")
+        self.sensenova_model = os.getenv("OUTLINER_SENSENOVA_MODEL", os.getenv("SENSENOVA_MODEL", "SenseNova-V6-5-Turbo"))
+        self.sensenova_api_key = os.getenv("OUTLINER_SENSENOVA_API_KEY", os.getenv("SENSENOVA_API_KEY", "")).strip()
+        self.sensenova_api_url = os.getenv(
+            "OUTLINER_SENSENOVA_API_URL",
+            os.getenv("SENSENOVA_API_URL", "https://api.sensenova.cn/v1/llm/chat-completions")
         ).rstrip("/")
         self.openrouter_model = os.getenv("OUTLINER_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
         self.ollama_model = os.getenv("OUTLINER_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
@@ -116,6 +122,7 @@ class FlowerNetOutliner:
         print(f"  - Azure deployment: {self.azure_deployment_name}")
         print(f"  - Gemini model: {self.gemini_model}")
         print(f"  - DashScope model: {self.dashscope_model}")
+        print(f"  - SenseNova model: {self.sensenova_model}")
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
         print(f"  - Ollama URL: {self.ollama_url}")
@@ -585,6 +592,55 @@ class FlowerNetOutliner:
                 raise Exception(f"DashScope HTTP {status}: {str(exc)}{suffix}")
             except requests.RequestException as exc:
                 raise Exception(f"DashScope request error: {str(exc)}")
+
+        if provider == "sensenova":
+            if not self.sensenova_api_key:
+                raise Exception("SENSENOVA_API_KEY 未配置")
+            try:
+                payload = {
+                    "model": self.sensenova_model,
+                    "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+                    "temperature": temperature,
+                    "stream": False,
+                    "max_tokens": max_tokens,
+                }
+                headers = {
+                    "Authorization": f"Bearer {self.sensenova_api_key}",
+                    "Content-Type": "application/json",
+                }
+                response = requests.post(self.sensenova_api_url, json=payload, headers=headers, timeout=self.provider_http_timeout)
+                response.raise_for_status()
+                data = response.json()
+                container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+                choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
+                msg = choice.get("message") if isinstance(choice, dict) else None
+                content = ""
+                if isinstance(msg, str):
+                    content = msg
+                elif isinstance(msg, dict):
+                    content = msg.get("content", "")
+                if isinstance(content, list):
+                    parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
+                    content = "".join(parts)
+                text = str(content).strip()
+                if not text:
+                    raise Exception("SenseNova 返回空响应")
+                usage = container.get("usage") if isinstance(container, dict) else {}
+                usage = usage or {}
+                return text, {
+                    "provider": "sensenova",
+                    "model": self.sensenova_model,
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                }
+            except requests.HTTPError as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                response_text = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
+                if response_text:
+                    raise Exception(f"SenseNova HTTP {status}: {str(exc)} | response={response_text[:500]}")
+                raise Exception(f"SenseNova HTTP {status}: {str(exc)}")
+            except requests.RequestException as exc:
+                raise Exception(f"SenseNova request error: {str(exc)}")
 
         if provider == "openrouter":
             if not self.openrouter_api_key:

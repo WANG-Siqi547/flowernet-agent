@@ -13,9 +13,9 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: OUTLINER_PROVIDER
-        value: azure
+        value: sensenova
       - key: OUTLINER_PROVIDER_CHAIN
-        value: "azure,gemini,dashscope,openrouter"
+        value: "sensenova,azure,gemini,dashscope,openrouter"
       - key: OUTLINER_MODEL
         value: glm-5
       - key: OUTLINER_OPENROUTER_MODEL
@@ -37,6 +37,18 @@ services:
       - key: OUTLINER_DASHSCOPE_API_URL
         value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       - key: OUTLINER_DASHSCOPE_API_KEY
+        sync: false
+      - key: OUTLINER_SENSENOVA_MODEL
+        value: SenseNova-V6-5-Turbo
+      - key: OUTLINER_SENSENOVA_API_URL
+        value: https://api.sensenova.cn/v1/llm/chat-completions
+      - key: OUTLINER_SENSENOVA_API_KEY
+        sync: false
+      - key: SENSENOVA_MODEL
+        value: SenseNova-V6-5-Turbo
+      - key: SENSENOVA_API_URL
+        value: https://api.sensenova.cn/v1/llm/chat-completions
+      - key: SENSENOVA_API_KEY
         sync: false
       - key: DASHSCOPE_MODEL
         value: glm-5

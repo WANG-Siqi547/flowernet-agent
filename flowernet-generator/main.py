@@ -121,7 +121,7 @@ def ensure_generator_initialized():
         if generator is not None:
             return generator
         return init_generator(
-            provider=os.getenv("GENERATOR_PROVIDER", "azure"),
+            provider=os.getenv("GENERATOR_PROVIDER", "sensenova"),
             model=os.getenv("GENERATOR_MODEL", None),
         )
 
@@ -178,7 +178,7 @@ def get_orchestrator():
         
         # 为 orchestrator 注入本地 generator 实例，避免 HTTP 递归调用
         # 使用与主 Generator 相同的 provider chain 和模型配置
-        provider = os.getenv('GENERATOR_PROVIDER', 'azure')
+        provider = os.getenv('GENERATOR_PROVIDER', 'sensenova')
         model = os.getenv('GENERATOR_MODEL', None)
         local_gen = FlowerNetGenerator(provider=provider, model=model)
         orchestrator._local_generator = local_gen
@@ -221,7 +221,7 @@ def get_document_generation_orchestrator():
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化 Generator"""
-    provider = os.getenv('GENERATOR_PROVIDER', 'azure')
+    provider = os.getenv('GENERATOR_PROVIDER', 'sensenova')
     model = os.getenv('GENERATOR_MODEL', None)
     ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
     preload_on_startup = os.getenv('GENERATOR_PRELOAD_ON_STARTUP', 'false').lower() == 'true'
