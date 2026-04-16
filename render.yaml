@@ -282,7 +282,7 @@ services:
       - key: MAX_CONTROLLER_RETRIES
         value: "4"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
-        value: "2"
+        value: "12"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH

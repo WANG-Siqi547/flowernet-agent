@@ -79,9 +79,6 @@ class DocumentGenerationOrchestrator:
         self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)
         # 默认采用宽松模式：只要 Controller 给出有效改纲且发生变更，就允许继续下一轮。
         self.strict_controller_effective = os.getenv("STRICT_CONTROLLER_EFFECTIVE", "false").lower() == "true"
-        self.early_accept_iteration = max(2, int(os.getenv("EARLY_ACCEPT_ITERATION", "6")))
-        self.early_accept_rel_margin = max(0.0, float(os.getenv("EARLY_ACCEPT_REL_MARGIN", "0.12")))
-        self.early_accept_red_margin = max(0.0, float(os.getenv("EARLY_ACCEPT_RED_MARGIN", "0.18")))
         self.max_pass_rel_margin = max(0.0, float(os.getenv("MAX_PASS_REL_MARGIN", "0.35")))
         self.max_pass_red_margin = max(0.0, float(os.getenv("MAX_PASS_RED_MARGIN", "0.45")))
         self.session = requests.Session()
@@ -718,7 +715,6 @@ class DocumentGenerationOrchestrator:
         controller_effective = False
         best_candidate: Optional[Dict[str, Any]] = None
         generator_failure_streak = 0
-        max_generator_failures = max(1, int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "2")))
         
         # 应用历史窗口：只使用最近N个小节（避免历史过长导致冗余度计算失真）
         windowed_history = passed_history[-self.history_window_size:] if passed_history else []
@@ -938,7 +934,7 @@ class DocumentGenerationOrchestrator:
                     },
                 )
 
-                if generator_failure_streak >= max_generator_failures:
+                if generator_failure_streak >= effective_attempt_cap:
                     fail_error = str(gen_result.get("error", "generator_unavailable"))
                     fail_outline = str(current_outline).strip()
                     fallback_text = f"（系统兜底）{subsection_id}\n\n{fail_outline}"
@@ -947,10 +943,10 @@ class DocumentGenerationOrchestrator:
                         section_id=section_id,
                         subsection_id=subsection_id,
                         stage="subsection_forced_pass",
-                        message=f"Generator 连续失败 {generator_failure_streak} 次，触发快速兜底通过",
+                        message=f"Generator 在本小节内连续失败 {generator_failure_streak} 次，触发兜底通过",
                         metadata={
                             "iteration": iterations,
-                            "max_generator_failures": max_generator_failures,
+                            "max_generator_failures": effective_attempt_cap,
                             "error": fail_error,
                         },
                     )
@@ -1166,54 +1162,6 @@ class DocumentGenerationOrchestrator:
                 if current_gap < best_gap or (abs(current_gap - best_gap) < 1e-6 and rel_score > best_rel):
                     best_candidate = current_candidate
 
-            near_rel = rel_score >= max(0.0, effective_rel_threshold - self.early_accept_rel_margin)
-            near_red = red_score <= min(1.0, effective_red_threshold + self.early_accept_red_margin)
-            if iterations >= self.early_accept_iteration and controller_triggered and near_rel and near_red:
-                self._emit_progress_event(
-                    document_id=document_id,
-                    section_id=section_id,
-                    subsection_id=subsection_id,
-                    stage="verifier_best_effort_pass",
-                    message=f"第 {iterations} 轮：达到最佳努力阈值，提前通过并继续后续小节",
-                    metadata={
-                        "iteration": iterations,
-                        "relevancy_index": rel_score,
-                        "redundancy_index": red_score,
-                        "effective_rel_threshold": effective_rel_threshold,
-                        "effective_red_threshold": effective_red_threshold,
-                    },
-                )
-                return {
-                    "success": True,
-                    "draft": draft,
-                    "final_outline": current_outline,
-                    "iterations": iterations,
-                    "rag_used": rag_used,
-                    "rag_search_success": bool(rag_search_result.get("success", False)),
-                    "rag_result_count": len(rag_search_result.get("results", [])),
-                    "rag_selected_query": rag_selected_query,
-                    "controller_effective": bool(controller_last_result.get("effective", False)),
-                    "controller_source": controller_last_result.get("source", ""),
-                    "verification": {
-                        "relevancy_index": rel_score,
-                        "redundancy_index": red_score,
-                        "feedback": feedback,
-                        "source_check": source_check,
-                        "best_effort_pass": True,
-                    },
-                    "all_drafts": all_drafts,
-                    "rag_used": rag_used,
-                    "rag_search_success": bool(rag_search_result.get("success", False)),
-                    "rag_result_count": len(rag_search_result.get("results", [])),
-                    "rag_selected_query": rag_selected_query,
-                    "controller_effective": controller_effective,
-                    "controller_source": controller_last_result.get("source", ""),
-                    "forced_pass": False,
-                    "force_reason": "best_effort_pass",
-                    "controller_triggered": controller_triggered,
-                    "controller_retry_count": controller_retry_count,
-                }
-            
             print(f"         🔧 调用 Controller...")
             self._emit_progress_event(
                 document_id=document_id,

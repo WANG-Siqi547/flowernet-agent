@@ -115,7 +115,7 @@ services:
       - key: MAX_SUBSECTION_ATTEMPTS
         value: "12"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
-        value: "2"
+        value: "12"
       - key: MAX_CONTROLLER_RETRIES
         value: "4"
       - key: STRICT_CONTROLLER_EFFECTIVE
