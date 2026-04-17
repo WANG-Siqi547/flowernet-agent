@@ -1614,7 +1614,7 @@ class DocumentGenerationOrchestrator:
         subsection_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """调用 Controller API 改进大纲"""
-        timeout = max(20, int(os.getenv("CONTROLLER_HTTP_TIMEOUT", "45")))
+        timeout = max(30, int(os.getenv("CONTROLLER_HTTP_TIMEOUT", "120")))
         try:
             payload: Dict[str, Any] = {
                 "original_outline": outline,

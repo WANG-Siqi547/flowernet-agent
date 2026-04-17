@@ -96,6 +96,8 @@ services:
         value: "0.8"
       - key: ORCH_GENERATOR_RETRIES
         value: "2"
+      - key: CONTROLLER_HTTP_TIMEOUT
+        value: "120"
       - key: ORCH_GENERATOR_BACKOFF
         value: "1.5"
       - key: ORCH_GENERATOR_MAX_BACKOFF

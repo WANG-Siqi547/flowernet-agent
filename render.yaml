@@ -50,11 +50,11 @@ services:
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
       - key: CONTROLLER_USE_LLM_OUTLINE
-        value: "true"
+        value: "false"
       - key: CONTROLLER_LLM_RETRIES
-        value: "3"
+        value: "1"
       - key: CONTROLLER_LLM_TIMEOUT
-        value: "120"
+        value: "45"
       - key: CONTROLLER_MIN_SCORE_GAIN
         value: "0.0"
       - key: CONTROLLER_MIN_REL_ANCHOR_GAIN
@@ -265,6 +265,8 @@ services:
         value: "0.8"
       - key: ORCH_GENERATOR_RETRIES
         value: "2"
+      - key: CONTROLLER_HTTP_TIMEOUT
+        value: "120"
       - key: ORCH_GENERATOR_BACKOFF
         value: "1.5"
       - key: ORCH_GENERATOR_MAX_BACKOFF

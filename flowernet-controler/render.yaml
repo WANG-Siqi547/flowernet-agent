@@ -22,13 +22,13 @@ services:
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
       - key: CONTROLLER_USE_LLM_OUTLINE
-        value: "true"
+        value: "false"
       - key: CONTROLLER_REQUIRE_LLM_SOURCE
         value: "false"
       - key: CONTROLLER_LLM_TIMEOUT
-        value: "120"
+        value: "45"
       - key: CONTROLLER_LLM_RETRIES
-        value: "3"
+        value: "1"
       - key: CONTROLLER_MIN_SCORE_GAIN
         value: "0.001"
       - key: CONTROLLER_MIN_REL_ANCHOR_GAIN
