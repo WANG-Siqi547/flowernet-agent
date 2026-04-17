@@ -1,0 +1,64 @@
+{
+  "timestamp": "2026-04-18 00:25:58",
+  "overall_pass": false,
+  "all_health_ok": true,
+  "stability_ok": true,
+  "module_smoke_ok": false,
+  "e2e_complete_ok": true,
+  "health": {
+    "web_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.032,
+      "body": "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>FlowerNet 文档生成器</title>\n  <style>\n    * { marg"
+    },
+    "web_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.004,
+      "body": "{\"status\":\"ok\",\"service\":\"flowernet-web\"}"
+    },
+    "generator_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.019,
+      "body": "{\"status\":\"online\",\"message\":\"FlowerNet Generator API is ready.\",\"endpoints\":{\"/generate\":\"Simple draft generation\",\"/generate_with_context\":\"Draft generation with context\",\"/generate_section\":\"Genera"
+    },
+    "generator_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.003,
+      "body": "{\"status\":\"healthy\",\"generator_initialized\":true}"
+    },
+    "outliner_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.016,
+      "body": "{\"service\":\"FlowerNet Outliner\",\"status\":\"running\",\"version\":\"1.0.0\",\"timestamp\":\"2026-04-17T15:48:10.307093\"}"
+    }
+  },
+  "stability": {
+    "rounds": 20,
+    "failures": 0,
+    "avg_latency": 1.525,
+    "p95_latency": 4.934,
+    "samples": []
+  },
+  "module": {
+    "generator_ok": false,
+    "outliner_ok": true
+  },
+  "e2e": {
+    "http_status": 200,
+    "elapsed_seconds": 2068.06,
+    "success": true,
+    "partial": null,
+    "title": "大学新生时间管理与学习习惯指南",
+    "content_length": 4134,
+    "expected_subsections": 4,
+    "passed_subsections": 4,
+    "forced_subsections": 3,
+    "failed_subsections": 0,
+    "error": null
+  }
+}

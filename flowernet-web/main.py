@@ -33,8 +33,8 @@ API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
-WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.68"))
-WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.60"))
+WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.70"))
+WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.62"))
 
 POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
@@ -217,6 +217,33 @@ def fetch_history_items(document_id: str, timeout_seconds: int = 60) -> List[Dic
     return []
 
 
+def extract_orchestration_metrics(gen_resp: Dict[str, Any]) -> Dict[str, int]:
+    if not isinstance(gen_resp, dict):
+        return {
+            "controller_triggered_subsections": 0,
+            "controller_calls_total": 0,
+            "controller_success_total": 0,
+            "controller_error_total": 0,
+            "controller_unavailable_total": 0,
+            "controller_ineffective_total": 0,
+            "controller_fallback_outline_total": 0,
+            "controller_exhausted_total": 0,
+            "verifier_failed_total": 0,
+        }
+
+    return {
+        "controller_triggered_subsections": int(gen_resp.get("controller_triggered_subsections", 0) or 0),
+        "controller_calls_total": int(gen_resp.get("controller_calls_total", 0) or 0),
+        "controller_success_total": int(gen_resp.get("controller_success_total", 0) or 0),
+        "controller_error_total": int(gen_resp.get("controller_error_total", 0) or 0),
+        "controller_unavailable_total": int(gen_resp.get("controller_unavailable_total", 0) or 0),
+        "controller_ineffective_total": int(gen_resp.get("controller_ineffective_total", 0) or 0),
+        "controller_fallback_outline_total": int(gen_resp.get("controller_fallback_outline_total", 0) or 0),
+        "controller_exhausted_total": int(gen_resp.get("controller_exhausted_total", 0) or 0),
+        "verifier_failed_total": int(gen_resp.get("verifier_failed_total", 0) or 0),
+    }
+
+
 def generate_document_with_recovery(
     document_id: str,
     generate_payload: Dict[str, Any],
@@ -310,6 +337,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
     )
 
     history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
+    orchestration_metrics = extract_orchestration_metrics(gen_resp if isinstance(gen_resp, dict) else {})
     if not gen_resp.get("success"):
         if history_items:
             partial_content = build_markdown_document(
@@ -334,6 +362,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                     "forced_subsections": len(gen_resp.get("forced_subsections", [])) if isinstance(gen_resp, dict) else 0,
                     "total_iterations": gen_resp.get("total_iterations", 0) if isinstance(gen_resp, dict) else 0,
                     "generation_time": gen_resp.get("generation_time", "") if isinstance(gen_resp, dict) else "",
+                    **orchestration_metrics,
                 },
             }
         raise HTTPException(status_code=500, detail=f"文档生成失败: {gen_resp}")
@@ -364,6 +393,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 "forced_subsections": forced,
                 "total_iterations": gen_resp.get("total_iterations", 0),
                 "generation_time": gen_resp.get("generation_time", ""),
+                **orchestration_metrics,
             },
         }
     if passed < outlined_subsections:
@@ -394,6 +424,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             "forced_subsections": forced,
             "total_iterations": gen_resp.get("total_iterations", 0),
             "generation_time": gen_resp.get("generation_time", ""),
+            **orchestration_metrics,
         },
     }
 
@@ -486,6 +517,68 @@ def build_markdown_document(
             lines.append("")
 
     return "\n".join(lines).strip()
+
+
+def _fallback_structure_from_history(title: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    sections: Dict[str, Dict[str, Any]] = {}
+    for item in history:
+        section_id = str(item.get("section_id") or "section")
+        subsection_id = str(item.get("subsection_id") or "subsection")
+        section = sections.setdefault(
+            section_id,
+            {
+                "id": section_id,
+                "title": section_id,
+                "subsections": [],
+                "_seen": set(),
+            },
+        )
+        if subsection_id not in section["_seen"]:
+            section["subsections"].append({
+                "id": subsection_id,
+                "title": subsection_id,
+            })
+            section["_seen"].add(subsection_id)
+
+    ordered_sections: List[Dict[str, Any]] = []
+    for sec in sections.values():
+        sec.pop("_seen", None)
+        ordered_sections.append(sec)
+
+    return {
+        "title": title,
+        "sections": ordered_sections,
+    }
+
+
+def _load_document_structure(document_id: str, history: List[Dict[str, Any]]) -> tuple[str, Dict[str, Any]]:
+    title = document_id
+    structure: Dict[str, Any] = {}
+    try:
+        resp = post_json_with_retry(
+            f"{OUTLINER_URL}/outline/get",
+            {"document_id": document_id, "outline_type": "document"},
+            timeout=30,
+        )
+        raw_outline = str((resp or {}).get("outline") or "")
+        first_line = raw_outline.splitlines()[0].strip() if raw_outline else ""
+        if first_line.startswith("# "):
+            title = first_line[2:].strip() or title
+
+        json_start = raw_outline.find("{")
+        if json_start >= 0:
+            candidate = raw_outline[json_start:].strip()
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                structure = parsed
+                if parsed.get("title"):
+                    title = str(parsed.get("title"))
+    except Exception:
+        pass
+
+    if not isinstance(structure, dict) or not isinstance(structure.get("sections"), list):
+        structure = _fallback_structure_from_history(title, history)
+    return title, structure
 
 
 def ensure_exact_structure_and_prompts(
@@ -1121,8 +1214,8 @@ async def generate_stream_endpoint(
     subsection_count: int = 2,
     user_background: str = "普通读者",
     extra_requirements: str = "",
-    rel_threshold: float = 0.85,
-    red_threshold: float = 0.40,
+    rel_threshold: float = WEB_DEFAULT_REL_THRESHOLD,
+    red_threshold: float = WEB_DEFAULT_RED_THRESHOLD,
     x_api_key: str = Header(default="", alias="X-API-Key"),
     authorization: str = Header(default="", alias="Authorization"),
 ):
@@ -1146,6 +1239,50 @@ async def generate_stream_endpoint(
             "Connection": "keep-alive",
         }
     )
+
+
+@app.get("/api/recover-document")
+def recover_document(document_id: str) -> Dict[str, Any]:
+    history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
+    if not history_items:
+        return {
+            "success": False,
+            "document_id": document_id,
+            "error": "history_not_ready",
+            "message": "后台内容尚未可恢复，请稍后重试。",
+        }
+
+    title, structure = _load_document_structure(document_id=document_id, history=history_items)
+    markdown_content = build_markdown_document(
+        title=title,
+        structure=structure,
+        history=history_items,
+        generated_sections=None,
+    )
+
+    expected = 0
+    for sec in (structure.get("sections") or []):
+        subs = sec.get("subsections") if isinstance(sec, dict) else []
+        if isinstance(subs, list):
+            expected += len(subs)
+
+    passed = len(history_items)
+    partial = expected > 0 and passed < expected
+
+    return {
+        "success": True,
+        "partial": partial,
+        "document_id": document_id,
+        "title": title,
+        "content": markdown_content,
+        "stats": {
+            "expected_subsections": expected,
+            "passed_subsections": passed,
+            "failed_subsections": 0,
+            "forced_subsections": 0,
+            "total_generated": passed,
+        },
+    }
 
 
 @app.post("/api/generate")

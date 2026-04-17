@@ -419,6 +419,8 @@
     let generationStartAt = 0;
     let estimateMinSeconds = 0;
     let estimateMaxSeconds = 0;
+    let currentDocumentId = '';
+    let generationFinished = false;
 
     function formatDuration(seconds) {
       const total = Math.max(0, Math.round(seconds));
@@ -447,7 +449,28 @@
     function resetProgress() {
       completedSubsections = new Set();
       expectedSubsections = 0;
+      currentDocumentId = '';
+      generationFinished = false;
       setProgress(0, 0, '等待开始', '当前尚未开始生成。');
+    }
+
+    async function tryRecoverDocument() {
+      if (!currentDocumentId) {
+        return null;
+      }
+      try {
+        const resp = await fetch(`/api/recover-document?document_id=${encodeURIComponent(currentDocumentId)}`);
+        if (!resp.ok) {
+          return null;
+        }
+        const data = await resp.json();
+        if (!data || data.success !== true) {
+          return null;
+        }
+        return data;
+      } catch (err) {
+        return null;
+      }
     }
 
     function setEstimateText(text) {
@@ -683,6 +706,8 @@
       resultEl.textContent = '正在连接到生成服务...\n';
       metaEl.textContent = '';
       seenSubsectionEvents = new Set();
+      currentDocumentId = '';
+      generationFinished = false;
       expectedSubsections = Math.max(1, safeChapterCount * safeSubsectionCount);
       generationStartAt = Date.now();
 
@@ -723,6 +748,17 @@
               appendLog(`[大纲] ${data.message}`);
               setProgress(0, expectedSubsections, '大纲已完成', `正在进入正文生成阶段，${computeRemainingText()}。`);
             } else if (data.type === 'detail') {
+              const meta = data.metadata || {};
+              if (meta.document_id) {
+                currentDocumentId = String(meta.document_id);
+              }
+              if (!currentDocumentId && typeof data.message === 'string') {
+                const docMatch = data.message.match(/document_id=([A-Za-z0-9_\-]+)/);
+                if (docMatch && docMatch[1]) {
+                  currentDocumentId = docMatch[1];
+                }
+              }
+
               const stage = data.stage || '';
               if (stage === 'subsection_passed' || stage === 'subsection_forced_pass' || stage === 'subsection_exception' || stage === 'subsection_failed') {
                 const snapshot = handleCompletedSubsection(data, expectedSubsections);
@@ -734,6 +770,10 @@
               }
             } else if (data.type === 'complete') {
               const result = data.result;
+              generationFinished = true;
+              if (result && result.document_id) {
+                currentDocumentId = String(result.document_id);
+              }
               currentTitle = result.title;
               currentContent = result.content;
               
@@ -777,6 +817,50 @@
         });
 
         eventSource.addEventListener('error', (event) => {
+          if (generationFinished) {
+            return;
+          }
+
+          const reachedExpected = expectedSubsections > 0 && completedSubsections.size >= expectedSubsections;
+          if (reachedExpected) {
+            setStatus('连接短暂中断，尝试恢复最终文档...', '');
+            appendLog('\n[提示] 连接中断，正在尝试恢复最终文档\n');
+            if (eventSource) {
+              eventSource.close();
+            }
+            tryRecoverDocument().then((recovered) => {
+              if (recovered) {
+                generationFinished = true;
+                currentDocumentId = recovered.document_id || currentDocumentId;
+                currentTitle = recovered.title || currentTitle;
+                currentContent = recovered.content || currentContent;
+                appendLog('\n[恢复] 已从后台恢复最终文档\n');
+                appendLog(`\n=== 最终文档 ===\n`);
+                appendLog(currentContent || '（无内容）');
+                const stats = recovered.stats || {};
+                const expected = stats.expected_subsections || expectedSubsections;
+                const passed = stats.passed_subsections || completedSubsections.size;
+                const failed = stats.failed_subsections || 0;
+                const forced = stats.forced_subsections || 0;
+                const generated = stats.total_generated || (passed + failed);
+                const statusStr = expected > 0 ? `${generated}/${expected}` : `${passed}`;
+                metaEl.textContent = `文档ID: ${currentDocumentId} | 标题: ${currentTitle} | 小节: ${statusStr} (通过: ${passed}, 失败: ${failed}, 兜底: ${forced})`;
+                setProgress(expected, expected, '完成', `已完成 ${expected}/${expected} 个小节。`);
+                estimateMinSeconds = 0;
+                estimateMaxSeconds = 0;
+                generationStartAt = 0;
+                setStatus('生成成功（断线后已恢复）。', 'ok');
+                downloadBtn.disabled = false;
+                startBtn.disabled = false;
+              } else {
+                setStatus('连接中断，后台可能仍在整合文档，请稍后重试。', '');
+                setProgress(completedSubsections.size, expectedSubsections, '后台整合中', 'SSE 连接中断，后台可能仍在整合最终文档。');
+                startBtn.disabled = false;
+              }
+            });
+            return;
+          }
+
           setStatus('连接错误，生成可能失败。', 'err');
           appendLog('\n[错误] 连接中断\n');
           setProgress(completedSubsections.size, expectedSubsections, '连接中断', 'SSE 连接中断，可能仍在后台生成。');

@@ -14,6 +14,8 @@ BASE_CTRL = os.getenv("CTRL_URL", "http://localhost:8001")
 
 SESSION = requests.Session()
 SESSION.trust_env = False
+REL_THRESHOLD = float(os.getenv("FLOWERNET_REL_THRESHOLD", "0.70"))
+RED_THRESHOLD = float(os.getenv("FLOWERNET_RED_THRESHOLD", "0.62"))
 
 
 def now():
@@ -174,8 +176,8 @@ def e2e_document_test():
         "subsection_count": 2,
         "user_background": "大一新生，想建立学习和作息体系",
         "extra_requirements": "内容要可执行，包含具体方法与示例",
-        "rel_threshold": 0.75,
-        "red_threshold": 0.50,
+        "rel_threshold": REL_THRESHOLD,
+        "red_threshold": RED_THRESHOLD,
         "timeout_seconds": 4800,
     }
 

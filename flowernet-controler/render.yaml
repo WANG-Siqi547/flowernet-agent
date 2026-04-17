@@ -22,13 +22,25 @@ services:
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
       - key: CONTROLLER_USE_LLM_OUTLINE
-        value: "false"
+        value: "true"
+      - key: CONTROLLER_LLM_CALL_MODE
+        value: "direct"
+      - key: CONTROLLER_LLM_FALLBACK_TO_GENERATOR
+        value: "true"
       - key: CONTROLLER_REQUIRE_LLM_SOURCE
         value: "false"
+      - key: CONTROLLER_SENSENOVA_MODEL
+        value: SenseNova-V6-5-Turbo
+      - key: CONTROLLER_SENSENOVA_API_URL
+        value: https://api.sensenova.cn/v1/llm/chat-completions
+      - key: CONTROLLER_SENSENOVA_API_KEY
+        sync: false
+      - key: SENSENOVA_API_KEY
+        sync: false
       - key: CONTROLLER_LLM_TIMEOUT
         value: "45"
       - key: CONTROLLER_LLM_RETRIES
-        value: "1"
+        value: "2"
       - key: CONTROLLER_MIN_SCORE_GAIN
         value: "0.001"
       - key: CONTROLLER_MIN_REL_ANCHOR_GAIN

@@ -1,0 +1,68 @@
+{
+  "timestamp": "2026-04-17 22:55:24",
+  "overall_ok": false,
+  "results": [
+    {
+      "case": "2x2",
+      "request_ok": true,
+      "http_status": 200,
+      "elapsed": 328.95,
+      "success": true,
+      "document_id": "web_20260417_144134_f3e68117",
+      "title": "机器人：从概念到应用的全面探索",
+      "content_length": 5602,
+      "expected_subsections": 4,
+      "passed_subsections": 4,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "events": {
+        "stage_counters": {},
+        "max_iteration": 0,
+        "controller_triggered": false,
+        "controller_unavailable": 0,
+        "controller_error": 0,
+        "controller_success": 0,
+        "verifier_failed": 0
+      },
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": true,
+        "no_dead_loop": true,
+        "complete_doc": true,
+        "all_passed": true
+      },
+      "error": null
+    },
+    {
+      "case": "3x2",
+      "request_ok": true,
+      "http_status": 200,
+      "elapsed": 501.16,
+      "success": true,
+      "document_id": "web_20260417_144705_f918be4d",
+      "title": "机器人：从概念到应用的全面探索",
+      "content_length": 9637,
+      "expected_subsections": 6,
+      "passed_subsections": 6,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "events": {
+        "stage_counters": {},
+        "max_iteration": 0,
+        "controller_triggered": false,
+        "controller_unavailable": 0,
+        "controller_error": 0,
+        "controller_success": 0,
+        "verifier_failed": 0
+      },
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": true,
+        "no_dead_loop": true,
+        "complete_doc": true,
+        "all_passed": true
+      },
+      "error": null
+    }
+  ]
+}

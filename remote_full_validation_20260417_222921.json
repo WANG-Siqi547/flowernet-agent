@@ -1,0 +1,217 @@
+{
+  "timestamp": "2026-04-17 22:26:53",
+  "health": {
+    "web_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.2,
+      "body": "{\"status\":\"ok\",\"service\":\"flowernet-web\"}"
+    },
+    "generator_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.15,
+      "body": "{\"status\":\"healthy\",\"generator_initialized\":true}"
+    },
+    "generator_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.05,
+      "body": "{\"status\":\"online\",\"message\":\"FlowerNet Generator API is ready.\",\"endpoints\":{\"/generate\":\"Simple draft generation\",\"/generate_with_context\":\"Draft generation with context\",\"/generate_section\":\"Generate section with verification loop\",\"/generate_document\":\"Generate complete document\"}}"
+    },
+    "outliner_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.19,
+      "body": "{\"service\":\"FlowerNet Outliner\",\"status\":\"running\",\"version\":\"1.0.0\",\"timestamp\":\"2026-04-17T14:26:54.264215\"}"
+    },
+    "verifier_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.17,
+      "body": "{\"status\":\"online\",\"message\":\"FlowerNet Verifying Layer is ready.\"}"
+    },
+    "controller_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.19,
+      "body": "{\"status\":\"online\",\"message\":\"FlowerNet Controller is ready.\",\"public_url\":\"https://flowernet-controller.onrender.com\",\"endpoints\":{\"/refine_prompt\":\"根据 Verifier 反馈修改 prompt\",\"/analyze_failures\":\"分析失败模式并给出建议\"}}"
+    }
+  },
+  "modules": {
+    "generator_generate": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 18.29,
+      "json": {
+        "success": true,
+        "draft": "好的，这里有一句关于时间管理的完整建议，简洁实用：\n\n**“建议每天早晨或前一晚花10-15分钟，用待办清单或时间块规划法明确当日优先级任务，并为每项任务设定具体时间段，避免多任务处理以提升专注力。”**\n\n**说明：**\n1. **规划时间**：强调了规划的重要性（早晨/前晚）。\n2. **工具方法**：提供了两种常用工具（待办清单/时间块）。\n3. **核心原则**：点明了关键（明确优先级、设定具体时间段）。\n4. **高效技巧**：提醒避免多任务处理，提升专注力。",
+        "metadata": {
+          "model": "SenseNova-V6-5-Turbo",
+          "provider": "sensenova",
+          "prompt_tokens": 13,
+          "output_tokens": 445,
+          "total_tokens": 458,
+          "fallback_chain": [
+            "sensenova"
+          ]
+        }
+      }
+    },
+    "outliner_generate_structure": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 11.84,
+      "json": {
+        "success": true,
+        "structure": {
+          "title": "大学新生时间管理指南",
+          "sections": [
+            {
+              "id": "section_1",
+              "title": "第一章：时间管理基础与策略",
+              "subsections": [
+                {
+                  "id": "subsection_1_1",
+                  "title": "实用时间管理技巧与工具",
+                  "description": "介绍四象限法、番茄工作法等核心技巧，结合课程表与日程表工具推荐，帮助新生建立可执行的时间规划框架。提供具体步骤说明如何平衡学习、社交与休息时间，避免拖延症。"
+                }
+              ]
+            }
+          ]
+        },
+        "metadata": {
+          "provider_chain": [
+            "sensenova"
+          ],
+          "active_provider": "sensenova",
+          "model": "SenseNova-V6-5-Turbo",
+          "prompt_tokens": 392,
+          "output_tokens": 417
+        }
+      }
+    },
+    "verifier_verify": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.07,
+      "json": {
+        "is_passed": true,
+        "relevancy_index": 0.45,
+        "redundancy_index": 0.0,
+        "feedback": "Content looks good.",
+        "source_check": {
+          "passed": true,
+          "reason": "ok",
+          "reference_count": 0,
+          "references": [],
+          "invalid_references": [],
+          "total_available_sources": 0,
+          "require_source_citations": false,
+          "min_source_citations": 1
+        },
+        "raw_data": {
+          "relevancy": {
+            "keyword_coverage": 0.75,
+            "rouge_l": 0.0,
+            "bm25_score": 0.75
+          },
+          "redundancy": "No history yet",
+          "source_check": {
+            "passed": true,
+            "reason": "ok",
+            "reference_count": 0,
+            "references": [],
+            "invalid_references": [],
+            "total_available_sources": 0,
+            "require_source_citations": false,
+            "min_source_citations": 1
+          }
+        }
+      }
+    },
+    "controller_improve_outline": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.08,
+      "json": {
+        "success": true,
+        "improved_outline": "【改纲版本】第1轮结构化修订\n【核心主题】时间管理方法与执行\n【写作结构】\n1) 先给出本小节的核心定义/结论（1-2句）\n2) 再按 3-5 个要点展开，每个要点必须直接支撑主题\n3) 结尾用 1 段总结该小节新增信息，不复述前文\n【必写关键词】时间管理方法与执行\n【Verifier反馈约束】相关性不足，请聚焦可执行步骤\n【质量阈值】relevancy >= 0.75, redundancy <= 0.50",
+        "source": "rule_structured",
+        "changed": true,
+        "effective": true,
+        "baseline_score": {
+          "total": 0.218,
+          "relevance_anchor": 0.0,
+          "novelty": 1.0,
+          "structure": 0.15,
+          "delta_from_working": 0.0
+        },
+        "selected_score": {
+          "total": 1.002,
+          "relevance_anchor": 1.0,
+          "novelty": 1.0,
+          "structure": 0.6,
+          "delta_from_working": 1.0
+        },
+        "selection_min_gain": 0.0,
+        "selection_rel_anchor_gain": 1.0,
+        "selection_novelty_gain": 0.0,
+        "selection_structure_gain": 0.45,
+        "selection_rel_gain_ok": true,
+        "selection_novelty_gain_ok": true,
+        "llm_error": "llm_outline_disabled",
+        "candidate_scores": [
+          {
+            "source": "rule",
+            "total": 0.9769,
+            "relevance_anchor": 1.0,
+            "novelty": 1.0,
+            "structure": 0.45
+          },
+          {
+            "source": "rule_structured",
+            "total": 1.002,
+            "relevance_anchor": 1.0,
+            "novelty": 1.0,
+            "structure": 0.6
+          }
+        ],
+        "recommendations": [
+          "相关性分数: 0.6200",
+          "冗余度分数: 0.1500",
+          "反馈: 相关性不足，请聚焦可执行步骤"
+        ]
+      }
+    }
+  },
+  "e2e": {
+    "ok": true,
+    "status": 200,
+    "elapsed": 116.79,
+    "json": {
+      "success": true,
+      "document_id": "web_20260417_142724_7831724e",
+      "title": "大学新生时间管理实战指南",
+      "content": "# 大学新生时间管理实战指南\n\n## 高效时间管理的核心策略与实践方法\n\n### 制定个性化时间管理计划\n\n### 制定个性化时间管理计划  \n\n#### 1. 自我评估阶段：记录一周真实时间分配数据，识别时间黑洞  \n在制定计划前，需先通过数据了解自身时间使用习惯。建议连续记录一周内所有活动的时间分配，可使用Excel表格或时间管理APP（如Forest、Timing）进行追踪。记录内容需细化到每30分钟的活动类型，例如上课、自习、社交、娱乐等。完成后统计各活动占比，识别高频低效的“时间黑洞”（如无目的刷短视频、过度游戏）。例如，若发现每天有2小时被短视频占用，可针对性制定限制策略。此阶段需客观分析，避免主观臆断[来源2]。  \n\n#### 2. 目标设定原则：SMART原则应用  \n目标需符合SMART原则以确保可执行性：  \n- **Specific（具体）**：明确目标内容，如“每周完成3次图书馆自习”而非“多学习”。  \n- **Measurable（可衡量）**：设定量化指标，如“每日背诵20个英语单词”[来源3]。  \n- **Attainable（可实现）**：结合当前能力，如“月考成绩提升10分”而非“考满分”。  \n- **Relevant（相关性）**：目标需与学业或个人发展直接关联，如“提升编程能力以备战竞赛”。  \n- **Time-based（时限性）**：设定截止日期，如“期末前完成课程论文初稿”。  \n通过SMART原则，可将模糊愿望转化为可操作步骤，避免目标空泛。  \n\n#### 3. 四象限法实操：紧急重要矩阵的四类任务分类标准与应对策略  \n将任务按“紧急性”和“重要性”分为四类：  \n- **第一象限（紧急且重要）**：如考试复习、作业截止，需立即处理。  \n- **第二象限（重要不紧急）**：如长期项目准备、技能学习，应优先规划时间。  \n- **第三象限（紧急不重要）**：如临时会议通知，可委托他人或简化流程。  \n- **第四象限（不紧急不重要）**：如无意义社交，建议直接舍弃[来源1]。  \n应对策略：每日先处理第一、二象限任务，第三象限任务压缩时间，第四象限任务减少投入。  \n\n#### 4. 周计划表模板设计  \n周计划需包含四大模块，层级分明：  \n- **课程表**：标注固定课时与地点，预留机动时间应对突发调整。  \n- **自习时段**：按学科分配固定学习块（如周一、三晚复习数学，周二、四晚英语）。  \n- **社交活动**：每周安排1-2次社团或朋友聚会，避免过度压缩社交时间。  \n- **弹性缓冲时间**：每日预留1-2小时灵活时段，应对意外任务或疲劳恢复。  \n示例模板：  \n| 时间段       | 任务类型   | 具体内容                |  \n|--------------|------------|-------------------------|  \n| 周一 19:00-21:00 | 自习       | 高数习题集完成          |  \n| 周三 18:30-20:00 | 社交       | 参加辩论社例会          |  \n| 周日 14:00-16:00 | 弹性时间   | 自由安排或补漏          |  \n需注意：周计划为框架，日计划需根据当日任务动态调整，避免僵化执行。  \n\n#### 5. 动态调整机制  \n每周日进行复盘，检查计划完成率与偏差原因。修正规则包括：  \n- 若某任务连续三天未完成，需重新评估目标合理性（如降低强度或拆分任务）。  \n- 弹性时间不足时，可将第四象限任务移至缓冲时段。  \n- 每月末进行目标进度评估，调整下月计划优先级。  \n\n#### 6. 工具推荐清单  \n- **数字工具**：  \n  - **Notion**：创建多维表格管理任务，支持自定义周计划模板与进度追踪。  \n  - **Todoist**：设置任务优先级与截止日期，同步手机提醒。  \n- **纸质工具**：  \n  - **活页笔记本**：手写计划便于快速修改，搭配彩色标签区分任务类型。  \n  - **时间饼图本**：直观记录每日时间分配，辅助分析效率漏洞。  \n建议组合使用：数字工具用于长期规划与提醒，纸质本用于即时记录与灵感捕捉。  \n\n通过以上步骤，可构建兼具灵活性与结构化的个性化时间管理体系，逐步提升时间利用率与目标达成率。",
+      "stats": {
+        "expected_subsections": 1,
+        "outlined_subsections": 1,
+        "passed_subsections": 1,
+        "failed_subsections": 0,
+        "forced_subsections": 0,
+        "total_iterations": 1,
+        "generation_time": "72.39s"
+      }
+    }
+  },
+  "summary": {
+    "health_ok": true,
+    "generator_ok": true,
+    "outliner_ok": true,
+    "verifier_ok": true,
+    "controller_ok": true,
+    "e2e_complete_ok": true,
+    "overall_ok": true
+  }
+}

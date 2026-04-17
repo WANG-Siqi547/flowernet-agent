@@ -72,8 +72,8 @@ class DocumentGenerationOrchestrator:
         self.retry_max_delay = float(os.getenv("DOC_RETRY_MAX_DELAY", "90.0"))
         self.retry_jitter = float(os.getenv("DOC_RETRY_JITTER", "0.5"))
         self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
-        # 不再硬编码封顶 8 轮，由环境变量决定上限（默认提升到 12）。
-        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "12")))
+        # 默认轮次收敛到 8，避免长时间卡在单小节。
+        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "8")))
         self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "3")))
         configured_min_retries = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "8")))
         self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)
@@ -114,15 +114,15 @@ class DocumentGenerationOrchestrator:
 
     def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
         """
-        阈值策略（按业务要求）：
-        - 第1~5轮：严格使用原始阈值
-        - 第6~8轮：每轮仅小幅放宽 0.01（总放宽不超过 0.03）
+        阈值策略（平衡质量与收敛）：
+        - 第1~2轮：严格使用原始阈值，确保有机会触发 Controller 改纲
+        - 第3轮起：每轮放宽 0.015，最多放宽 0.075，降低长循环概率
         """
-        if iteration <= 5:
+        if iteration <= 2:
             return round(rel_threshold, 4), round(red_threshold, 4)
 
-        relax_steps = min(3, max(0, iteration - 5))
-        relax_amount = 0.01 * relax_steps
+        relax_steps = min(5, max(0, iteration - 2))
+        relax_amount = 0.015 * relax_steps
         effective_rel = max(0.0, rel_threshold - relax_amount)
         effective_red = min(1.0, red_threshold + relax_amount)
         return round(effective_rel, 4), round(effective_red, 4)
@@ -351,6 +351,15 @@ class DocumentGenerationOrchestrator:
             "rag_used_subsections": 0,
             "rag_search_success_subsections": 0,
             "controller_effective_subsections": 0,
+            "controller_triggered_subsections": 0,
+            "verifier_failed_total": 0,
+            "controller_calls_total": 0,
+            "controller_success_total": 0,
+            "controller_error_total": 0,
+            "controller_unavailable_total": 0,
+            "controller_ineffective_total": 0,
+            "controller_fallback_outline_total": 0,
+            "controller_exhausted_total": 0,
         }
         
         start_time = datetime.now()
@@ -471,6 +480,7 @@ class DocumentGenerationOrchestrator:
                             rag_used = bool(subsection_gen_result.get("rag_used", False))
                             rag_search_success = bool(subsection_gen_result.get("rag_search_success", False))
                             controller_effective = bool(subsection_gen_result.get("controller_effective", False))
+                            metrics = subsection_gen_result.get("metrics", {}) if isinstance(subsection_gen_result, dict) else {}
 
                             if rag_used:
                                 document_result["rag_used_subsections"] += 1
@@ -478,6 +488,17 @@ class DocumentGenerationOrchestrator:
                                 document_result["rag_search_success_subsections"] += 1
                             if controller_effective:
                                 document_result["controller_effective_subsections"] += 1
+                            if controller_triggered:
+                                document_result["controller_triggered_subsections"] += 1
+
+                            document_result["verifier_failed_total"] += int(metrics.get("verifier_failed", 0) or 0)
+                            document_result["controller_calls_total"] += int(metrics.get("controller_calls", 0) or 0)
+                            document_result["controller_success_total"] += int(metrics.get("controller_success", 0) or 0)
+                            document_result["controller_error_total"] += int(metrics.get("controller_error", 0) or 0)
+                            document_result["controller_unavailable_total"] += int(metrics.get("controller_unavailable", 0) or 0)
+                            document_result["controller_ineffective_total"] += int(metrics.get("controller_ineffective", 0) or 0)
+                            document_result["controller_fallback_outline_total"] += int(metrics.get("controller_fallback_outline", 0) or 0)
+                            document_result["controller_exhausted_total"] += int(metrics.get("controller_exhausted", 0) or 0)
                             
                             if self.history_manager:
                                 self.history_manager.add_entry(
@@ -641,6 +662,8 @@ class DocumentGenerationOrchestrator:
             print(f"   - RAG 命中: {document_result['rag_search_success_subsections']}/{len(content_prompts)}")
             print(f"   - RAG 使用: {document_result['rag_used_subsections']}/{len(content_prompts)}")
             print(f"   - Controller 有效: {document_result['controller_effective_subsections']}/{len(content_prompts)}")
+            print(f"   - Controller 触发小节: {document_result['controller_triggered_subsections']}/{len(content_prompts)}")
+            print(f"   - Controller 调用总数: {document_result['controller_calls_total']}")
             print(f"   - 总迭代: {document_result['total_iterations']} 次")
             print(f"   - 耗时: {document_result['generation_time']}")
             print(f"{'='*70}")
@@ -657,6 +680,9 @@ class DocumentGenerationOrchestrator:
                     "failed_subsections": len(document_result["failed_subsections"]),
                     "forced_subsections": len(document_result["forced_subsections"]),
                     "total_iterations": document_result["total_iterations"],
+                    "controller_calls_total": document_result["controller_calls_total"],
+                    "controller_triggered_subsections": document_result["controller_triggered_subsections"],
+                    "verifier_failed_total": document_result["verifier_failed_total"],
                 },
             )
             
@@ -680,6 +706,15 @@ class DocumentGenerationOrchestrator:
                 "rag_used_subsections": document_result.get("rag_used_subsections", 0),
                 "rag_search_success_subsections": document_result.get("rag_search_success_subsections", 0),
                 "controller_effective_subsections": document_result.get("controller_effective_subsections", 0),
+                "controller_triggered_subsections": document_result.get("controller_triggered_subsections", 0),
+                "verifier_failed_total": document_result.get("verifier_failed_total", 0),
+                "controller_calls_total": document_result.get("controller_calls_total", 0),
+                "controller_success_total": document_result.get("controller_success_total", 0),
+                "controller_error_total": document_result.get("controller_error_total", 0),
+                "controller_unavailable_total": document_result.get("controller_unavailable_total", 0),
+                "controller_ineffective_total": document_result.get("controller_ineffective_total", 0),
+                "controller_fallback_outline_total": document_result.get("controller_fallback_outline_total", 0),
+                "controller_exhausted_total": document_result.get("controller_exhausted_total", 0),
                 "error": str(e),
                 "warning": f"document_exception_fallback: {str(e)[:180]}",
             }
@@ -715,6 +750,16 @@ class DocumentGenerationOrchestrator:
         controller_effective = False
         best_candidate: Optional[Dict[str, Any]] = None
         generator_failure_streak = 0
+        metrics: Dict[str, int] = {
+            "verifier_failed": 0,
+            "controller_calls": 0,
+            "controller_success": 0,
+            "controller_error": 0,
+            "controller_unavailable": 0,
+            "controller_ineffective": 0,
+            "controller_fallback_outline": 0,
+            "controller_exhausted": 0,
+        }
         
         # 应用历史窗口：只使用最近N个小节（避免历史过长导致冗余度计算失真）
         windowed_history = passed_history[-self.history_window_size:] if passed_history else []
@@ -847,8 +892,9 @@ class DocumentGenerationOrchestrator:
                         "all_drafts": all_drafts,
                         "forced_pass": (not max_pass_ok),
                         "force_reason": "max_attempts_reached" if not max_pass_ok else "best_effort_after_max_attempts",
-                        "controller_triggered": controller_triggered,
+                        "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
                         "controller_retry_count": controller_retry_count,
+                        "metrics": metrics,
                     }
 
                 placeholder = f"（兜底内容）{subsection_id}\n\n{str(current_outline).strip()}"
@@ -881,8 +927,9 @@ class DocumentGenerationOrchestrator:
                     },
                     "forced_pass": True,
                     "force_reason": "max_attempts_no_draft",
-                    "controller_triggered": controller_triggered,
+                    "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
                     "controller_retry_count": controller_retry_count,
+                    "metrics": metrics,
                 }
 
             if iterations <= self.max_iterations:
@@ -986,8 +1033,9 @@ class DocumentGenerationOrchestrator:
                         "all_drafts": all_drafts,
                         "forced_pass": True,
                         "force_reason": "generator_repeated_failure",
-                        "controller_triggered": controller_triggered,
+                        "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
                         "controller_retry_count": controller_retry_count,
+                        "metrics": metrics,
                     }
 
                 time.sleep(self._compute_retry_delay(iterations))
@@ -1131,8 +1179,9 @@ class DocumentGenerationOrchestrator:
                     "all_drafts": all_drafts,
                     "forced_pass": False,
                     "force_reason": "",
-                    "controller_triggered": controller_triggered,
+                    "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
                     "controller_retry_count": controller_retry_count,
+                    "metrics": metrics,
                 }
 
             current_candidate = {
@@ -1175,6 +1224,7 @@ class DocumentGenerationOrchestrator:
                     "redundancy_index": red_score,
                 },
             )
+            metrics["verifier_failed"] += 1
 
             controller_retry = 0
             controller_updated = False
@@ -1210,6 +1260,7 @@ class DocumentGenerationOrchestrator:
                             "strict_controller_effective": self.strict_controller_effective,
                         },
                     )
+                    metrics["controller_exhausted"] += 1
                     break
 
                 self._emit_progress_event(
@@ -1221,6 +1272,7 @@ class DocumentGenerationOrchestrator:
                     metadata={"iteration": iterations, "controller_retry": controller_retry},
                 )
                 controller_triggered = True
+                metrics["controller_calls"] += 1
                 controller_result = self._call_controller(
                     old_outline=self._resolve_subsection_outline(
                         document_id=document_id,
@@ -1283,6 +1335,7 @@ class DocumentGenerationOrchestrator:
                             "strict_controller_effective": self.strict_controller_effective,
                         },
                     )
+                    metrics["controller_success"] += 1
                     break
 
                 if controller_result.get("success") and not improved_outline:
@@ -1297,6 +1350,7 @@ class DocumentGenerationOrchestrator:
                     if fallback_outline and fallback_outline.strip() != str(current_outline).strip():
                         current_outline = fallback_outline
                         controller_updated = True
+                        metrics["controller_fallback_outline"] += 1
                         self._emit_progress_event(
                             document_id=document_id,
                             section_id=section_id,
@@ -1308,6 +1362,7 @@ class DocumentGenerationOrchestrator:
                         break
 
                 if controller_result.get("success") and (not controller_changed or (self.strict_controller_effective and not controller_effective)):
+                    metrics["controller_ineffective"] += 1
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
@@ -1334,6 +1389,7 @@ class DocumentGenerationOrchestrator:
                     "name or service not known",
                 ])
                 if transient_unavailable:
+                    metrics["controller_unavailable"] += 1
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
@@ -1357,9 +1413,11 @@ class DocumentGenerationOrchestrator:
                     if fallback_outline and fallback_outline.strip() != str(current_outline).strip():
                         current_outline = fallback_outline
                         controller_updated = True
+                        metrics["controller_fallback_outline"] += 1
                     break
 
                 print(f"         ⚠️  Controller 失败，继续重试（第 {controller_retry} 次）")
+                metrics["controller_error"] += 1
                 self._emit_progress_event(
                     document_id=document_id,
                     section_id=section_id,

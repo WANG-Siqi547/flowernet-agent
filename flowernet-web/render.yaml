@@ -27,9 +27,9 @@ services:
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
       - key: WEB_DEFAULT_REL_THRESHOLD
-        value: "0.68"
+        value: "0.70"
       - key: WEB_DEFAULT_RED_THRESHOLD
-        value: "0.60"
+        value: "0.62"
       - key: NO_PROXY
         value: "localhost,127.0.0.1"
     healthCheckPath: /health

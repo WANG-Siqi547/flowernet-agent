@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from controler import FlowerNetController
 import os
 import requests
 import re
+import time
 from collections import Counter
 
 app = FastAPI(title="FlowerNet Controller API")
@@ -27,6 +28,113 @@ def _outliner_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     resp = _get_outliner_session().post(f"{base}{path}", json=payload, timeout=timeout)
     resp.raise_for_status()
     return resp.json()
+
+
+def _get_controller_llm_session() -> requests.Session:
+    s = requests.Session()
+    s.trust_env = False
+    return s
+
+
+def _parse_llm_content_from_response(data: Any) -> str:
+    container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+    choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
+    msg = choice.get("message") if isinstance(choice, dict) else None
+    content = ""
+    if isinstance(msg, str):
+        content = msg
+    elif isinstance(msg, dict):
+        content = msg.get("content", "")
+    if isinstance(content, list):
+        parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
+        content = "".join(parts)
+    return str(content or "").strip()
+
+
+def _generate_outline_with_sensenova(prompt: str, max_tokens: int, timeout: int, retries: int) -> Tuple[Optional[str], str]:
+    api_key = os.getenv("CONTROLLER_SENSENOVA_API_KEY", os.getenv("SENSENOVA_API_KEY", "")).strip()
+    if not api_key:
+        return None, "CONTROLLER_SENSENOVA_API_KEY not set"
+
+    api_url = os.getenv(
+        "CONTROLLER_SENSENOVA_API_URL",
+        os.getenv("SENSENOVA_API_URL", "https://api.sensenova.cn/v1/llm/chat-completions")
+    ).rstrip("/")
+    model = os.getenv(
+        "CONTROLLER_SENSENOVA_MODEL",
+        os.getenv("SENSENOVA_MODEL", "SenseNova-V6-5-Turbo")
+    )
+
+    payload_variants = [
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "stream": False,
+            "max_tokens": max_tokens,
+        },
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+            "temperature": 0.3,
+            "stream": False,
+            "max_tokens": max_tokens,
+        },
+    ]
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    last_error = "unknown"
+    session = _get_controller_llm_session()
+    for attempt in range(1, retries + 1):
+        for payload in payload_variants:
+            try:
+                resp = session.post(api_url, json=payload, headers=headers, timeout=timeout)
+                if resp.status_code >= 400:
+                    text = (resp.text or "").strip()
+                    last_error = f"SenseNova HTTP {resp.status_code}: {text[:300]}"
+                    # 4xx 可能是 content 格式差异，允许切换 payload 继续尝试
+                    continue
+                content = _parse_llm_content_from_response(resp.json())
+                if content:
+                    return content, ""
+                last_error = "SenseNova empty response"
+            except Exception as e:
+                last_error = f"SenseNova request failed: {str(e)}"
+
+        if attempt < retries:
+            time.sleep(min(6, 1.5 * attempt))
+
+    return None, last_error
+
+
+def _generate_outline_via_generator(prompt: str, max_tokens: int, timeout: int, retries: int) -> Tuple[Optional[str], str]:
+    generator_base = (os.getenv("GENERATOR_URL", "http://localhost:8002")).rstrip("/")
+    last_error = "generator_unavailable"
+    for attempt in range(1, retries + 1):
+        try:
+            sess = _get_controller_llm_session()
+            resp = sess.post(
+                f"{generator_base}/generate",
+                json={"prompt": prompt, "max_tokens": max_tokens},
+                timeout=timeout,
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                if body.get("success") and body.get("draft"):
+                    return _sanitize_outline_text(str(body["draft"]).strip()), ""
+                last_error = str(body.get("error") or "llm_generate_unsuccessful")
+            else:
+                last_error = f"HTTP {resp.status_code}: {(resp.text or '')[:200]}"
+        except Exception as e:
+            last_error = str(e)
+
+        if attempt < retries:
+            time.sleep(min(4, 1.2 * attempt))
+
+    return None, last_error
 
 
 def _fetch_subsection_outline_from_db(
@@ -364,9 +472,6 @@ async def improve_outline(req: ImproveOutlineRequest):
 请直接输出改进后的详细大纲文本（仍然是大纲，不是正文），不要添加任何前言或解释标签。
 """
 
-        import requests as _req
-        generator_base = (os.getenv("GENERATOR_URL", "http://localhost:8002")).rstrip("/")
-
         improved_outline = None
         llm_outline = None
 
@@ -375,31 +480,36 @@ async def improve_outline(req: ImproveOutlineRequest):
         require_llm_source = os.getenv("CONTROLLER_REQUIRE_LLM_SOURCE", "false").lower() == "true"
         llm_timeout = max(20, int(os.getenv("CONTROLLER_LLM_TIMEOUT", "90")))
         llm_retries = max(1, int(os.getenv("CONTROLLER_LLM_RETRIES", "3")))
+        llm_call_mode = os.getenv("CONTROLLER_LLM_CALL_MODE", "direct").strip().lower()
+        llm_fallback_to_generator = os.getenv("CONTROLLER_LLM_FALLBACK_TO_GENERATOR", "true").lower() == "true"
 
-        # 尝试通过 generator /generate 接口让 LLM 改进大纲
         if use_llm_outline:
-            for attempt in range(1, llm_retries + 1):
-                try:
-                    sess = _req.Session()
-                    sess.trust_env = False
-                    resp = sess.post(
-                        f"{generator_base}/generate",
-                        json={"prompt": improvement_prompt, "max_tokens": 700},
+            if llm_call_mode == "generator":
+                llm_outline, llm_error = _generate_outline_via_generator(
+                    prompt=improvement_prompt,
+                    max_tokens=700,
+                    timeout=llm_timeout,
+                    retries=llm_retries,
+                )
+            else:
+                llm_outline, llm_error = _generate_outline_with_sensenova(
+                    prompt=improvement_prompt,
+                    max_tokens=700,
+                    timeout=llm_timeout,
+                    retries=llm_retries,
+                )
+                if not llm_outline and llm_fallback_to_generator:
+                    fallback_outline, fallback_error = _generate_outline_via_generator(
+                        prompt=improvement_prompt,
+                        max_tokens=700,
                         timeout=llm_timeout,
+                        retries=max(1, min(2, llm_retries)),
                     )
-                    if resp.status_code == 200:
-                        body = resp.json()
-                        if body.get("success") and body.get("draft"):
-                            llm_outline = _sanitize_outline_text(str(body["draft"]).strip())
-                            break
-                        llm_error = str(body.get("error") or "llm_generate_unsuccessful")
+                    if fallback_outline:
+                        llm_outline = fallback_outline
+                        llm_error = ""
                     else:
-                        llm_error = f"HTTP {resp.status_code}"
-                except Exception as e:
-                    llm_error = str(e)
-
-                if attempt < llm_retries:
-                    print(f"⚠️  LLM 改进大纲第{attempt}次失败，准备重试: {llm_error}")
+                        llm_error = f"direct={llm_error} | fallback_generator={fallback_error}"
         else:
             llm_error = "llm_outline_disabled"
 
