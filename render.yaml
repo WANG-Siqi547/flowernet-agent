@@ -244,11 +244,11 @@ services:
       - key: PROVIDER_MAX_BACKOFF
         value: "20.0"
       - key: PROVIDER_FAILURE_THRESHOLD
-        value: "2"
+        value: "3"
       - key: PROVIDER_COOLDOWN_SECONDS
-        value: "180"
+        value: "20"
       - key: PROVIDER_HTTP_TIMEOUT
-        value: "45"
+        value: "90"
       - key: DASHSCOPE_HTTP_TIMEOUT
         value: "45"
       - key: PROMPT_OUTLINE_MAX_CHARS

@@ -208,10 +208,11 @@ class FlowerNetGenerator:
         """
         try:
             errors: List[str] = []
+            has_fallback_provider = len(self.provider_chain) > 1
             for provider in self.provider_chain:
                 provider_errors: List[str] = []
                 cooldown_until = self._provider_cooldown_until.get(provider, 0.0)
-                if cooldown_until > time.time():
+                if has_fallback_provider and cooldown_until > time.time():
                     remain = max(0.0, cooldown_until - time.time())
                     errors.append(f"{provider}: skipped (cooldown {remain:.1f}s)")
                     continue
@@ -251,7 +252,7 @@ class FlowerNetGenerator:
                     if transient_error:
                         streak = self._provider_failure_streak.get(provider, 0) + 1
                         self._provider_failure_streak[provider] = streak
-                        if streak >= self.provider_failure_threshold:
+                        if has_fallback_provider and streak >= self.provider_failure_threshold:
                             self._provider_cooldown_until[provider] = time.time() + self.provider_cooldown_seconds
                     else:
                         self._provider_failure_streak[provider] = 0
