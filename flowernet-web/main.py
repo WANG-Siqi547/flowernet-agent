@@ -628,19 +628,51 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             "max_subsections_per_section": req.subsection_count,
         }
         
-        try:
-            outline_resp = post_json_with_retry(
-                f"{OUTLINER_URL}/outline/generate-and-save",
-                outline_payload,
-                REQUEST_TIMEOUT,
-            )
-        except HTTPException as e:
-            detail = e.detail if isinstance(e.detail, str) else json.dumps(e.detail, ensure_ascii=False)
-            msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {detail}'})
+        outline_resp = None
+        outline_error = None
+
+        def build_outline_async():
+            nonlocal outline_resp, outline_error
+            try:
+                outline_resp = post_json_with_retry(
+                    f"{OUTLINER_URL}/outline/generate-and-save",
+                    outline_payload,
+                    REQUEST_TIMEOUT,
+                )
+            except Exception as e:
+                outline_error = e
+
+        outline_thread = threading.Thread(target=build_outline_async, daemon=True)
+        outline_thread.start()
+        outline_deadline = time.time() + REQUEST_TIMEOUT
+        last_outline_keepalive = time.time()
+
+        while outline_thread.is_alive() and time.time() < outline_deadline:
+            if time.time() - last_outline_keepalive > 10:
+                heartbeat = json.dumps({'type': 'heartbeat', 'message': '⏳ 正在生成大纲，保持连接中...'})
+                yield f"data: {heartbeat}\n\n"
+                last_outline_keepalive = time.time()
+            time.sleep(0.5)
+
+        outline_thread.join(timeout=1)
+
+        if outline_thread.is_alive():
+            msg = json.dumps({'type': 'error', 'message': f'大纲生成超时（>{REQUEST_TIMEOUT}s），请稍后重试'})
             yield f"data: {msg}\n\n"
             return
-        except Exception as e:
-            msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {str(e)}'})
+
+        if outline_error is not None:
+            if isinstance(outline_error, HTTPException):
+                detail = outline_error.detail if isinstance(outline_error.detail, str) else json.dumps(outline_error.detail, ensure_ascii=False)
+                msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {detail}'})
+                yield f"data: {msg}\n\n"
+                return
+            msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {str(outline_error)}'})
+            yield f"data: {msg}\n\n"
+            return
+
+        if not isinstance(outline_resp, dict):
+            msg = json.dumps({'type': 'error', 'message': '大纲生成失败: 返回结果格式异常'})
             yield f"data: {msg}\n\n"
             return
         
