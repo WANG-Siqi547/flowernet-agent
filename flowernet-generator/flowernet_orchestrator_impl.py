@@ -1240,6 +1240,7 @@ class DocumentGenerationOrchestrator:
                     subsection_id=subsection_id,
                 )
                 controller_last_result = controller_result
+                controller_error_text = str(controller_result.get("error", "") or "")
 
                 improved_outline = str(controller_result.get("improved_outline", "")).strip()
                 controller_effective = bool(controller_result.get("effective", controller_result.get("success", False)))
@@ -1318,10 +1319,45 @@ class DocumentGenerationOrchestrator:
                             "controller_retry": controller_retry,
                             "effective": controller_effective,
                             "changed": controller_changed,
+                            "error": controller_error_text[:260],
                         },
                     )
                     time.sleep(self._compute_retry_delay(controller_retry))
                     continue
+
+                transient_unavailable = any(token in controller_error_text.lower() for token in [
+                    "connection refused",
+                    "max retries exceeded",
+                    "timed out",
+                    "read timeout",
+                    "service unavailable",
+                    "name or service not known",
+                ])
+                if transient_unavailable:
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="controller_unavailable",
+                        message=f"第 {iterations} 轮：Controller 暂不可用，启用本地兜底改纲",
+                        metadata={
+                            "iteration": iterations,
+                            "controller_retry": controller_retry,
+                            "error": controller_error_text[:260],
+                        },
+                    )
+                    fallback_outline = self._build_local_outline_fallback(
+                        current_outline=current_outline,
+                        original_outline=outline,
+                        feedback=verify_result,
+                        rel_threshold=effective_rel_threshold,
+                        red_threshold=effective_red_threshold,
+                        iteration=iterations,
+                    )
+                    if fallback_outline and fallback_outline.strip() != str(current_outline).strip():
+                        current_outline = fallback_outline
+                        controller_updated = True
+                    break
 
                 print(f"         ⚠️  Controller 失败，继续重试（第 {controller_retry} 次）")
                 self._emit_progress_event(
@@ -1330,7 +1366,11 @@ class DocumentGenerationOrchestrator:
                     subsection_id=subsection_id,
                     stage="controller_error",
                     message=f"第 {iterations} 轮：Controller 改纲失败，继续重试",
-                    metadata={"iteration": iterations, "controller_retry": controller_retry},
+                    metadata={
+                        "iteration": iterations,
+                        "controller_retry": controller_retry,
+                        "error": controller_error_text[:260],
+                    },
                 )
                 time.sleep(self._compute_retry_delay(controller_retry))
 
