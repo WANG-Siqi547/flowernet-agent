@@ -792,6 +792,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         last_event_id = 0
         timeout = time.time() + REQUEST_TIMEOUT
         last_progress_update = time.time()
+        last_keepalive = time.time()
         
         while gen_thread.is_alive() and time.time() < timeout:
             try:
@@ -854,6 +855,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         yield f"data: {msg}\n\n"
                         last_count = current_count
                         last_progress_update = time.time()
+
+                    if time.time() - last_keepalive > 15:
+                        heartbeat = json.dumps({'type': 'heartbeat', 'message': '⏳ 生成中，正在保持连接...'})
+                        yield f"data: {heartbeat}\n\n"
+                        last_keepalive = time.time()
 
                 # 查询流程细节事件
                 events_resp = requests.post(

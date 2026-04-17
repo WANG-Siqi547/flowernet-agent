@@ -117,7 +117,7 @@ services:
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
         value: "12"
       - key: MAX_CONTROLLER_RETRIES
-        value: "4"
+        value: "8"
       - key: STRICT_CONTROLLER_EFFECTIVE
         value: "false"
       - key: USE_DATABASE

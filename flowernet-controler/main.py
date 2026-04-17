@@ -524,14 +524,24 @@ async def improve_outline(req: ImproveOutlineRequest):
         rel_gain_ok = (not rel_needed) or (rel_anchor_gain >= min_rel_anchor_gain) or (structure_gain >= min_structure_gain)
         novelty_gain_ok = (not red_needed) or (novelty_gain >= min_novelty_gain)
 
-        if chosen and score_gain >= min_gain and rel_gain_ok and novelty_gain_ok:
+        if chosen and chosen["outline"].strip() != baseline_outline.strip():
             improved_outline = chosen["outline"]
             chosen_source = chosen["source"]
-            changed = improved_outline.strip() != baseline_outline.strip()
+            changed = True
         else:
             improved_outline = baseline_outline
 
-        effective = bool(chosen and score_gain >= min_gain and rel_gain_ok and novelty_gain_ok and changed)
+        # 线上稳定性优先：只要输出确实发生变化，且不是明显退化，就允许进入下一轮。
+        # 这样避免 Controller 因阈值过严而反复返回原纲，导致 Generator/Controller 死循环。
+        effective = bool(
+            chosen
+            and changed
+            and (
+                score_gain >= min_gain
+                or chosen_source == "rule_structured"
+                or (rel_gain_ok and novelty_gain_ok)
+            )
+        )
         if require_llm_source and chosen_source != "llm":
             effective = False
 

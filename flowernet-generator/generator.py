@@ -603,57 +603,88 @@ class FlowerNetGenerator:
                     "draft": ""
                 }
 
-            payload = {
-                "model": self.sensenova_model,
-                "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-                "temperature": 0.7,
-                "stream": False,
-                "max_tokens": max_tokens,
-            }
+            # SenseNova 在不同兼容模式下对 messages.content 的要求可能不同：
+            # - 标准 OpenAI 兼容：content 为字符串
+            # - 部分多模态接口：content 为 [{type,text}] 结构
+            # 这里优先使用更常见的字符串格式，失败后再回退到多模态格式。
+            payload_variants = [
+                {
+                    "model": self.sensenova_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "stream": False,
+                    "max_tokens": max_tokens,
+                },
+                {
+                    "model": self.sensenova_model,
+                    "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+                    "temperature": 0.7,
+                    "stream": False,
+                    "max_tokens": max_tokens,
+                },
+            ]
             headers = {
                 "Authorization": f"Bearer {self.sensenova_api_key}",
                 "Content-Type": "application/json",
             }
 
-            response = requests.post(
-                self.sensenova_api_url,
-                json=payload,
-                headers=headers,
-                timeout=self.provider_http_timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
-            container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
-            choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
-            msg = choice.get("message") if isinstance(choice, dict) else None
-            content = ""
-            if isinstance(msg, str):
-                content = msg
-            elif isinstance(msg, dict):
-                content = msg.get("content", "")
-            if isinstance(content, list):
-                parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
-                content = "".join(parts)
-            draft_text = str(content).strip()
-            if not draft_text:
-                return {
-                    "success": False,
-                    "error": "SenseNova empty response",
-                    "draft": ""
-                }
+            last_error = "unknown"
+            for payload in payload_variants:
+                try:
+                    response = requests.post(
+                        self.sensenova_api_url,
+                        json=payload,
+                        headers=headers,
+                        timeout=self.provider_http_timeout,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+                    choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
+                    msg = choice.get("message") if isinstance(choice, dict) else None
+                    content = ""
+                    if isinstance(msg, str):
+                        content = msg
+                    elif isinstance(msg, dict):
+                        content = msg.get("content", "")
+                    if isinstance(content, list):
+                        parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
+                        content = "".join(parts)
+                    draft_text = str(content).strip()
+                    if not draft_text:
+                        last_error = "SenseNova empty response"
+                        continue
 
-            usage = container.get("usage") if isinstance(container, dict) else {}
-            usage = usage or {}
+                    usage = container.get("usage") if isinstance(container, dict) else {}
+                    usage = usage or {}
+                    return {
+                        "success": True,
+                        "draft": draft_text,
+                        "metadata": {
+                            "model": self.sensenova_model,
+                            "provider": "sensenova",
+                            "prompt_tokens": usage.get("prompt_tokens", 0),
+                            "output_tokens": usage.get("completion_tokens", 0),
+                            "total_tokens": usage.get("total_tokens", 0),
+                        }
+                    }
+                except requests.RequestException as e:
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                    response_text = (getattr(getattr(e, "response", None), "text", "") or "").strip()
+                    last_error = f"SenseNova HTTP {status_code}: {str(e)}"
+                    if response_text:
+                        last_error = f"{last_error} | response={response_text[:500]}"
+                    # 仅在看起来是格式/参数兼容问题时切换备用 payload
+                    if status_code and status_code < 500:
+                        continue
+                except Exception as e:
+                    last_error = f"SenseNova API Error: {str(e)}"
+                    continue
+
             return {
-                "success": True,
-                "draft": draft_text,
-                "metadata": {
-                    "model": self.sensenova_model,
-                    "provider": "sensenova",
-                    "prompt_tokens": usage.get("prompt_tokens", 0),
-                    "output_tokens": usage.get("completion_tokens", 0),
-                    "total_tokens": usage.get("total_tokens", 0),
-                }
+                "success": False,
+                "error": last_error,
+                "draft": ""
             }
         except requests.RequestException as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
