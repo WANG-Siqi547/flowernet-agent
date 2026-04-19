@@ -33,8 +33,11 @@ API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
-WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.70"))
-WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.62"))
+WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.72"))
+WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.60"))
+
+DOWNSTREAM_SESSION = requests.Session()
+DOWNSTREAM_SESSION.trust_env = False
 
 POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
@@ -150,7 +153,7 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
         retry_after_seconds = None
 
         try:
-            response = requests.post(url, json=payload, timeout=timeout)
+            response = DOWNSTREAM_SESSION.post(url, json=payload, timeout=timeout)
             response.raise_for_status()
             try:
                 body = response.json()
@@ -922,7 +925,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         while gen_thread.is_alive() and time.time() < timeout:
             try:
                 # 查询当前生成的小节数
-                history_resp = requests.post(
+                history_resp = DOWNSTREAM_SESSION.post(
                     f"{OUTLINER_URL}/history/get",
                     json={"document_id": document_id},
                     timeout=10
@@ -987,7 +990,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         last_keepalive = time.time()
 
                 # 查询流程细节事件
-                events_resp = requests.post(
+                events_resp = DOWNSTREAM_SESSION.post(
                     f"{OUTLINER_URL}/history/progress",
                     json={"document_id": document_id, "after_id": last_event_id, "limit": 200},
                     timeout=10,
@@ -1036,7 +1039,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         if gen_resp is None:
             # 线程仍在运行但超时 - 尝试从数据库恢复
             try:
-                history_resp = requests.post(
+                history_resp = DOWNSTREAM_SESSION.post(
                     f"{OUTLINER_URL}/history/get",
                     json={"document_id": document_id},
                     timeout=10
@@ -1084,7 +1087,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
 
         # 再抓取一轮收尾事件，避免线程结束时最后几条细节日志丢失
         try:
-            events_resp = requests.post(
+            events_resp = DOWNSTREAM_SESSION.post(
                 f"{OUTLINER_URL}/history/progress",
                 json={"document_id": document_id, "after_id": last_event_id, "limit": 500},
                 timeout=10,
@@ -1107,7 +1110,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             print(f"收尾事件查询异常: {e}")
 
         try:
-            history_resp = requests.post(
+            history_resp = DOWNSTREAM_SESSION.post(
                 f"{OUTLINER_URL}/history/get",
                 json={"document_id": document_id},
                 timeout=10
@@ -1142,7 +1145,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         yield f"data: {msg}\n\n"
         
         try:
-            history_resp = requests.post(
+            history_resp = DOWNSTREAM_SESSION.post(
                 f"{OUTLINER_URL}/history/get",
                 json={"document_id": document_id},
                 timeout=10

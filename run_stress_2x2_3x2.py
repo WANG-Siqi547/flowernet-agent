@@ -9,8 +9,8 @@ import requests
 
 BASE_WEB = os.getenv("WEB_URL", "http://localhost:8010")
 BASE_OUT = os.getenv("OUT_URL", "http://localhost:8003")
-REL_THRESHOLD = float(os.getenv("FLOWERNET_REL_THRESHOLD", "0.70"))
-RED_THRESHOLD = float(os.getenv("FLOWERNET_RED_THRESHOLD", "0.62"))
+REL_THRESHOLD = float(os.getenv("FLOWERNET_REL_THRESHOLD", "0.72"))
+RED_THRESHOLD = float(os.getenv("FLOWERNET_RED_THRESHOLD", "0.60"))
 SESSION = requests.Session()
 SESSION.trust_env = False
 

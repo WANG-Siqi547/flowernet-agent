@@ -14,8 +14,8 @@ BASE_CTRL = os.getenv("CTRL_URL", "http://localhost:8001")
 
 SESSION = requests.Session()
 SESSION.trust_env = False
-REL_THRESHOLD = float(os.getenv("FLOWERNET_REL_THRESHOLD", "0.70"))
-RED_THRESHOLD = float(os.getenv("FLOWERNET_RED_THRESHOLD", "0.62"))
+REL_THRESHOLD = float(os.getenv("FLOWERNET_REL_THRESHOLD", "0.72"))
+RED_THRESHOLD = float(os.getenv("FLOWERNET_RED_THRESHOLD", "0.60"))
 
 
 def now():

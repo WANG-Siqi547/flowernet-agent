@@ -81,6 +81,10 @@ class DocumentGenerationOrchestrator:
         self.strict_controller_effective = os.getenv("STRICT_CONTROLLER_EFFECTIVE", "false").lower() == "true"
         self.max_pass_rel_margin = max(0.0, float(os.getenv("MAX_PASS_REL_MARGIN", "0.35")))
         self.max_pass_red_margin = max(0.0, float(os.getenv("MAX_PASS_RED_MARGIN", "0.45")))
+        self.orch_generator_retries = max(1, int(os.getenv("ORCH_GENERATOR_RETRIES", "2")))
+        self.orch_generator_backoff = max(0.2, float(os.getenv("ORCH_GENERATOR_BACKOFF", "1.5")))
+        self.orch_generator_max_backoff = max(1.0, float(os.getenv("ORCH_GENERATOR_MAX_BACKOFF", "20.0")))
+        self.generator_http_timeout = max(30, int(os.getenv("GENERATOR_HTTP_TIMEOUT", "120")))
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -777,6 +781,7 @@ class DocumentGenerationOrchestrator:
         rag_search_result: Dict[str, Any] = {"success": False, "results": []}
         rag_context = ""
         require_source_citations = False
+        source_citation_required = False
         rag_used = False
         rag_selected_query = ""
 
@@ -827,7 +832,6 @@ class DocumentGenerationOrchestrator:
                         "error": rag_error,
                     },
                 )
-
             source_citation_required = require_source_citations
 
         effective_attempt_cap = self.max_subsection_attempts if self.max_subsection_attempts > 0 else self.max_iterations
@@ -1113,6 +1117,7 @@ class DocumentGenerationOrchestrator:
                 citation_feedback = str(feedback or "").lower()
                 citation_failed = (
                     "insufficient_citations" in source_reason
+                    or "invalid_source_url" in source_reason
                     or "citation" in citation_feedback
                     or "来源" in citation_feedback
                 )
@@ -1531,10 +1536,11 @@ class DocumentGenerationOrchestrator:
 
         if require_source_citations:
             enhanced += """【来源引用硬性要求（必须满足）】
-- 对关键事实、数据、结论，必须在句内或句末添加引用标记，格式严格为 [来源N]
-- N 必须来自上面提供的来源编号，不允许编造不存在的来源编号
-- 至少提供 1 处来源引用
-- 不要输出“参考文献列表”，直接在正文中标注 [来源N]
+- 对关键事实、数据、结论，必须直接写出具体来源信息，不要使用“[来源N]”占位符
+- 推荐正文引用格式： （来源：文章标题，链接：https://example.com/xxx）
+- 至少提供 1 处可点击的具体网页链接；若有图片链接，也请直接写出图片 URL
+- 只能引用上方“参考资料”里给出的来源，不允许编造不存在的论文、文章、链接或图片链接
+- 在正文末尾增加“引用来源”小节，逐条列出：标题、网页链接、可选图片链接
 
 """
 
@@ -1545,6 +1551,15 @@ class DocumentGenerationOrchestrator:
 """
 
         return enhanced.strip()
+
+    def _is_transient_generator_error(self, error_text: str) -> bool:
+        lowered = str(error_text or "").lower()
+        transient_tokens = [
+            "timeout", "timed out", "connection", "temporarily", "try again",
+            "429", "502", "503", "504", "rate", "quota", "overloaded",
+            "resource_exhausted", "service unavailable", "upstream",
+        ]
+        return any(token in lowered for token in transient_tokens)
     
     def _call_generator(self, prompt: str) -> Dict[str, Any]:
         """调用 Generator API（优先使用本地实例）"""
@@ -1560,35 +1575,85 @@ class DocumentGenerationOrchestrator:
             except Exception as e:
                 print(f"⚠️ 本地Generator调用失败: {e}，回退到HTTP调用")
 
-        try:
-            print(f"      [Generator] 发起HTTP请求...")
-            response = self.session.post(
-                f"{self.generator_url}/generate",
-                json={"prompt": prompt, "max_tokens": 800},
-                timeout=120
-            )
-            
-            print(f"      [Generator] 收到响应 (status={response.status_code}, size={len(response.text)})")
-            if response.status_code == 200:
-                result = response.json()
-                print(f"      [Generator] 解析成功: success={result.get('success')}")
-                return result
-            else:
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text[:200]}"
-                }
-        except requests.Timeout:
-            return {
-                "success": False,
-                "error": "Generator 响应超时 (120秒)"
-            }
-        except Exception as e:
-            print(f"      [Generator] 异常: {type(e).__name__}: {str(e)[:100]}")
-            return {
-                "success": False,
-                "error": f"{type(e).__name__}: {str(e)[:100]}"
-            }
+        last_error = "generator_unknown_error"
+        for attempt in range(1, self.orch_generator_retries + 1):
+            try:
+                print(
+                    f"      [Generator] 发起HTTP请求... "
+                    f"(attempt {attempt}/{self.orch_generator_retries})"
+                )
+                response = self.session.post(
+                    f"{self.generator_url}/generate",
+                    json={"prompt": prompt, "max_tokens": 800},
+                    timeout=self.generator_http_timeout,
+                )
+
+                print(f"      [Generator] 收到响应 (status={response.status_code}, size={len(response.text)})")
+                if response.status_code == 200:
+                    result = response.json()
+                    print(f"      [Generator] 解析成功: success={result.get('success')}")
+                    if result.get("success"):
+                        return result
+
+                    last_error = str(result.get("error") or "generator_failed")
+                    can_retry = (
+                        attempt < self.orch_generator_retries
+                        and self._is_transient_generator_error(last_error)
+                    )
+                    if can_retry:
+                        delay = min(
+                            self.orch_generator_max_backoff,
+                            self.orch_generator_backoff * (2 ** (attempt - 1)),
+                        )
+                        delay += random.uniform(0.0, 0.35)
+                        print(f"      [Generator] 瞬时失败，{delay:.2f}s 后重试: {last_error[:120]}")
+                        time.sleep(delay)
+                        continue
+                    return {"success": False, "error": last_error}
+
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                can_retry = (
+                    attempt < self.orch_generator_retries
+                    and (response.status_code in (429, 502, 503, 504) or self._is_transient_generator_error(last_error))
+                )
+                if can_retry:
+                    delay = min(
+                        self.orch_generator_max_backoff,
+                        self.orch_generator_backoff * (2 ** (attempt - 1)),
+                    )
+                    delay += random.uniform(0.0, 0.35)
+                    print(f"      [Generator] HTTP可重试错误，{delay:.2f}s 后重试")
+                    time.sleep(delay)
+                    continue
+
+                return {"success": False, "error": last_error}
+            except requests.Timeout:
+                last_error = f"Generator 响应超时 ({self.generator_http_timeout}秒)"
+                if attempt < self.orch_generator_retries:
+                    delay = min(
+                        self.orch_generator_max_backoff,
+                        self.orch_generator_backoff * (2 ** (attempt - 1)),
+                    )
+                    delay += random.uniform(0.0, 0.35)
+                    print(f"      [Generator] 请求超时，{delay:.2f}s 后重试")
+                    time.sleep(delay)
+                    continue
+                return {"success": False, "error": last_error}
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {str(e)[:100]}"
+                print(f"      [Generator] 异常: {last_error}")
+                if attempt < self.orch_generator_retries and self._is_transient_generator_error(last_error):
+                    delay = min(
+                        self.orch_generator_max_backoff,
+                        self.orch_generator_backoff * (2 ** (attempt - 1)),
+                    )
+                    delay += random.uniform(0.0, 0.35)
+                    print(f"      [Generator] 异常可重试，{delay:.2f}s 后重试")
+                    time.sleep(delay)
+                    continue
+                return {"success": False, "error": last_error}
+
+        return {"success": False, "error": last_error}
     
     def _call_verifier(
         self,

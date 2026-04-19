@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any
 import uvicorn
 import jieba
 import os
+import re
 from rank_bm25 import BM25Okapi
 from rouge_score import rouge_scorer
 
@@ -55,16 +56,26 @@ class FlowerNetVerifier:
         require_source_citations: bool = False,
         min_source_citations: int = 1,
     ) -> Dict[str, Any]:
-        import re
-
         source_results = source_results or []
         refs = sorted({int(item) for item in re.findall(r"\[来源(\d+)\]", draft or "")})
+        url_pattern = re.compile(r"https?://[^\s\]）)>,;]+", flags=re.IGNORECASE)
+        found_urls = sorted(set(url_pattern.findall(draft or "")))
+
+        source_urls = {
+            str((item or {}).get("href") or "").strip()
+            for item in source_results
+            if str((item or {}).get("href") or "").strip()
+        }
+        matched_urls = [url for url in found_urls if url in source_urls]
+        invalid_urls = [url for url in found_urls if url not in source_urls]
+
         total_available_sources = len(source_results)
         invalid_refs = [ref for ref in refs if ref < 1 or ref > total_available_sources]
         required_count = max(1, int(min_source_citations))
+        citation_count = max(len(refs), len(matched_urls))
 
         if require_source_citations:
-            citation_count_ok = len(refs) >= required_count
+            citation_count_ok = citation_count >= required_count
         else:
             citation_count_ok = True
 
@@ -74,6 +85,9 @@ class FlowerNetVerifier:
         elif len(invalid_refs) > 0:
             passed = False
             reason = "invalid_source_reference"
+        elif len(invalid_urls) > 0:
+            passed = False
+            reason = "invalid_source_url"
         elif citation_count_ok:
             passed = True
             reason = "ok"
@@ -84,9 +98,12 @@ class FlowerNetVerifier:
         return {
             "passed": passed,
             "reason": reason,
-            "reference_count": len(refs),
+            "reference_count": citation_count,
             "references": refs,
             "invalid_references": invalid_refs,
+            "found_urls": found_urls,
+            "matched_urls": matched_urls,
+            "invalid_urls": invalid_urls,
             "total_available_sources": total_available_sources,
             "require_source_citations": require_source_citations,
             "min_source_citations": required_count,

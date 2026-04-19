@@ -109,6 +109,8 @@ class FlowerNetGenerator:
         self.dashscope_http_timeout = float(os.getenv('DASHSCOPE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.session = requests.Session()
+        self.session.trust_env = False
         self._provider_next_allowed: Dict[str, float] = {}
         self._provider_failure_streak: Dict[str, int] = {}
         self._provider_cooldown_until: Dict[str, float] = {}
@@ -321,7 +323,7 @@ class FlowerNetGenerator:
             }
             params = {"api-version": self.azure_api_version}
 
-            response = requests.post(
+            response = self.session.post(
                 url,
                 params=params,
                 json=payload,
@@ -458,7 +460,7 @@ class FlowerNetGenerator:
                 "X-Title": self.openrouter_app_name,
             }
 
-            response = requests.post(
+            response = self.session.post(
                 self.openrouter_api_url,
                 json=payload,
                 headers=headers,
@@ -535,7 +537,7 @@ class FlowerNetGenerator:
                 "Content-Type": "application/json",
             }
 
-            response = requests.post(
+            response = self.session.post(
                 self.dashscope_api_url,
                 json=payload,
                 headers=headers,
@@ -632,7 +634,7 @@ class FlowerNetGenerator:
             last_error = "unknown"
             for payload in payload_variants:
                 try:
-                    response = requests.post(
+                    response = self.session.post(
                         self.sensenova_api_url,
                         json=payload,
                         headers=headers,
@@ -733,7 +735,7 @@ class FlowerNetGenerator:
             response = None
             for attempt in range(1, self.ollama_retries + 1):
                 try:
-                    response = requests.post(
+                    response = self.session.post(
                         f"{self.ollama_url}/api/generate",
                         json=payload,
                         headers=headers,
@@ -848,6 +850,7 @@ class FlowerNetOrchestrator:
         self.max_iterations = max_iterations
         self.history_manager = history_manager
         self.session = requests.Session()
+        self.session.trust_env = False
         self.generator_retries = int(os.getenv('ORCH_GENERATOR_RETRIES', '4'))
         self.generator_backoff = float(os.getenv('ORCH_GENERATOR_BACKOFF', '2.0'))
         self.generator_max_backoff = float(os.getenv('ORCH_GENERATOR_MAX_BACKOFF', '60.0'))

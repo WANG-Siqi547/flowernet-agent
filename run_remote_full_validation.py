@@ -10,8 +10,8 @@ BASE_GEN = os.getenv("GEN_URL", "https://flowernet-generator.onrender.com")
 BASE_OUT = os.getenv("OUT_URL", "https://flowernet-outliner.onrender.com")
 BASE_VER = os.getenv("VER_URL", "https://flowernet-verifier.onrender.com")
 BASE_CTRL = os.getenv("CTRL_URL", "https://flowernet-controller.onrender.com")
-REL_THRESHOLD = float(os.getenv("FLOWERNET_REL_THRESHOLD", "0.70"))
-RED_THRESHOLD = float(os.getenv("FLOWERNET_RED_THRESHOLD", "0.62"))
+REL_THRESHOLD = float(os.getenv("FLOWERNET_REL_THRESHOLD", "0.72"))
+RED_THRESHOLD = float(os.getenv("FLOWERNET_RED_THRESHOLD", "0.60"))
 
 SESSION = requests.Session()
 SESSION.trust_env = False

@@ -351,11 +351,11 @@ class RAGSearchEngine:
         context = "【参考资料（可引用来源）】\n"
         for index, item in enumerate(items, start=1):
             context += (
-                f"\n[来源{index}]\n"
+                f"\n来源ID: {index}\n"
                 f"站点: {item.get('source', '')}\n"
                 f"标题: {item.get('title', '')}\n"
                 f"摘要: {item.get('body', '')}\n"
-                f"链接: {item.get('href', '')}\n"
+                f"文章链接: {item.get('href', '')}\n"
             )
         return context
 
@@ -374,20 +374,35 @@ class SourceVerifier:
         min_citations: int = 1,
     ) -> Dict[str, Any]:
         refs = sorted({int(value) for value in re.findall(r"\[来源(\d+)\]", text or "")})
+        url_pattern = re.compile(r"https?://[^\s\]）)>,;]+", flags=re.IGNORECASE)
+        found_urls = sorted(set(url_pattern.findall(text or "")))
         total_sources = len(source_results or [])
         invalid_refs = [ref for ref in refs if ref < 1 or ref > total_sources]
 
+        source_urls = {
+            str((item or {}).get("href") or "").strip()
+            for item in (source_results or [])
+            if str((item or {}).get("href") or "").strip()
+        }
+        matched_urls = [url for url in found_urls if url in source_urls]
+        invalid_urls = [url for url in found_urls if url not in source_urls]
+
+        citation_count = max(len(refs), len(matched_urls))
+
         if require_citations:
-            citation_ok = len(refs) >= max(1, int(min_citations))
+            citation_ok = citation_count >= max(1, int(min_citations))
         else:
             citation_ok = True
 
-        valid = citation_ok and len(invalid_refs) == 0
+        valid = citation_ok and len(invalid_refs) == 0 and len(invalid_urls) == 0
         return {
             "valid": valid,
-            "found_references": len(refs),
+            "found_references": citation_count,
             "references": refs,
             "invalid_references": invalid_refs,
+            "found_urls": found_urls,
+            "matched_urls": matched_urls,
+            "invalid_urls": invalid_urls,
             "total_sources": total_sources,
             "required": require_citations,
             "min_citations": max(1, int(min_citations)),
