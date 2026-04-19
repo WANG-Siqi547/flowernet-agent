@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-04-18 18:10:33",
+  "overall_ok": false,
+  "results": [
+    {
+      "case": "2x2",
+      "request_ok": false,
+      "http_status": 502,
+      "elapsed": 153.69,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 4,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": null
+    },
+    {
+      "case": "3x2",
+      "request_ok": false,
+      "http_status": 502,
+      "elapsed": 153.08,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 6,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": null
+    }
+  ]
+}

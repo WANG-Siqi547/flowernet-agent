@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-04-18 15:48:42",
+  "overall_ok": false,
+  "results": [
+    {
+      "case": "2x2",
+      "request_ok": false,
+      "http_status": null,
+      "elapsed": 0.0,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 4,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8010): Max retries exceeded with url: /api/generate (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8010): Failed to establish a new connection: [Errno 61] Connection refused\"))"
+    },
+    {
+      "case": "3x2",
+      "request_ok": false,
+      "http_status": null,
+      "elapsed": 0.0,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 6,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8010): Max retries exceeded with url: /api/generate (Caused by NewConnectionError(\"HTTPConnection(host='localhost', port=8010): Failed to establish a new connection: [Errno 61] Connection refused\"))"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-04-18 16:22:00",
+  "overall_ok": false,
+  "results": [
+    {
+      "case": "2x2",
+      "request_ok": false,
+      "http_status": 502,
+      "elapsed": 899.77,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 4,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <title>502</title>\n    <style>@font-face {\n  font-family: \"Roobert\";\n  font-weight: 500;\n  font-style: normal;\n  font-stretch: normal;\n  src: url(\"data:font/woff2;base64,d09GMk9UVE8AAKewAAwAAAABa6QAAKdfAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYKmehqCHhuC4UocpRQGYACLBgE2AiQDkygEBgWFRwcgW8pqkQKZcr0u0nk2H+gc25rBL5CqkDOqYXNqo87dNmL1mgByHi4yIGwcgLFJz2f/////f/pSkaHKgl52HEgorIWX0m0/lzuLglQtUxbMiGh9qonlnolc+1JbmihzmbbylQ/Xs2Knu/rUH62ibhOWZkpgVpo4nLnvzMOZ87/06Lk2hMnbe1EpM1cUezJlZtqCZIKYIPYeoS6VhFPJXNa5j7Y8LmH67MF2qJYI49/FNzQbwX7cqeRUbzyDffdLybw5cxRTIbdy4y5BVskcP6vu3uo+6GtnQl/up3nkVnDZmKlEpYHB1w/usr46inVsWjdEIE2gBgoC36WYsC4qXJjwYb9YbH9vayYROp/tXkp72nOEOvigu6g0+gsN"
+    },
+    {
+      "case": "3x2",
+      "request_ok": false,
+      "http_status": 502,
+      "elapsed": 922.0,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 6,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <title>502</title>\n    <style>@font-face {\n  font-family: \"Roobert\";\n  font-weight: 500;\n  font-style: normal;\n  font-stretch: normal;\n  src: url(\"data:font/woff2;base64,d09GMk9UVE8AAKewAAwAAAABa6QAAKdfAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYKmehqCHhuC4UocpRQGYACLBgE2AiQDkygEBgWFRwcgW8pqkQKZcr0u0nk2H+gc25rBL5CqkDOqYXNqo87dNmL1mgByHi4yIGwcgLFJz2f/////f/pSkaHKgl52HEgorIWX0m0/lzuLglQtUxbMiGh9qonlnolc+1JbmihzmbbylQ/Xs2Knu/rUH62ibhOWZkpgVpo4nLnvzMOZ87/06Lk2hMnbe1EpM1cUezJlZtqCZIKYIPYeoS6VhFPJXNa5j7Y8LmH67MF2qJYI49/FNzQbwX7cqeRUbzyDffdLybw5cxRTIbdy4y5BVskcP6vu3uo+6GtnQl/up3nkVnDZmKlEpYHB1w/usr46inVsWjdEIE2gBgoC36WYsC4qXJjwYb9YbH9vayYROp/tXkp72nOEOvigu6g0+gsN"
+    }
+  ]
+}

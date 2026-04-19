@@ -1,0 +1,75 @@
+{
+  "timestamp": "2026-04-19 00:34:39",
+  "overall_ok": false,
+  "results": [
+    {
+      "case": "2x2",
+      "request_ok": true,
+      "http_status": 200,
+      "elapsed": 2650.44,
+      "success": true,
+      "document_id": "web_20260418_234532_f0de42b9",
+      "title": "机器人：从概念到应用的全面探索",
+      "content_length": 4219,
+      "expected_subsections": 4,
+      "passed_subsections": 2,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {
+        "stage_counters": {},
+        "max_iteration": 0,
+        "controller_triggered": false,
+        "controller_unavailable": 0,
+        "controller_error": 0,
+        "controller_success": 0,
+        "verifier_failed": 0
+      },
+      "backend_metrics": {
+        "controller_calls_total": 0,
+        "controller_triggered_subsections": 0,
+        "controller_success_total": 0,
+        "controller_error_total": 0,
+        "controller_unavailable_total": 0,
+        "controller_ineffective_total": 0,
+        "controller_fallback_outline_total": 0,
+        "controller_exhausted_total": 0,
+        "verifier_failed_total": 0
+      },
+      "validation": {
+        "controller_triggered": false,
+        "controller_not_overtriggered": true,
+        "max_iteration_ok": true,
+        "no_dead_loop": true,
+        "complete_doc": true,
+        "all_passed": false
+      },
+      "error": "生成中断，已返回通过验证的 2 个小节"
+    },
+    {
+      "case": "3x2",
+      "request_ok": false,
+      "http_status": 500,
+      "elapsed": 296.89,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 6,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": null
+    }
+  ]
+}
