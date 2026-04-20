@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-04-19 19:42:43",
+  "overall_ok": false,
+  "results": [
+    {
+      "case": "2x2",
+      "request_ok": false,
+      "http_status": null,
+      "elapsed": 2700.01,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 4,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": "ReadTimeout: HTTPConnectionPool(host='localhost', port=8010): Read timed out. (read timeout=2700)"
+    },
+    {
+      "case": "3x2",
+      "request_ok": false,
+      "http_status": 500,
+      "elapsed": 289.02,
+      "success": false,
+      "document_id": "",
+      "title": "",
+      "content_length": 0,
+      "expected_subsections": 6,
+      "passed_subsections": 0,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "events": {},
+      "backend_metrics": {},
+      "validation": {
+        "controller_triggered": false,
+        "max_iteration_ok": false,
+        "no_dead_loop": false,
+        "complete_doc": false,
+        "all_passed": false
+      },
+      "error": null
+    }
+  ]
+}

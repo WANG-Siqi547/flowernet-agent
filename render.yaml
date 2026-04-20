@@ -24,11 +24,44 @@ services:
         value: 8000
       - key: VERIFIER_PUBLIC_URL
         value: https://flowernet-verifier.onrender.com
+      - key: UNIEVAL_ENDPOINT
+        value: https://flowernet-unieval.onrender.com/score
+      - key: UNIEVAL_TIMEOUT
+        value: "25"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
         value: flowernet_history.db
     healthCheckPath: /
+
+  # ==========================================
+  # Service 1.5: UniEval (多维语义评估服务)
+  # ==========================================
+  - type: web
+    name: flowernet-unieval
+    env: docker
+    region: singapore
+    plan: starter
+    dockerfilePath: ./flowernet-unieval/Dockerfile
+    dockerContext: ./flowernet-unieval
+    envVars:
+      - key: PORT
+        value: 8004
+      - key: UNIEVAL_MODEL_NAME
+        value: cross-encoder/nli-MiniLM2-L6-H768
+      - key: UNIEVAL_MODEL_REVISION
+        value: b95119ce93d3e065de6214e38cd4a97b0f2f2c6d
+      - key: UNIEVAL_CACHE_DIR
+        value: /opt/render/project/hf-cache
+      - key: UNIEVAL_LOAD_TIMEOUT_SEC
+        value: "300"
+      - key: UNIEVAL_BOOL_THRESHOLD
+        value: "0.5"
+    disks:
+      - name: flowernet-unieval-cache
+        mountPath: /opt/render/project/hf-cache
+        sizeGB: 5
+    healthCheckPath: /health/live
     
   # ==========================================
   # Service 2: Controller (流程控制服务)
@@ -56,9 +89,9 @@ services:
       - key: CONTROLLER_LLM_FALLBACK_TO_GENERATOR
         value: "true"
       - key: CONTROLLER_LLM_RETRIES
-        value: "2"
+        value: "1"
       - key: CONTROLLER_LLM_TIMEOUT
-        value: "45"
+        value: "30"
       - key: CONTROLLER_SENSENOVA_MODEL
         value: SenseNova-V6-5-Turbo
       - key: CONTROLLER_SENSENOVA_API_URL
@@ -157,7 +190,7 @@ services:
       - key: OPENROUTER_APP_NAME
         value: FlowerNet
       - key: PROVIDER_RETRIES
-        value: "2"
+        value: "1"
       - key: PROVIDER_BACKOFF
         value: "1.2"
       - key: PROVIDER_MAX_BACKOFF
@@ -258,11 +291,11 @@ services:
       - key: PROVIDER_FAILURE_THRESHOLD
         value: "3"
       - key: PROVIDER_COOLDOWN_SECONDS
-        value: "20"
+        value: "30"
       - key: PROVIDER_HTTP_TIMEOUT
-        value: "90"
+        value: "30"
       - key: DASHSCOPE_HTTP_TIMEOUT
-        value: "45"
+        value: "30"
       - key: PROMPT_OUTLINE_MAX_CHARS
         value: "4500"
       - key: PROMPT_ORIGINAL_MAX_CHARS
@@ -296,11 +329,11 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "8"
+        value: "4"
       - key: MAX_CONTROLLER_RETRIES
         value: "4"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
-        value: "12"
+        value: "4"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -335,7 +368,7 @@ services:
       - key: PUBLIC_BASE_URL
         value: https://flowernet-web.onrender.com
       - key: REQUEST_TIMEOUT
-        value: "3600"
+        value: "600"
       - key: DOWNSTREAM_BACKOFF
         value: "4.0"
       - key: DOWNSTREAM_MAX_BACKOFF
@@ -343,9 +376,9 @@ services:
       - key: DOWNSTREAM_JITTER
         value: "0.4"
       - key: DOWNSTREAM_RETRIES
-        value: "10"
+        value: "1"
       - key: DOWNSTREAM_OUTLINER_MIN_RETRIES
-        value: "12"
+        value: "2"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
       - key: WEB_DEFAULT_REL_THRESHOLD

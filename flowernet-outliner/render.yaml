@@ -69,7 +69,7 @@ services:
       - key: OPENROUTER_APP_NAME
         value: FlowerNet
       - key: PROVIDER_RETRIES
-        value: "2"
+        value: "1"
       - key: PROVIDER_BACKOFF
         value: "1.2"
       - key: PROVIDER_MAX_BACKOFF

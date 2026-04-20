@@ -5,8 +5,10 @@ import uvicorn
 import jieba
 import os
 import re
+import json
 from rank_bm25 import BM25Okapi
 from rouge_score import rouge_scorer
+import requests
 
 from history_store import HistoryManager
 
@@ -38,6 +40,199 @@ class FlowerNetVerifier:
         self.scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
         print("✅ 验证层就绪")
 
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _clip01(self, value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    def _compute_semantic_dimensions(
+        self,
+        draft: str,
+        outline: str,
+        history_list: List[str],
+        rel: Dict[str, Any],
+        red: Dict[str, Any],
+        source_check: Dict[str, Any],
+    ) -> Dict[str, float]:
+        draft = draft or ""
+        outline = outline or ""
+        history_list = history_list or []
+
+        keyword_coverage = self._safe_float((rel.get("details") or {}).get("keyword_coverage"), rel.get("score", 0.0))
+        rouge_l = self._safe_float((rel.get("details") or {}).get("rouge_l"), rel.get("score", 0.0))
+        bm25_score = self._safe_float((rel.get("details") or {}).get("bm25_score"), rel.get("score", 0.0))
+
+        # 1) Topic alignment: 关注是否紧扣小节主题
+        topic_alignment = self._clip01(0.6 * keyword_coverage + 0.25 * rouge_l + 0.15 * bm25_score)
+
+        # 2) Novelty: 与历史去重互补，越高越新
+        novelty = self._clip01(1.0 - self._safe_float(red.get("score"), 0.0))
+
+        # 3) Coverage completeness: 是否覆盖大纲关键信息
+        coverage_completeness = self._clip01(0.7 * keyword_coverage + 0.3 * rouge_l)
+
+        # 4) Logical coherence: 使用句长稳定性 + 连接词密度近似估计
+        sentence_units = [s.strip() for s in re.split(r"[。！？!?；;\n]", draft) if s.strip()]
+        if sentence_units:
+            lengths = [len(s) for s in sentence_units]
+            avg_len = sum(lengths) / len(lengths)
+            len_penalty = abs(avg_len - 24.0) / 24.0
+            connector_count = len(re.findall(r"因此|所以|然而|同时|此外|首先|其次|最后|because|however|therefore|moreover|first|second|finally", draft.lower()))
+            connector_density = connector_count / max(1, len(sentence_units))
+            logical_coherence = self._clip01((1.0 - min(1.0, len_penalty)) * 0.65 + min(1.0, connector_density) * 0.35)
+        else:
+            logical_coherence = 0.0
+
+        # 5) Evidence grounding: 来源匹配与语义质量
+        matched_scores = source_check.get("matched_semantic_scores") or {}
+        if matched_scores:
+            avg_semantic_match = sum(self._safe_float(v) for v in matched_scores.values()) / len(matched_scores)
+        else:
+            avg_semantic_match = 0.0
+        citation_signal = 1.0 if source_check.get("passed") else 0.35
+        evidence_grounding = self._clip01(0.65 * avg_semantic_match + 0.35 * citation_signal)
+
+        # 6) Structure clarity: 小节组织形态质量
+        line_count = len([ln for ln in draft.splitlines() if ln.strip()])
+        heading_count = len(re.findall(r"^#{1,4}\s+", draft, flags=re.MULTILINE))
+        bullet_count = len(re.findall(r"^[\-\*\d]+[\.\)]?\s+", draft, flags=re.MULTILINE))
+        structure_clarity = self._clip01(min(1.0, line_count / 10.0) * 0.5 + min(1.0, (heading_count + bullet_count) / 4.0) * 0.5)
+
+        return {
+            "topic_alignment": round(topic_alignment, 4),
+            "novelty": round(novelty, 4),
+            "coverage_completeness": round(coverage_completeness, 4),
+            "logical_coherence": round(logical_coherence, 4),
+            "evidence_grounding": round(evidence_grounding, 4),
+            "structure_clarity": round(structure_clarity, 4),
+        }
+
+    def _try_unieval_dimensions(
+        self,
+        draft: str,
+        outline: str,
+        history_list: List[str],
+    ) -> Dict[str, float]:
+        endpoint = os.getenv("UNIEVAL_ENDPOINT", "").strip()
+        if not endpoint:
+            return {}
+
+        timeout = max(5, int(os.getenv("UNIEVAL_TIMEOUT", "20")))
+        payload = {
+            "draft": draft,
+            "outline": outline,
+            "history": history_list or [],
+        }
+        try:
+            sess = requests.Session()
+            sess.trust_env = False
+            resp = sess.post(endpoint, json=payload, timeout=timeout)
+            resp.raise_for_status()
+            body = resp.json() if resp.content else {}
+            if not isinstance(body, dict):
+                return {}
+            scores = body.get("scores") if isinstance(body.get("scores"), dict) else body
+            if not isinstance(scores, dict):
+                return {}
+
+            mapped = {
+                "topic_alignment": self._clip01(self._safe_float(scores.get("consistency", scores.get("relevance", 0.0)))),
+                "coverage_completeness": self._clip01(self._safe_float(scores.get("coherence", scores.get("coverage", 0.0)))),
+                "logical_coherence": self._clip01(self._safe_float(scores.get("coherence", 0.0))),
+                "evidence_grounding": self._clip01(self._safe_float(scores.get("factuality", scores.get("groundedness", 0.0)))),
+                "structure_clarity": self._clip01(self._safe_float(scores.get("fluency", scores.get("clarity", 0.0)))),
+            }
+            return {k: round(v, 4) for k, v in mapped.items() if v > 0}
+        except Exception:
+            return {}
+
+    def _composite_quality_score(self, dimensions: Dict[str, float]) -> float:
+        default_weights = {
+            "topic_alignment": 0.24,
+            "coverage_completeness": 0.18,
+            "logical_coherence": 0.18,
+            "evidence_grounding": 0.18,
+            "novelty": 0.14,
+            "structure_clarity": 0.08,
+        }
+        weights_raw = os.getenv("QUALITY_DIMENSION_WEIGHTS_JSON", "").strip()
+        if weights_raw:
+            try:
+                parsed = json.loads(weights_raw)
+                if isinstance(parsed, dict):
+                    for key, value in parsed.items():
+                        if key in default_weights:
+                            default_weights[key] = self._safe_float(value, default_weights[key])
+            except Exception:
+                pass
+
+        total_weight = sum(max(0.0, w) for w in default_weights.values())
+        if total_weight <= 0:
+            total_weight = 1.0
+
+        score = 0.0
+        for key, weight in default_weights.items():
+            score += max(0.0, weight) * self._safe_float(dimensions.get(key), 0.0)
+        return round(self._clip01(score / total_weight), 4)
+
+    def _fuse_dimensions_with_uncertainty(
+        self,
+        heuristic_dims: Dict[str, float],
+        unieval_dims: Dict[str, float],
+    ) -> Dict[str, Any]:
+        keys = sorted(set(heuristic_dims.keys()) | set(unieval_dims.keys()))
+        fused: Dict[str, float] = {}
+        uncertainty: Dict[str, float] = {}
+        ci: Dict[str, Dict[str, float]] = {}
+        sources: Dict[str, Dict[str, float]] = {}
+
+        # Conservative prior uncertainty for dimensions with single estimator.
+        single_source_unc = self._clip01(self._safe_float(os.getenv("QUALITY_SINGLE_SOURCE_UNCERTAINTY", "0.25"), 0.25))
+
+        for key in keys:
+            h = heuristic_dims.get(key)
+            u = unieval_dims.get(key)
+            entries = [float(v) for v in [h, u] if isinstance(v, (int, float))]
+            if not entries:
+                continue
+
+            if h is not None and u is not None:
+                # Two-estimator fusion: mean with estimator disagreement uncertainty.
+                mean_val = (float(h) + float(u)) / 2.0
+                unc = self._clip01(abs(float(h) - float(u)))
+                low = self._clip01(mean_val - 0.5 * unc)
+                high = self._clip01(mean_val + 0.5 * unc)
+                sources[key] = {"heuristic": round(float(h), 4), "unieval": round(float(u), 4)}
+            else:
+                mean_val = float(entries[0])
+                unc = single_source_unc
+                low = self._clip01(mean_val - 0.5 * unc)
+                high = self._clip01(mean_val + 0.5 * unc)
+                only_name = "heuristic" if h is not None else "unieval"
+                sources[key] = {only_name: round(mean_val, 4)}
+
+            fused[key] = round(self._clip01(mean_val), 4)
+            uncertainty[key] = round(unc, 4)
+            ci[key] = {"low": round(low, 4), "high": round(high, 4)}
+
+        # System-level uncertainty: mean dimension uncertainty.
+        if uncertainty:
+            overall_uncertainty = round(sum(uncertainty.values()) / len(uncertainty), 4)
+        else:
+            overall_uncertainty = 1.0
+
+        return {
+            "fused": fused,
+            "uncertainty": uncertainty,
+            "confidence_interval": ci,
+            "sources": sources,
+            "overall_uncertainty": overall_uncertainty,
+        }
+
     def _tokenize(self, text):
         """全量分词（含停用词）"""
         tokens = [t.strip().lower() for t in jieba.cut(text)]
@@ -52,9 +247,11 @@ class FlowerNetVerifier:
     def check_sources(
         self,
         draft: str,
+        outline: str = "",
         source_results: Optional[List[Dict[str, Any]]] = None,
         require_source_citations: bool = False,
         min_source_citations: int = 1,
+        min_semantic_source_score: float = 0.35,
     ) -> Dict[str, Any]:
         source_results = source_results or []
         refs = sorted({int(item) for item in re.findall(r"\[来源(\d+)\]", draft or "")})
@@ -68,6 +265,26 @@ class FlowerNetVerifier:
         }
         matched_urls = [url for url in found_urls if url in source_urls]
         invalid_urls = [url for url in found_urls if url not in source_urls]
+
+        outline_tokens = set(self._content_tokens(outline or ""))
+        matched_semantic_scores: Dict[str, float] = {}
+        for url in matched_urls:
+            source_item = next(
+                (item for item in source_results if str((item or {}).get("href") or "").strip() == url),
+                {},
+            )
+            source_text = f"{source_item.get('title', '')} {source_item.get('body', '')}"
+            source_tokens = set(self._content_tokens(source_text))
+            if not outline_tokens or not source_tokens:
+                score = float(source_item.get("semantic_score", 0.0) or 0.0)
+            else:
+                score = len(outline_tokens & source_tokens) / max(1, len(outline_tokens))
+            matched_semantic_scores[url] = float(round(score, 4))
+
+        low_semantic_urls = [
+            url for url, score in matched_semantic_scores.items()
+            if score < float(min_semantic_source_score)
+        ]
 
         total_available_sources = len(source_results)
         invalid_refs = [ref for ref in refs if ref < 1 or ref > total_available_sources]
@@ -88,6 +305,9 @@ class FlowerNetVerifier:
         elif len(invalid_urls) > 0:
             passed = False
             reason = "invalid_source_url"
+        elif len(low_semantic_urls) > 0:
+            passed = False
+            reason = "low_semantic_source_quality"
         elif citation_count_ok:
             passed = True
             reason = "ok"
@@ -104,6 +324,9 @@ class FlowerNetVerifier:
             "found_urls": found_urls,
             "matched_urls": matched_urls,
             "invalid_urls": invalid_urls,
+            "matched_semantic_scores": matched_semantic_scores,
+            "low_semantic_urls": low_semantic_urls,
+            "min_semantic_source_score": float(min_semantic_source_score),
             "total_available_sources": total_available_sources,
             "require_source_citations": require_source_citations,
             "min_source_citations": required_count,
@@ -232,15 +455,41 @@ class FlowerNetVerifier:
         red = self.calculate_redundancy(draft, history_list)
         source_check = self.check_sources(
             draft=draft,
+            outline=outline,
             source_results=source_results,
             require_source_citations=require_source_citations,
             min_source_citations=min_source_citations,
+            min_semantic_source_score=float(os.getenv("MIN_SEMANTIC_SOURCE_SCORE", "0.35")),
         )
+
+        heuristic_dimensions = self._compute_semantic_dimensions(
+            draft=draft,
+            outline=outline,
+            history_list=history_list,
+            rel=rel,
+            red=red,
+            source_check=source_check,
+        )
+        unieval_dimensions = self._try_unieval_dimensions(
+            draft=draft,
+            outline=outline,
+            history_list=history_list,
+        )
+        fusion = self._fuse_dimensions_with_uncertainty(
+            heuristic_dims=heuristic_dimensions,
+            unieval_dims=unieval_dimensions,
+        )
+        semantic_dimensions = fusion["fused"]
+        quality_score = self._composite_quality_score(semantic_dimensions)
+        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.58"), 0.58)
+        quality_passed = quality_score >= quality_threshold
+        require_multidim = os.getenv("REQUIRE_MULTIDIM_QUALITY", "true").lower() == "true"
 
         is_passed = (
             (rel['score'] >= rel_threshold)
             and (red['score'] <= red_threshold)
             and source_check["passed"]
+            and (quality_passed if require_multidim else True)
         )
 
         advice = "Content looks good."
@@ -249,18 +498,34 @@ class FlowerNetVerifier:
         if red['score'] > red_threshold:
             advice = "Content is redundant with previous sections. Provide new information."
         if not source_check["passed"]:
-            advice = "Source citation check failed. Add valid citations in format [来源N] with correct source numbers."
+            advice = "Source citation check failed. Use semantically relevant, verifiable source URLs for the current subsection outline."
+        if require_multidim and not quality_passed:
+            advice = "Multi-dimensional semantic quality is below threshold. Improve coherence, coverage, novelty and grounded evidence quality."
 
         return {
             "is_passed": is_passed,
             "relevancy_index": rel['score'],
             "redundancy_index": red['score'],
+            "quality_score": quality_score,
+            "quality_threshold": quality_threshold,
+            "quality_passed": quality_passed,
+            "quality_dimensions": semantic_dimensions,
+            "quality_dimensions_uncertainty": fusion["uncertainty"],
+            "quality_dimensions_confidence_interval": fusion["confidence_interval"],
+            "quality_overall_uncertainty": fusion["overall_uncertainty"],
+            "quality_dimensions_source": {
+                "heuristic": heuristic_dimensions,
+                "unieval": unieval_dimensions,
+                "per_dimension": fusion["sources"],
+            },
             "feedback": advice,
             "source_check": source_check,
             "raw_data": {
                 "relevancy": rel['details'],
                 "redundancy": red['details'],
                 "source_check": source_check,
+                "semantic_dimensions": semantic_dimensions,
+                "semantic_uncertainty": fusion["uncertainty"],
             }
         }
 
@@ -274,8 +539,8 @@ class VerifyRequest(BaseModel):
     outline: str                # 对应的大纲/任务要求
     history: List[str] = []     # 之前已经生成的章节内容列表（用于查重）
     document_id: Optional[str] = None  # 如果不传 history，可用 document_id 从数据库读取
-    rel_threshold: Optional[float] = 0.80  # 可选：自定义相关性阈值
-    red_threshold: Optional[float] = 0.40  # 可选：自定义冗余度阈值
+    rel_threshold: Optional[float] = 0.55  # 可选：自定义相关性阈值
+    red_threshold: Optional[float] = 0.70  # 可选：自定义冗余度阈值
     source_results: List[Dict[str, Any]] = []
     require_source_citations: bool = False
     min_source_citations: int = 1

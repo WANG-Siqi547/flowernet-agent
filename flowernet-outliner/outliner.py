@@ -97,17 +97,25 @@ class FlowerNetOutliner:
         self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
         self.ollama_backoff = float(os.getenv('OLLAMA_BACKOFF', '2.0'))
         self.ollama_max_backoff = float(os.getenv('OLLAMA_MAX_BACKOFF', '45.0'))
-        self.provider_retries = int(os.getenv('PROVIDER_RETRIES', '4'))
+        self.provider_retries = int(os.getenv('OUTLINER_PROVIDER_RETRIES', os.getenv('PROVIDER_RETRIES', '2')))
         self.provider_backoff = float(os.getenv('PROVIDER_BACKOFF', '2.0'))
         self.provider_max_backoff = float(os.getenv('PROVIDER_MAX_BACKOFF', '90.0'))
         self.provider_jitter = float(os.getenv('PROVIDER_JITTER', '0.35'))
         self.provider_min_interval = float(os.getenv('PROVIDER_MIN_INTERVAL', '1.2'))
         self.provider_failure_threshold = max(1, int(os.getenv('PROVIDER_FAILURE_THRESHOLD', '2')))
-        self.provider_cooldown_seconds = max(5.0, float(os.getenv('PROVIDER_COOLDOWN_SECONDS', '180')))
-        self.provider_http_timeout = float(os.getenv('PROVIDER_HTTP_TIMEOUT', '90'))
+        self.provider_cooldown_seconds = max(5.0, float(os.getenv('PROVIDER_COOLDOWN_SECONDS', '30')))
+        self.provider_http_timeout = float(os.getenv('PROVIDER_HTTP_TIMEOUT', '30'))
+        self.sensenova_connect_timeout = float(os.getenv('SENSENOVA_CONNECT_TIMEOUT', '8'))
+        self.sensenova_read_timeout = float(os.getenv('SENSENOVA_READ_TIMEOUT', str(self.provider_http_timeout)))
+        self.sensenova_transport_retries = max(1, int(os.getenv('OUTLINER_SENSENOVA_TRANSPORT_RETRIES', '2')))
+        self.sensenova_transport_backoff = max(0.2, float(os.getenv('OUTLINER_SENSENOVA_TRANSPORT_BACKOFF', '1.2')))
+        self.structure_max_tokens = max(600, int(os.getenv('OUTLINER_STRUCTURE_MAX_TOKENS', '1800')))
+        self.detailed_max_tokens = max(800, int(os.getenv('OUTLINER_DETAILED_MAX_TOKENS', '2200')))
         self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.dashscope_http_timeout = float(os.getenv('DASHSCOPE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.http_session = requests.Session()
+        self.http_session.trust_env = False
         self._provider_next_allowed: Dict[str, float] = {}
         self._provider_failure_streak: Dict[str, int] = {}
         self._provider_cooldown_until: Dict[str, float] = {}
@@ -254,7 +262,7 @@ class FlowerNetOutliner:
         try:
             structure, llm_metadata, structure_text = self._generate_json_with_repair(
                 structure_prompt,
-                max_tokens=4000,
+                max_tokens=self.structure_max_tokens,
                 stage_name="document_structure",
             )
             
@@ -408,15 +416,17 @@ class FlowerNetOutliner:
 
     def _generate_text_with_fallback(self, prompt: str, max_tokens: int, expect_json: bool = False) -> Tuple[str, Dict[str, Any]]:
         errors: List[str] = []
+        has_fallback_provider = len(self.provider_chain) > 1
         for provider in self.provider_chain:
             provider_errors: List[str] = []
             cooldown_until = self._provider_cooldown_until.get(provider, 0.0)
-            if cooldown_until > time.time():
+            if has_fallback_provider and cooldown_until > time.time():
                 remain = max(0.0, cooldown_until - time.time())
                 errors.append(f"{provider}: skipped (cooldown {remain:.1f}s)")
                 continue
 
-            for attempt in range(1, self.provider_retries + 1):
+            attempt_limit = self.provider_retries if has_fallback_provider else max(2, self.provider_retries)
+            for attempt in range(1, attempt_limit + 1):
                 try:
                     self._wait_for_provider_slot(provider)
                     text, metadata = self._generate_text_with_provider(
@@ -444,7 +454,7 @@ class FlowerNetOutliner:
                     else:
                         self._provider_failure_streak[provider] = 0
 
-                    should_retry = transient_error and attempt < self.provider_retries
+                    should_retry = transient_error and attempt < attempt_limit
                     if should_retry:
                         retry_delay = self._compute_retry_delay(attempt, retry_after=retry_after)
                         self._mark_provider_slot(provider, extra_delay=retry_delay)
@@ -486,7 +496,7 @@ class FlowerNetOutliner:
             params = {"api-version": self.azure_api_version}
 
             try:
-                response = requests.post(url, params=params, json=payload, headers=headers, timeout=self.azure_http_timeout)
+                response = self.http_session.post(url, params=params, json=payload, headers=headers, timeout=self.azure_http_timeout)
                 response.raise_for_status()
                 data = response.json()
                 choice = ((data.get("choices") or [{}])[0] or {})
@@ -561,7 +571,7 @@ class FlowerNetOutliner:
                     "Authorization": f"Bearer {self.dashscope_api_key}",
                     "Content-Type": "application/json",
                 }
-                response = requests.post(self.dashscope_api_url, json=payload, headers=headers, timeout=self.dashscope_http_timeout)
+                response = self.http_session.post(self.dashscope_api_url, json=payload, headers=headers, timeout=self.dashscope_http_timeout)
                 response.raise_for_status()
                 data = response.json()
                 choice = ((data.get("choices") or [{}])[0] or {})
@@ -596,51 +606,92 @@ class FlowerNetOutliner:
         if provider == "sensenova":
             if not self.sensenova_api_key:
                 raise Exception("SENSENOVA_API_KEY 未配置")
-            try:
-                payload = {
+            payload_variants = [
+                {
+                    "model": self.sensenova_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": temperature,
+                    "stream": False,
+                    "max_tokens": max_tokens,
+                },
+                {
                     "model": self.sensenova_model,
                     "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
                     "temperature": temperature,
                     "stream": False,
                     "max_tokens": max_tokens,
-                }
-                headers = {
-                    "Authorization": f"Bearer {self.sensenova_api_key}",
-                    "Content-Type": "application/json",
-                }
-                response = requests.post(self.sensenova_api_url, json=payload, headers=headers, timeout=self.provider_http_timeout)
-                response.raise_for_status()
-                data = response.json()
-                container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
-                choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
-                msg = choice.get("message") if isinstance(choice, dict) else None
-                content = ""
-                if isinstance(msg, str):
-                    content = msg
-                elif isinstance(msg, dict):
-                    content = msg.get("content", "")
-                if isinstance(content, list):
-                    parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
-                    content = "".join(parts)
-                text = str(content).strip()
-                if not text:
-                    raise Exception("SenseNova 返回空响应")
-                usage = container.get("usage") if isinstance(container, dict) else {}
-                usage = usage or {}
-                return text, {
-                    "provider": "sensenova",
-                    "model": self.sensenova_model,
-                    "prompt_tokens": usage.get("prompt_tokens", 0),
-                    "output_tokens": usage.get("completion_tokens", 0),
-                }
-            except requests.HTTPError as exc:
-                status = getattr(getattr(exc, "response", None), "status_code", "unknown")
-                response_text = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
-                if response_text:
-                    raise Exception(f"SenseNova HTTP {status}: {str(exc)} | response={response_text[:500]}")
-                raise Exception(f"SenseNova HTTP {status}: {str(exc)}")
-            except requests.RequestException as exc:
-                raise Exception(f"SenseNova request error: {str(exc)}")
+                },
+            ]
+            headers = {
+                "Authorization": f"Bearer {self.sensenova_api_key}",
+                "Content-Type": "application/json",
+            }
+            last_error = "SenseNova unknown error"
+            for payload in payload_variants:
+                for transport_attempt in range(1, self.sensenova_transport_retries + 1):
+                    try:
+                        response = self.http_session.post(
+                            self.sensenova_api_url,
+                            json=payload,
+                            headers=headers,
+                            timeout=(self.sensenova_connect_timeout, self.sensenova_read_timeout),
+                        )
+                        response.raise_for_status()
+                        data = response.json()
+                        container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+                        choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
+                        msg = choice.get("message") if isinstance(choice, dict) else None
+                        content = ""
+                        if isinstance(msg, str):
+                            content = msg
+                        elif isinstance(msg, dict):
+                            content = msg.get("content", "")
+                        if isinstance(content, list):
+                            parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
+                            content = "".join(parts)
+                        text = str(content).strip()
+                        if not text:
+                            raise Exception("SenseNova 返回空响应")
+                        usage = container.get("usage") if isinstance(container, dict) else {}
+                        usage = usage or {}
+                        return text, {
+                            "provider": "sensenova",
+                            "model": self.sensenova_model,
+                            "prompt_tokens": usage.get("prompt_tokens", 0),
+                            "output_tokens": usage.get("completion_tokens", 0),
+                        }
+                    except requests.HTTPError as exc:
+                        status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                        response_text = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
+                        retry_after_raw = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
+                        retry_after = self._parse_retry_after_seconds(retry_after_raw)
+                        suffix = f" | response={response_text[:500]}" if response_text else ""
+                        last_error = f"SenseNova HTTP {status}: {str(exc)}{suffix}"
+
+                        is_retryable_http = status in [408, 409, 425, 429, 500, 502, 503, 504]
+                        should_retry_transport = is_retryable_http and transport_attempt < self.sensenova_transport_retries
+                        if should_retry_transport:
+                            delay = self.sensenova_transport_backoff * transport_attempt
+                            if retry_after is not None:
+                                delay = max(delay, min(float(retry_after), self.provider_max_backoff))
+                            time.sleep(min(delay, self.provider_max_backoff))
+                            continue
+
+                        # 对 4xx 的参数兼容失败，切换 payload 变体尝试
+                        if isinstance(status, int) and status < 500:
+                            break
+                    except requests.RequestException as exc:
+                        last_error = f"SenseNova request error: {str(exc)}"
+                        should_retry_transport = transport_attempt < self.sensenova_transport_retries
+                        if should_retry_transport:
+                            delay = min(self.sensenova_transport_backoff * transport_attempt, self.provider_max_backoff)
+                            time.sleep(delay)
+                            continue
+                    except Exception as exc:
+                        last_error = f"SenseNova API Error: {str(exc)}"
+                        break
+
+            raise Exception(last_error)
 
         if provider == "openrouter":
             if not self.openrouter_api_key:
@@ -660,7 +711,7 @@ class FlowerNetOutliner:
                     "HTTP-Referer": self.openrouter_referrer,
                     "X-Title": self.openrouter_app_name,
                 }
-                response = requests.post(self.openrouter_api_url, json=payload, headers=headers, timeout=self.openrouter_http_timeout)
+                response = self.http_session.post(self.openrouter_api_url, json=payload, headers=headers, timeout=self.openrouter_http_timeout)
                 response.raise_for_status()
                 data = response.json()
                 choice = ((data.get("choices") or [{}])[0] or {})
@@ -808,7 +859,7 @@ class FlowerNetOutliner:
     """
             detailed, llm_metadata, detailed_text = self._generate_json_with_repair(
                 detailed_prompt,
-                max_tokens=5000,
+                max_tokens=self.detailed_max_tokens,
                 stage_name="detailed_section_outlines",
             )
             detailed.setdefault("title", structure.get("title", ""))
@@ -1045,7 +1096,7 @@ class FlowerNetOutliner:
             last_error = ""
             for attempt in range(1, self.ollama_retries + 1):
                 try:
-                    response = requests.post(
+                    response = self.http_session.post(
                         f"{self.ollama_url}/api/generate",
                         json=payload,
                         headers=headers,

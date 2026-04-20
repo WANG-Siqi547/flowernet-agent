@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Tuple
 import re
 import time
 import html
+import os
 from urllib.parse import unquote, urlparse, parse_qs
 
 import requests
@@ -25,6 +26,17 @@ class RAGSearchEngine:
             "chapter", "part", "introduction", "conclusion", "要求", "生成", "内容",
             "小节", "章节", "大纲", "写作", "说明", "包括", "以及", "关于"
         }
+        self.include_social_cn = os.getenv("RAG_INCLUDE_SOCIAL_CN", "true").lower() == "true"
+        self.high_quality_domains = {
+            "nature.com", "science.org", "sciencedirect.com", "springer.com", "ieee.org",
+            "acm.org", "arxiv.org", "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org",
+            "nist.gov", "nih.gov", "gov.cn", "edu.cn", "ruc.edu.cn", "tsinghua.edu.cn",
+            "pku.edu.cn", "cass.cn", "moe.gov.cn", "xiaohongshu.com", "douyin.com",
+        }
+        self.low_quality_domains = {
+            "baike.baidu.com", "zhidao.baidu.com", "tieba.baidu.com", "jingyan.baidu.com",
+            "m.baidu.com", "weibo.com", "t.co", "bit.ly", "tinyurl.com",
+        }
 
     def search(self, query: str) -> Dict[str, Any]:
         try:
@@ -38,11 +50,12 @@ class RAGSearchEngine:
                 if raw_html:
                     results = self._parse_results(raw_html, self.max_results)
                     if results:
+                        ranked_results = self._rank_results(query_candidate, results)
                         return {
                             "success": True,
                             "query": query,
                             "effective_query": query_candidate,
-                            "results": results,
+                            "results": ranked_results,
                             "search_time": round(time.time() - started_at, 3),
                             "error": None,
                         }
@@ -58,11 +71,12 @@ class RAGSearchEngine:
             for fallback_query in fallback_candidates:
                 fallback_results = self._search_wikipedia(fallback_query)
                 if fallback_results:
+                    ranked_fallback = self._rank_results(fallback_query, fallback_results)
                     return {
                         "success": True,
                         "query": query,
                         "effective_query": fallback_query,
-                        "results": fallback_results,
+                        "results": ranked_fallback,
                         "search_time": round(time.time() - started_at, 3),
                         "error": "fallback_wikipedia",
                     }
@@ -92,6 +106,13 @@ class RAGSearchEngine:
         first_sentence = re.split(r"[。！？.!?]\s*", query_text)[0].strip()[:140]
 
         candidates: List[str] = [query_text, compact, semantic, first_sentence]
+        if self.include_social_cn and semantic:
+            candidates.extend([
+                f"{semantic} site:xiaohongshu.com",
+                f"{semantic} site:douyin.com",
+                f"{semantic} 小红书",
+                f"{semantic} 抖音",
+            ])
         dedup: List[str] = []
         seen = set()
         for candidate in candidates:
@@ -104,7 +125,79 @@ class RAGSearchEngine:
             seen.add(key)
             dedup.append(cleaned)
 
-        return dedup[:5]
+        return dedup[:8]
+
+    def _tokenize_query(self, text: str) -> List[str]:
+        tokens = re.findall(r"[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{1,30}", text or "")
+        out: List[str] = []
+        for token in tokens:
+            t = token.strip().lower()
+            if not t or t in self._query_stopwords:
+                continue
+            if len(t) <= 1 or t.isdigit():
+                continue
+            if t not in out:
+                out.append(t)
+        return out
+
+    def _domain_score(self, domain: str) -> float:
+        host = (domain or "").lower().strip()
+        if not host:
+            return 0.0
+
+        if host in self.low_quality_domains:
+            return 0.15
+        if host in self.high_quality_domains:
+            return 1.0
+        if host.endswith(".gov") or host.endswith(".edu") or host.endswith(".gov.cn") or host.endswith(".edu.cn"):
+            return 0.95
+        if "wikipedia.org" in host:
+            return 0.55
+        if host.endswith(".org"):
+            return 0.72
+        if host.endswith(".com"):
+            return 0.60
+        return 0.5
+
+    def _semantic_score(self, query: str, item: Dict[str, Any]) -> float:
+        query_tokens = self._tokenize_query(query)
+        if not query_tokens:
+            return 0.0
+        text = f"{item.get('title', '')} {item.get('body', '')}".lower()
+        hit_count = 0
+        for token in query_tokens:
+            if token in text:
+                hit_count += 1
+        coverage = hit_count / max(1, len(query_tokens))
+
+        # Penalize obvious noisy titles like pure numeric pages (e.g. "1", "1.1.1.1")
+        title = str(item.get("title", "")).strip().lower()
+        if re.fullmatch(r"[\d\.\-:_\s]{1,40}", title):
+            coverage *= 0.35
+        return max(0.0, min(1.0, coverage))
+
+    def _rank_results(self, query: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        ranked: List[Dict[str, Any]] = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            domain = self._extract_domain(str(item.get("href", "")))
+            semantic_score = self._semantic_score(query, item)
+            domain_score = self._domain_score(domain)
+            quality_score = round((semantic_score * 0.65) + (domain_score * 0.35), 4)
+
+            enriched = dict(item)
+            enriched["source"] = enriched.get("source") or domain
+            enriched["domain_score"] = round(domain_score, 4)
+            enriched["semantic_score"] = round(semantic_score, 4)
+            enriched["quality_score"] = quality_score
+            ranked.append(enriched)
+
+        ranked.sort(
+            key=lambda x: (float(x.get("quality_score", 0.0)), float(x.get("semantic_score", 0.0))),
+            reverse=True,
+        )
+        return ranked[: self.max_results]
 
     def _compact_query(self, query: str) -> str:
         tokens = re.findall(r"[A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{0,30}", query)
@@ -372,6 +465,8 @@ class SourceVerifier:
         source_results: List[Dict[str, Any]],
         require_citations: bool = True,
         min_citations: int = 1,
+        topic: str = "",
+        min_semantic_score: float = 0.35,
     ) -> Dict[str, Any]:
         refs = sorted({int(value) for value in re.findall(r"\[来源(\d+)\]", text or "")})
         url_pattern = re.compile(r"https?://[^\s\]）)>,;]+", flags=re.IGNORECASE)
@@ -387,6 +482,20 @@ class SourceVerifier:
         matched_urls = [url for url in found_urls if url in source_urls]
         invalid_urls = [url for url in found_urls if url not in source_urls]
 
+        matched_semantic_scores: Dict[str, float] = {}
+        topic_tokens = set(re.findall(r"[A-Za-z0-9\u4e00-\u9fff]{2,40}", str(topic or "").lower()))
+        for url in matched_urls:
+            source_item = next((it for it in (source_results or []) if str((it or {}).get("href") or "").strip() == url), {})
+            source_text = f"{source_item.get('title', '')} {source_item.get('body', '')}".lower()
+            if not topic_tokens:
+                semantic = float(source_item.get("semantic_score", 0.0) or 0.0)
+            else:
+                hit = sum(1 for tk in topic_tokens if tk in source_text)
+                semantic = hit / max(1, len(topic_tokens))
+            matched_semantic_scores[url] = round(float(semantic), 4)
+
+        low_semantic_urls = [url for url, score in matched_semantic_scores.items() if score < float(min_semantic_score)]
+
         citation_count = max(len(refs), len(matched_urls))
 
         if require_citations:
@@ -394,7 +503,7 @@ class SourceVerifier:
         else:
             citation_ok = True
 
-        valid = citation_ok and len(invalid_refs) == 0 and len(invalid_urls) == 0
+        valid = citation_ok and len(invalid_refs) == 0 and len(invalid_urls) == 0 and len(low_semantic_urls) == 0
         return {
             "valid": valid,
             "found_references": citation_count,
@@ -403,7 +512,10 @@ class SourceVerifier:
             "found_urls": found_urls,
             "matched_urls": matched_urls,
             "invalid_urls": invalid_urls,
+            "matched_semantic_scores": matched_semantic_scores,
+            "low_semantic_urls": low_semantic_urls,
             "total_sources": total_sources,
             "required": require_citations,
             "min_citations": max(1, int(min_citations)),
+            "min_semantic_score": float(min_semantic_score),
         }

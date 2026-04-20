@@ -13,9 +13,9 @@ services:
       - key: PUBLIC_BASE_URL
         value: https://flowernet-web.onrender.com
       - key: REQUEST_TIMEOUT
-        value: "3600"
+        value: "600"
       - key: DOWNSTREAM_RETRIES
-        value: "10"
+        value: "1"
       - key: DOWNSTREAM_BACKOFF
         value: "4.0"
       - key: DOWNSTREAM_MAX_BACKOFF
@@ -23,7 +23,7 @@ services:
       - key: DOWNSTREAM_JITTER
         value: "0.4"
       - key: DOWNSTREAM_OUTLINER_MIN_RETRIES
-        value: "12"
+        value: "2"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
       - key: WEB_DEFAULT_REL_THRESHOLD

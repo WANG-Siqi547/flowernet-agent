@@ -37,12 +37,24 @@ stop_service "Verifier"
 stop_service "Controller"
 stop_service "Outliner"
 stop_service "Web"
+stop_service "UniEval"
+
+WATCHDOG_PID_FILE="/tmp/unieval-watchdog.pid"
+if [ -f "$WATCHDOG_PID_FILE" ]; then
+    watchdog_pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || true)
+    if [ -n "$watchdog_pid" ]; then
+        echo -e "${BLUE}停止 UniEval Watchdog (PID: $watchdog_pid)...${NC}"
+        kill "$watchdog_pid" 2>/dev/null || true
+    fi
+    rm -f "$WATCHDOG_PID_FILE"
+fi
 
 # 杀死可能残留的进程
 echo -e "\n${BLUE}清理残留进程...${NC}"
 pkill -f "python.*main.py" || true
 pkill -f "uvicorn.*main:app" || true
-for port in 8000 8001 8002 8003 8010; do
+pkill -f "unieval-watchdog" || true
+for port in 8000 8001 8002 8003 8004 8010; do
     lsof -ti tcp:$port | xargs kill -9 2>/dev/null || true
 done
 sleep 1

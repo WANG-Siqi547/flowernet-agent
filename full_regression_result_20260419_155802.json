@@ -1,0 +1,135 @@
+{
+  "timestamp": "2026-04-19 15:58:02",
+  "overall_pass": false,
+  "all_health_ok": true,
+  "stability_ok": false,
+  "module_smoke_ok": false,
+  "e2e_complete_ok": false,
+  "health": {
+    "web_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.018,
+      "body": "<!doctype html>\n<html lang=\"zh-CN\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>FlowerNet 文档生成器</title>\n  <style>\n    * { marg"
+    },
+    "web_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.002,
+      "body": "{\"status\":\"ok\",\"service\":\"flowernet-web\"}"
+    },
+    "generator_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.012,
+      "body": "{\"status\":\"online\",\"message\":\"FlowerNet Generator API is ready.\",\"endpoints\":{\"/generate\":\"Simple draft generation\",\"/generate_with_context\":\"Draft generation with context\",\"/generate_section\":\"Genera"
+    },
+    "generator_health": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.001,
+      "body": "{\"status\":\"healthy\",\"generator_initialized\":true}"
+    },
+    "outliner_root": {
+      "ok": true,
+      "status": 200,
+      "elapsed": 0.007,
+      "body": "{\"service\":\"FlowerNet Outliner\",\"status\":\"running\",\"version\":\"1.0.0\",\"timestamp\":\"2026-04-19T15:40:41.100131\"}"
+    }
+  },
+  "stability": {
+    "rounds": 20,
+    "failures": 10,
+    "avg_latency": 0.003,
+    "p95_latency": 0.005,
+    "samples": [
+      [
+        "generator_generate",
+        1,
+        {
+          "ok": true,
+          "status": 200,
+          "elapsed": 0.008,
+          "json": {
+            "success": false,
+            "error": "All providers failed: azure: AZURE_OPENAI_API_KEY not set",
+            "draft": ""
+          }
+        }
+      ],
+      [
+        "generator_generate",
+        2,
+        {
+          "ok": true,
+          "status": 200,
+          "elapsed": 0.005,
+          "json": {
+            "success": false,
+            "error": "All providers failed: azure: AZURE_OPENAI_API_KEY not set",
+            "draft": ""
+          }
+        }
+      ],
+      [
+        "generator_generate",
+        3,
+        {
+          "ok": true,
+          "status": 200,
+          "elapsed": 0.002,
+          "json": {
+            "success": false,
+            "error": "All providers failed: azure: AZURE_OPENAI_API_KEY not set",
+            "draft": ""
+          }
+        }
+      ],
+      [
+        "generator_generate",
+        4,
+        {
+          "ok": true,
+          "status": 200,
+          "elapsed": 0.002,
+          "json": {
+            "success": false,
+            "error": "All providers failed: azure: AZURE_OPENAI_API_KEY not set",
+            "draft": ""
+          }
+        }
+      ],
+      [
+        "generator_generate",
+        5,
+        {
+          "ok": true,
+          "status": 200,
+          "elapsed": 0.002,
+          "json": {
+            "success": false,
+            "error": "All providers failed: azure: AZURE_OPENAI_API_KEY not set",
+            "draft": ""
+          }
+        }
+      ]
+    ]
+  },
+  "module": {
+    "generator_ok": false,
+    "outliner_ok": true
+  },
+  "e2e": {
+    "http_status": 200,
+    "elapsed_seconds": 1017.09,
+    "success": true,
+    "partial": true,
+    "title": "大学新生时间管理与学习习惯指南",
+    "content_length": 1092,
+    "expected_subsections": 4,
+    "passed_subsections": 4,
+    "forced_subsections": 4,
+    "failed_subsections": 0,
+    "error": "文档内容已生成，但引用质量未达标：no_citation_urls"
+  }
+}

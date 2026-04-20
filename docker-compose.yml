@@ -10,15 +10,51 @@ services:
     networks:
       - flowernet
 
+  unieval-app:
+    build: ./flowernet-unieval
+    container_name: flower-unieval
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8004:8004"
+    environment:
+      - PORT=8004
+      - UNIEVAL_MODEL_NAME=cross-encoder/nli-MiniLM2-L6-H768
+      - UNIEVAL_MODEL_REVISION=b95119ce93d3e065de6214e38cd4a97b0f2f2c6d
+      - UNIEVAL_CACHE_DIR=/hf-cache
+      - UNIEVAL_TIMEOUT=25
+      - UNIEVAL_LOAD_TIMEOUT_SEC=300
+    volumes:
+      - unieval_hf_cache:/hf-cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8004/health/ready', timeout=3).getcode()==200 else 1)"]
+      interval: 20s
+      timeout: 6s
+      retries: 10
+      start_period: 45s
+    networks:
+      - flowernet
+
   verifier-app:
     build: ./flowernet-verifier
     container_name: flower-verifier
     restart: unless-stopped
+    depends_on:
+      unieval-app:
+        condition: service_healthy
     environment:
       - PORT=8000
       - USE_DATABASE=false
+      - UNIEVAL_ENDPOINT=http://unieval-app:8004/score
+      - UNIEVAL_TIMEOUT=25
     volumes:
       - verifier_cache:/root/.cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3).getcode()==200 else 1)"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
     networks:
       - flowernet
 
@@ -27,19 +63,26 @@ services:
     container_name: flower-controller
     restart: unless-stopped
     depends_on:
-      - verifier-app
+      verifier-app:
+        condition: service_healthy
     environment:
       - PORT=8001
       - VERIFIER_URL=http://verifier-app:8000
       - USE_DATABASE=false
       - CONTROLLER_USE_LLM_OUTLINE=true
       - CONTROLLER_REQUIRE_LLM_SOURCE=false
-      - CONTROLLER_LLM_TIMEOUT=120
-      - CONTROLLER_LLM_RETRIES=3
+      - CONTROLLER_LLM_TIMEOUT=30
+      - CONTROLLER_LLM_RETRIES=1
       - CONTROLLER_MIN_SCORE_GAIN=0.001
       - CONTROLLER_MIN_REL_ANCHOR_GAIN=0.005
       - CONTROLLER_MIN_NOVELTY_GAIN=0.005
       - CONTROLLER_MIN_STRUCTURE_GAIN=0.05
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/', timeout=3).getcode()==200 else 1)"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
     networks:
       - flowernet
 
@@ -83,22 +126,28 @@ services:
       - OLLAMA_RETRIES=6
       - OLLAMA_BACKOFF=3
       - OLLAMA_MAX_BACKOFF=60
-      - PROVIDER_RETRIES=4
+      - PROVIDER_RETRIES=1
       - PROVIDER_BACKOFF=2.0
       - PROVIDER_MAX_BACKOFF=45.0
       - PROVIDER_JITTER=0.35
       - PROVIDER_MIN_INTERVAL=1.2
       - PROVIDER_FAILURE_THRESHOLD=2
-      - PROVIDER_COOLDOWN_SECONDS=180
-      - PROVIDER_HTTP_TIMEOUT=90
-      - AZURE_HTTP_TIMEOUT=90
-      - DASHSCOPE_HTTP_TIMEOUT=90
-      - OPENROUTER_HTTP_TIMEOUT=90
+      - PROVIDER_COOLDOWN_SECONDS=30
+      - PROVIDER_HTTP_TIMEOUT=30
+      - AZURE_HTTP_TIMEOUT=30
+      - DASHSCOPE_HTTP_TIMEOUT=30
+      - OPENROUTER_HTTP_TIMEOUT=30
       - OUTLINER_SERIALIZE_TASKS=true
       - OUTLINER_TASK_WAIT_TIMEOUT=5
       - OUTLINER_FLOW_RETRIES=6
       - OUTLINER_FLOW_BACKOFF=5.0
       - USE_DATABASE=false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8003/', timeout=3).getcode()==200 else 1)"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
     networks:
       - flowernet
 
@@ -107,9 +156,12 @@ services:
     container_name: flower-generator
     restart: unless-stopped
     depends_on:
-      - verifier-app
-      - controller-app
-      - outliner-app
+      verifier-app:
+        condition: service_healthy
+      controller-app:
+        condition: service_healthy
+      outliner-app:
+        condition: service_healthy
     ports:
       - "8002:8002"
     environment:
@@ -151,27 +203,33 @@ services:
       - OLLAMA_RETRIES=6
       - OLLAMA_BACKOFF=3
       - OLLAMA_MAX_BACKOFF=60
-      - PROVIDER_RETRIES=4
+      - PROVIDER_RETRIES=1
       - PROVIDER_BACKOFF=2.0
       - PROVIDER_MAX_BACKOFF=45.0
       - PROVIDER_FAILURE_THRESHOLD=2
-      - PROVIDER_COOLDOWN_SECONDS=180
-      - PROVIDER_HTTP_TIMEOUT=90
-      - DASHSCOPE_HTTP_TIMEOUT=90
-      - AZURE_HTTP_TIMEOUT=90
-      - OPENROUTER_HTTP_TIMEOUT=90
+      - PROVIDER_COOLDOWN_SECONDS=30
+      - PROVIDER_HTTP_TIMEOUT=30
+      - DASHSCOPE_HTTP_TIMEOUT=30
+      - AZURE_HTTP_TIMEOUT=30
+      - OPENROUTER_HTTP_TIMEOUT=30
       - PROMPT_OUTLINE_MAX_CHARS=4500
       - PROMPT_ORIGINAL_MAX_CHARS=3500
       - PROMPT_RAG_MAX_CHARS=2200
       - PROMPT_HISTORY_MAX_CHARS=2600
-      - MAX_SUBSECTION_ATTEMPTS=12
+      - MAX_SUBSECTION_ATTEMPTS=4
       - MAX_CONTROLLER_RETRIES=2
       - MIN_CONTROLLER_RETRIES_BEFORE_FORCE=2
-      - MAX_GENERATOR_FAILURES_PER_SUBSECTION=12
+      - MAX_GENERATOR_FAILURES_PER_SUBSECTION=4
       - STRICT_CONTROLLER_EFFECTIVE=false
       - SERIALIZE_DOCUMENT_WAIT_TIMEOUT=180
     volumes:
       - shared_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3).getcode()==200 else 1)"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
     networks:
       - flowernet
 
@@ -180,22 +238,30 @@ services:
     container_name: flower-web
     restart: unless-stopped
     depends_on:
-      - outliner-app
-      - generator-app
+      outliner-app:
+        condition: service_healthy
+      generator-app:
+        condition: service_healthy
     ports:
       - "8010:8010"
     environment:
       - PORT=8010
       - OUTLINER_URL=http://outliner-app:8003
       - GENERATOR_URL=http://generator-app:8002
-      - REQUEST_TIMEOUT=3600
+      - REQUEST_TIMEOUT=600
       - API_AUTH_ENABLED=false
-      - DOWNSTREAM_RETRIES=10
+      - DOWNSTREAM_RETRIES=1
       - DOWNSTREAM_BACKOFF=4.0
       - DOWNSTREAM_MAX_BACKOFF=180.0
       - DOWNSTREAM_JITTER=0.4
     volumes:
       - shared_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3).getcode()==200 else 1)"]
+      interval: 20s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
     networks:
       - flowernet
 
@@ -209,4 +275,6 @@ volumes:
   shared_data:
     driver: local
   verifier_cache:
+    driver: local
+  unieval_hf_cache:
     driver: local

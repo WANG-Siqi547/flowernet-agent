@@ -56,7 +56,7 @@ class DocumentGenerationOrchestrator:
         outliner_url: str = "http://localhost:8003",
         max_iterations: int = 5,
         history_manager: Optional[Any] = None,
-        history_window_size: int = 5,  # 历史窗口大小：只使用最近N个小节
+        history_window_size: int = 2,  # 历史窗口大小：只使用最近N个小节
         max_forced_iterations: int = 15  # 兼容旧参数：不再用于强制通过
     ):
         """初始化编排器"""
@@ -74,6 +74,11 @@ class DocumentGenerationOrchestrator:
         self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
         # 默认轮次收敛到 8，避免长时间卡在单小节。
         self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "8")))
+        # 当 Generator 连续失败时，优先按该阈值触发兜底，避免单小节长时间阻塞。
+        self.max_generator_failures_per_subsection = max(
+            1,
+            int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "3")),
+        )
         self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "3")))
         configured_min_retries = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "8")))
         self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)
@@ -85,6 +90,9 @@ class DocumentGenerationOrchestrator:
         self.orch_generator_backoff = max(0.2, float(os.getenv("ORCH_GENERATOR_BACKOFF", "1.5")))
         self.orch_generator_max_backoff = max(1.0, float(os.getenv("ORCH_GENERATOR_MAX_BACKOFF", "20.0")))
         self.generator_http_timeout = max(30, int(os.getenv("GENERATOR_HTTP_TIMEOUT", "120")))
+        self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "180")))
+        self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "8")))
+        self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "8.0")))
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -98,10 +106,10 @@ class DocumentGenerationOrchestrator:
         self.rag_min_citations = max(1, int(os.getenv("RAG_MIN_CITATIONS", "1")))
         self.rag_max_results = max(1, int(os.getenv("RAG_MAX_RESULTS", "5")))
         self.rag_timeout = max(3, int(os.getenv("RAG_TIMEOUT", "10")))
-        self.prompt_outline_max_chars = max(500, int(os.getenv("PROMPT_OUTLINE_MAX_CHARS", "4500")))
-        self.prompt_original_max_chars = max(500, int(os.getenv("PROMPT_ORIGINAL_MAX_CHARS", "3500")))
-        self.prompt_rag_max_chars = max(200, int(os.getenv("PROMPT_RAG_MAX_CHARS", "2200")))
-        self.prompt_history_max_chars = max(200, int(os.getenv("PROMPT_HISTORY_MAX_CHARS", "2600")))
+        self.prompt_outline_max_chars = max(500, int(os.getenv("PROMPT_OUTLINE_MAX_CHARS", "2500")))
+        self.prompt_original_max_chars = max(500, int(os.getenv("PROMPT_ORIGINAL_MAX_CHARS", "2500")))
+        self.prompt_rag_max_chars = max(200, int(os.getenv("PROMPT_RAG_MAX_CHARS", "800")))
+        self.prompt_history_max_chars = max(200, int(os.getenv("PROMPT_HISTORY_MAX_CHARS", "1000")))
 
         self.search_engine = (
             RAGSearchEngine(max_results=self.rag_max_results, timeout=self.rag_timeout)
@@ -322,8 +330,8 @@ class DocumentGenerationOrchestrator:
         content_prompts: List[Dict[str, Any]],  # 从 Outliner 返回的 content_prompts
         user_background: str,
         user_requirements: str,
-        rel_threshold: float = 0.75,
-        red_threshold: float = 0.50
+        rel_threshold: float = 0.55,
+        red_threshold: float = 0.70
     ) -> Dict[str, Any]:
         """
         完整文档生成流程
@@ -888,6 +896,36 @@ class DocumentGenerationOrchestrator:
                         "draft": best_candidate.get("draft", ""),
                         "final_outline": best_candidate.get("outline", current_outline),
                         "iterations": iterations - 1,
+                        "rag_used": bool(best_candidate.get("rag_used", rag_used)),
+                        "rag_search_success": bool(
+                            best_candidate.get(
+                                "rag_search_success",
+                                bool(rag_search_result.get("success", False)),
+                            )
+                        ),
+                        "rag_result_count": int(
+                            best_candidate.get(
+                                "rag_result_count",
+                                len(rag_search_result.get("results", [])),
+                            )
+                            or 0
+                        ),
+                        "rag_selected_query": str(
+                            best_candidate.get("rag_selected_query", rag_selected_query) or ""
+                        ),
+                        "controller_effective": bool(
+                            best_candidate.get(
+                                "controller_effective",
+                                bool(controller_last_result.get("effective", False)),
+                            )
+                        ),
+                        "controller_source": str(
+                            best_candidate.get(
+                                "controller_source",
+                                controller_last_result.get("source", ""),
+                            )
+                            or ""
+                        ),
                         "verification": {
                             **best_verification,
                             "forced_pass": (not max_pass_ok),
@@ -985,7 +1023,8 @@ class DocumentGenerationOrchestrator:
                     },
                 )
 
-                if generator_failure_streak >= effective_attempt_cap:
+                max_generator_failures = min(effective_attempt_cap, self.max_generator_failures_per_subsection)
+                if generator_failure_streak >= max_generator_failures:
                     fail_error = str(gen_result.get("error", "generator_unavailable"))
                     fail_outline = str(current_outline).strip()
                     fallback_text = f"（系统兜底）{subsection_id}\n\n{fail_outline}"
@@ -997,7 +1036,7 @@ class DocumentGenerationOrchestrator:
                         message=f"Generator 在本小节内连续失败 {generator_failure_streak} 次，触发兜底通过",
                         metadata={
                             "iteration": iterations,
-                            "max_generator_failures": effective_attempt_cap,
+                            "max_generator_failures": max_generator_failures,
                             "error": fail_error,
                         },
                     )
@@ -1118,6 +1157,7 @@ class DocumentGenerationOrchestrator:
                 citation_failed = (
                     "insufficient_citations" in source_reason
                     or "invalid_source_url" in source_reason
+                    or "low_semantic_source_quality" in source_reason
                     or "citation" in citation_feedback
                     or "来源" in citation_feedback
                 )
@@ -1540,15 +1580,15 @@ class DocumentGenerationOrchestrator:
 - 推荐正文引用格式： （来源：文章标题，链接：https://example.com/xxx）
 - 至少提供 1 处可点击的具体网页链接；若有图片链接，也请直接写出图片 URL
 - 只能引用上方“参考资料”里给出的来源，不允许编造不存在的论文、文章、链接或图片链接
+- 每个关键事实至少提供 1 组“事实句 + 可验证来源URL”的证据最小单元
+- 禁止引用与当前小节主题语义不一致的链接；如果标题/摘要和小节要点不匹配，禁止使用
 - 在正文末尾增加“引用来源”小节，逐条列出：标题、网页链接、可选图片链接
 
 """
 
-        enhanced += f"""【原始生成指令】
-{original_prompt}
-
-请直接输出该小节的正文内容，不要添加任何前言或后语。
-"""
+        enhanced += """【原始生成指令】
+    请直接输出该小节的正文内容，不要添加任何前言或后语。
+    """
 
         return enhanced.strip()
 
@@ -1568,7 +1608,7 @@ class DocumentGenerationOrchestrator:
             try:
                 print(f"      [_call_generator] Calling local generator.generate_draft...")
                 start = time.time()
-                result = self._local_generator.generate_draft(prompt=prompt, max_tokens=800)
+                result = self._local_generator.generate_draft(prompt=prompt, max_tokens=320)
                 elapsed = time.time() - start
                 print(f"      [_call_generator] Local call returned in {elapsed:.1f}s: success={result.get('success')}")
                 return result
@@ -1584,7 +1624,7 @@ class DocumentGenerationOrchestrator:
                 )
                 response = self.session.post(
                     f"{self.generator_url}/generate",
-                    json={"prompt": prompt, "max_tokens": 800},
+                    json={"prompt": prompt, "max_tokens": 320},
                     timeout=self.generator_http_timeout,
                 )
 
@@ -1677,10 +1717,13 @@ class DocumentGenerationOrchestrator:
         
         这样可以容忍 Render Free Plan 的冷启动延迟（30-60s）和高负载情况。
         """
-        print(f"      [_call_verifier] Starting verifier call (timeout=180s, max_retries=5)...")
+        print(
+            f"      [_call_verifier] Starting verifier call "
+            f"(timeout={self.verifier_http_timeout}s, max_retries={self.verifier_max_retries})..."
+        )
         last_error = "unknown"
-        max_retries = 5
-        retry_delay = 8  # 增加到 8s 让 Render 有充足恢复时间
+        max_retries = self.verifier_max_retries
+        retry_delay = self.verifier_retry_delay
         
         for attempt in range(1, max_retries + 1):
             try:
@@ -1698,7 +1741,7 @@ class DocumentGenerationOrchestrator:
                         "require_source_citations": require_source_citations,
                         "min_source_citations": max(1, int(min_source_citations)),
                     },
-                    timeout=180  # 增加从 90s → 180s
+                    timeout=self.verifier_http_timeout,
                 )
                 if response.status_code == 200:
                     elapsed = time.time() - start
@@ -1716,8 +1759,9 @@ class DocumentGenerationOrchestrator:
                 print(f"      [_call_verifier] Exception after {elapsed:.1f}s: {e}")
             
             if attempt < max_retries:
-                print(f"         ⚠️ Verifier 第{attempt}次调用失败 ({last_error[:80]})，{retry_delay}s 后重试...")
-                time.sleep(retry_delay)
+                adaptive_delay = min(30.0, retry_delay * (1.0 + 0.2 * attempt))
+                print(f"         ⚠️ Verifier 第{attempt}次调用失败 ({last_error[:80]})，{adaptive_delay:.1f}s 后重试...")
+                time.sleep(adaptive_delay)
         
         print(f"      [_call_verifier] All {max_retries} attempts failed: {last_error}")
         return {"success": False, "error": last_error}

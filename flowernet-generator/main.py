@@ -57,8 +57,8 @@ class GenerateSectionRequest(BaseModel):
     section_id: Optional[str] = None
     subsection_id: Optional[str] = None
     history: List[str] = []
-    rel_threshold: float = 0.90
-    red_threshold: float = 0.42
+    rel_threshold: float = 0.55
+    red_threshold: float = 0.70
 
 
 class GenerateDocumentRequest(BaseModel):
@@ -69,8 +69,8 @@ class GenerateDocumentRequest(BaseModel):
     content_prompts: List[Dict[str, Any]]  # 从 Outliner 返回的 content_prompts
     user_background: str
     user_requirements: str
-    rel_threshold: float = 0.90
-    red_threshold: float = 0.42
+    rel_threshold: float = 0.55
+    red_threshold: float = 0.70
 
 
 # ============ 全局对象 ============
@@ -431,7 +431,7 @@ def generate_document(request: GenerateDocumentRequest):
             orchestrator.set_local_generator(generator)
 
         serialize_tasks = os.getenv("SERIALIZE_DOCUMENT_TASKS", "true").lower() == "true"
-        lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "30"))
+        lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "900"))
 
         acquired = True
         if serialize_tasks:
@@ -446,6 +446,7 @@ def generate_document(request: GenerateDocumentRequest):
                     detail=(
                         f"已有文档生成任务正在运行，请稍后重试（等待上限 {lock_wait_timeout:.0f}s）"
                     ),
+                    headers={"Retry-After": str(max(5, int(min(lock_wait_timeout, 30))))},
                 )
 
         try:

@@ -38,9 +38,9 @@ services:
       - key: SENSENOVA_API_KEY
         sync: false
       - key: CONTROLLER_LLM_TIMEOUT
-        value: "45"
+        value: "30"
       - key: CONTROLLER_LLM_RETRIES
-        value: "2"
+        value: "1"
       - key: CONTROLLER_MIN_SCORE_GAIN
         value: "0.001"
       - key: CONTROLLER_MIN_REL_ANCHOR_GAIN

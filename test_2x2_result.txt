@@ -1,0 +1,1 @@
+/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python: can't open file '/Users/k1ns9sley/Desktop/msc project/flowernet-agent/test_2x2_optimized.py': [Errno 2] No such file or directory

@@ -98,14 +98,18 @@ class FlowerNetGenerator:
         self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
         self.ollama_backoff = float(os.getenv('OLLAMA_BACKOFF', '2.0'))
         self.ollama_max_backoff = float(os.getenv('OLLAMA_MAX_BACKOFF', '45.0'))
-        self.provider_retries = int(os.getenv('PROVIDER_RETRIES', '4'))
+        self.provider_retries = int(os.getenv('PROVIDER_RETRIES', '2'))
         self.provider_backoff = float(os.getenv('PROVIDER_BACKOFF', '2.0'))
         self.provider_max_backoff = float(os.getenv('PROVIDER_MAX_BACKOFF', '90.0'))
         self.provider_jitter = float(os.getenv('PROVIDER_JITTER', '0.35'))
         self.provider_min_interval = float(os.getenv('PROVIDER_MIN_INTERVAL', '1.0'))
         self.provider_failure_threshold = max(1, int(os.getenv('PROVIDER_FAILURE_THRESHOLD', '2')))
-        self.provider_cooldown_seconds = max(5.0, float(os.getenv('PROVIDER_COOLDOWN_SECONDS', '180')))
-        self.provider_http_timeout = float(os.getenv('PROVIDER_HTTP_TIMEOUT', '90'))
+        self.provider_cooldown_seconds = max(5.0, float(os.getenv('PROVIDER_COOLDOWN_SECONDS', '30')))
+        self.provider_http_timeout = float(os.getenv('PROVIDER_HTTP_TIMEOUT', '30'))
+        self.sensenova_connect_timeout = float(os.getenv('GENERATOR_SENSENOVA_CONNECT_TIMEOUT', '8'))
+        self.sensenova_read_timeout = float(os.getenv('GENERATOR_SENSENOVA_READ_TIMEOUT', '45'))
+        self.sensenova_transport_retries = max(1, int(os.getenv('GENERATOR_SENSENOVA_TRANSPORT_RETRIES', '2')))
+        self.sensenova_transport_backoff = max(0.2, float(os.getenv('GENERATOR_SENSENOVA_TRANSPORT_BACKOFF', '1.2')))
         self.dashscope_http_timeout = float(os.getenv('DASHSCOPE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
@@ -219,7 +223,8 @@ class FlowerNetGenerator:
                     errors.append(f"{provider}: skipped (cooldown {remain:.1f}s)")
                     continue
 
-                for attempt in range(1, self.provider_retries + 1):
+                attempt_limit = self.provider_retries if has_fallback_provider else min(self.provider_retries, 2)
+                for attempt in range(1, attempt_limit + 1):
                     self._wait_for_provider_slot(provider)
 
                     if provider == "azure":
@@ -259,7 +264,7 @@ class FlowerNetGenerator:
                     else:
                         self._provider_failure_streak[provider] = 0
 
-                    should_retry = transient_error and attempt < self.provider_retries
+                    should_retry = transient_error and attempt < attempt_limit
                     if should_retry:
                         retry_after = result.get("retry_after")
                         if retry_after is None:
@@ -632,57 +637,72 @@ class FlowerNetGenerator:
             }
 
             last_error = "unknown"
+            timeout_abort = False
             for payload in payload_variants:
-                try:
-                    response = self.session.post(
-                        self.sensenova_api_url,
-                        json=payload,
-                        headers=headers,
-                        timeout=self.provider_http_timeout,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
-                    choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
-                    msg = choice.get("message") if isinstance(choice, dict) else None
-                    content = ""
-                    if isinstance(msg, str):
-                        content = msg
-                    elif isinstance(msg, dict):
-                        content = msg.get("content", "")
-                    if isinstance(content, list):
-                        parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
-                        content = "".join(parts)
-                    draft_text = str(content).strip()
-                    if not draft_text:
-                        last_error = "SenseNova empty response"
-                        continue
+                for transport_attempt in range(1, self.sensenova_transport_retries + 1):
+                    try:
+                        response = self.session.post(
+                            self.sensenova_api_url,
+                            json=payload,
+                            headers=headers,
+                            timeout=(self.sensenova_connect_timeout, self.sensenova_read_timeout),
+                        )
+                        response.raise_for_status()
+                        data = response.json()
+                        container = data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), dict) else data
+                        choice = ((container.get("choices") or [{}])[0] or {}) if isinstance(container, dict) else {}
+                        msg = choice.get("message") if isinstance(choice, dict) else None
+                        content = ""
+                        if isinstance(msg, str):
+                            content = msg
+                        elif isinstance(msg, dict):
+                            content = msg.get("content", "")
+                        if isinstance(content, list):
+                            parts = [str(item.get("text", "")) for item in content if isinstance(item, dict)]
+                            content = "".join(parts)
+                        draft_text = str(content).strip()
+                        if not draft_text:
+                            last_error = "SenseNova empty response"
+                            continue
 
-                    usage = container.get("usage") if isinstance(container, dict) else {}
-                    usage = usage or {}
-                    return {
-                        "success": True,
-                        "draft": draft_text,
-                        "metadata": {
-                            "model": self.sensenova_model,
-                            "provider": "sensenova",
-                            "prompt_tokens": usage.get("prompt_tokens", 0),
-                            "output_tokens": usage.get("completion_tokens", 0),
-                            "total_tokens": usage.get("total_tokens", 0),
+                        usage = container.get("usage") if isinstance(container, dict) else {}
+                        usage = usage or {}
+                        return {
+                            "success": True,
+                            "draft": draft_text,
+                            "metadata": {
+                                "model": self.sensenova_model,
+                                "provider": "sensenova",
+                                "prompt_tokens": usage.get("prompt_tokens", 0),
+                                "output_tokens": usage.get("completion_tokens", 0),
+                                "total_tokens": usage.get("total_tokens", 0),
+                            }
                         }
-                    }
-                except requests.RequestException as e:
-                    status_code = getattr(getattr(e, "response", None), "status_code", None)
-                    response_text = (getattr(getattr(e, "response", None), "text", "") or "").strip()
-                    last_error = f"SenseNova HTTP {status_code}: {str(e)}"
-                    if response_text:
-                        last_error = f"{last_error} | response={response_text[:500]}"
-                    # 仅在看起来是格式/参数兼容问题时切换备用 payload
-                    if status_code and status_code < 500:
-                        continue
-                except Exception as e:
-                    last_error = f"SenseNova API Error: {str(e)}"
-                    continue
+                    except requests.RequestException as e:
+                        status_code = getattr(getattr(e, "response", None), "status_code", None)
+                        response_text = (getattr(getattr(e, "response", None), "text", "") or "").strip()
+                        last_error = f"SenseNova HTTP {status_code}: {str(e)}"
+                        if response_text:
+                            last_error = f"{last_error} | response={response_text[:500]}"
+                        low_level_error = str(e).lower()
+                        if status_code is None and (
+                            "timed out" in low_level_error
+                            or "read timeout" in low_level_error
+                            or "proxy" in low_level_error
+                        ):
+                            timeout_abort = True
+                            break
+                        # 仅在看起来是格式/参数兼容问题时切换备用 payload
+                        if status_code and status_code < 500:
+                            break
+                        if transport_attempt < self.sensenova_transport_retries:
+                            time.sleep(min(self.sensenova_transport_backoff * transport_attempt, self.provider_max_backoff))
+                            continue
+                    except Exception as e:
+                        last_error = f"SenseNova API Error: {str(e)}"
+                        break
+                if timeout_abort:
+                    break
 
             return {
                 "success": False,

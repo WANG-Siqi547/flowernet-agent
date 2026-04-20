@@ -1,11 +1,13 @@
 from datetime import datetime
+from collections import deque
 from io import BytesIO
 import os
+import re
 import threading
 import time
 import random
 from typing import Any, Dict, List, Generator, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 import json
 from uuid import uuid4
 from datetime import timezone
@@ -20,27 +22,44 @@ from pydantic import BaseModel, Field
 
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
 GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "3600"))  # 1小时超时，适配Ollama耗时生成
-DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "3"))
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "600"))
+DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "1"))
 DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
 DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
 DOWNSTREAM_JITTER = float(os.getenv("DOWNSTREAM_JITTER", "0.35"))
-DOWNSTREAM_OUTLINER_MIN_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MIN_RETRIES", "10"))
+DOWNSTREAM_OUTLINER_MIN_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MIN_RETRIES", "1"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_503 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_503", "8.0"))
-GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "1"))
+DOWNSTREAM_GENERATOR_MIN_RETRIES = int(os.getenv("DOWNSTREAM_GENERATOR_MIN_RETRIES", "1"))
+DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_DELAY_429", "10.0"))
+GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "0"))
 GENERATOR_RESUME_BACKOFF = float(os.getenv("GENERATOR_RESUME_BACKOFF", "2.0"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
-WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.72"))
-WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.60"))
+WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.55"))
+WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.70"))
+ENABLE_CITATION_QA = os.getenv("ENABLE_CITATION_QA", "true").lower() == "true"
+CITATION_MIN_SECTION_HIGH_QUALITY = int(os.getenv("CITATION_MIN_SECTION_HIGH_QUALITY", "1"))
+CITATION_LOW_QUALITY_MAX_RATIO = float(os.getenv("CITATION_LOW_QUALITY_MAX_RATIO", "0.5"))
+TIMEOUT_ADAPTIVE_ENABLED = os.getenv("TIMEOUT_ADAPTIVE_ENABLED", "true").lower() == "true"
+TIMEOUT_MIN_SECONDS = int(os.getenv("TIMEOUT_MIN_SECONDS", "60"))
+TIMEOUT_MAX_SECONDS = int(os.getenv("TIMEOUT_MAX_SECONDS", "7200"))
+TIMEOUT_SAFETY_FACTOR = float(os.getenv("TIMEOUT_SAFETY_FACTOR", "1.35"))
+TIMEOUT_FIXED_BUFFER_SECONDS = int(os.getenv("TIMEOUT_FIXED_BUFFER_SECONDS", "20"))
+TIMEOUT_BASE_OUTLINE_SECONDS = int(os.getenv("TIMEOUT_BASE_OUTLINE_SECONDS", "25"))
+TIMEOUT_BASE_CITATION_SECONDS = int(os.getenv("TIMEOUT_BASE_CITATION_SECONDS", "8"))
+TIMEOUT_BASE_ITERATION_SECONDS = float(os.getenv("TIMEOUT_BASE_ITERATION_SECONDS", "55"))
+ESTIMATED_ITERATIONS_PER_SUBSECTION = float(os.getenv("ESTIMATED_ITERATIONS_PER_SUBSECTION", "1.8"))
 
 DOWNSTREAM_SESSION = requests.Session()
 DOWNSTREAM_SESSION.trust_env = False
 
 POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
+RECENT_PIPELINE_SECONDS = deque(maxlen=20)
+RECENT_ITERATION_SECONDS = deque(maxlen=20)
+METRICS_LOCK = threading.Lock()
 
 
 class GenerateDocRequest(BaseModel):
@@ -129,6 +148,131 @@ def _parse_retry_after_seconds(retry_after: str) -> float | None:
         return None
 
 
+def _parse_seconds_value(raw: Any) -> float | None:
+    text = str(raw or "").strip().lower()
+    if not text:
+        return None
+    if text.endswith("s"):
+        text = text[:-1].strip()
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _estimate_subsection_count(chapter_count: int, subsection_count: int) -> int:
+    return max(1, int(chapter_count) * int(subsection_count))
+
+
+def _quantile(values: List[float], q: float) -> float | None:
+    if not values:
+        return None
+    sorted_vals = sorted(float(v) for v in values)
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+
+    q = max(0.0, min(1.0, float(q)))
+    pos = (len(sorted_vals) - 1) * q
+    lower = int(pos)
+    upper = min(lower + 1, len(sorted_vals) - 1)
+    if lower == upper:
+        return sorted_vals[lower]
+    weight = pos - lower
+    return sorted_vals[lower] * (1.0 - weight) + sorted_vals[upper] * weight
+
+
+def _build_timeout_profile(
+    chapter_count: int,
+    subsection_count: int,
+    requested_timeout: int,
+) -> Dict[str, Any]:
+    expected_subsections = _estimate_subsection_count(chapter_count, subsection_count)
+
+    with METRICS_LOCK:
+        recent_iteration = list(RECENT_ITERATION_SECONDS)
+        recent_pipeline = list(RECENT_PIPELINE_SECONDS)
+
+    iteration_p50 = _quantile(recent_iteration, 0.50)
+    iteration_p90 = _quantile(recent_iteration, 0.90)
+    iteration_p95 = _quantile(recent_iteration, 0.95)
+    pipeline_p50 = _quantile(recent_pipeline, 0.50)
+    pipeline_p90 = _quantile(recent_pipeline, 0.90)
+    pipeline_p95 = _quantile(recent_pipeline, 0.95)
+
+    iteration_seconds_for_budget = (
+        float(iteration_p90)
+        if iteration_p90 is not None
+        else TIMEOUT_BASE_ITERATION_SECONDS
+    )
+
+    estimated_iterations = max(1.0, expected_subsections * ESTIMATED_ITERATIONS_PER_SUBSECTION)
+    estimated_seconds = (
+        TIMEOUT_BASE_OUTLINE_SECONDS
+        + TIMEOUT_BASE_CITATION_SECONDS
+        + iteration_seconds_for_budget * estimated_iterations
+    )
+    if pipeline_p95 is not None:
+        estimated_seconds = max(estimated_seconds, float(pipeline_p95))
+
+    recommended_timeout = int(estimated_seconds * TIMEOUT_SAFETY_FACTOR + TIMEOUT_FIXED_BUFFER_SECONDS)
+    recommended_timeout = max(TIMEOUT_MIN_SECONDS, min(TIMEOUT_MAX_SECONDS, recommended_timeout))
+
+    requested = int(requested_timeout or REQUEST_TIMEOUT)
+    requested = max(TIMEOUT_MIN_SECONDS, min(TIMEOUT_MAX_SECONDS, requested))
+
+    effective_timeout = max(requested, recommended_timeout) if TIMEOUT_ADAPTIVE_ENABLED else requested
+    effective_timeout = max(TIMEOUT_MIN_SECONDS, min(TIMEOUT_MAX_SECONDS, int(effective_timeout)))
+
+    return {
+        "adaptive_enabled": TIMEOUT_ADAPTIVE_ENABLED,
+        "quantile_window_tasks": 20,
+        "expected_subsections": expected_subsections,
+        "estimated_iterations": round(estimated_iterations, 2),
+        "iteration_seconds_for_budget": round(float(iteration_seconds_for_budget), 2),
+        "iteration_p50_seconds": round(float(iteration_p50), 2) if iteration_p50 is not None else None,
+        "iteration_p90_seconds": round(float(iteration_p90), 2) if iteration_p90 is not None else None,
+        "iteration_p95_seconds": round(float(iteration_p95), 2) if iteration_p95 is not None else None,
+        "pipeline_p50_seconds": round(float(pipeline_p50), 2) if pipeline_p50 is not None else None,
+        "pipeline_p90_seconds": round(float(pipeline_p90), 2) if pipeline_p90 is not None else None,
+        "pipeline_p95_seconds": round(float(pipeline_p95), 2) if pipeline_p95 is not None else None,
+        "requested_timeout_seconds": requested,
+        "recommended_timeout_seconds": recommended_timeout,
+        "effective_timeout_seconds": effective_timeout,
+    }
+
+
+def _record_timeout_metrics(elapsed_seconds: float, result: Dict[str, Any]) -> None:
+    if elapsed_seconds <= 0:
+        return
+
+    total_iterations = 0
+    generation_time_seconds = None
+    if isinstance(result, dict):
+        stats = result.get("stats") or {}
+        if isinstance(stats, dict):
+            total_iterations = int(stats.get("total_iterations", 0) or 0)
+            generation_time_seconds = _parse_seconds_value(stats.get("generation_time"))
+
+    if generation_time_seconds is None:
+        generation_time_seconds = float(elapsed_seconds)
+
+    with METRICS_LOCK:
+        RECENT_PIPELINE_SECONDS.append(float(elapsed_seconds))
+        if total_iterations > 0:
+            RECENT_ITERATION_SECONDS.append(float(generation_time_seconds) / float(total_iterations))
+
+
+def _inject_timeout_profile(result: Dict[str, Any], timeout_profile: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return result
+    stats = result.get("stats")
+    if not isinstance(stats, dict):
+        stats = {}
+        result["stats"] = stats
+    stats["timeout_profile"] = timeout_profile
+    return result
+
+
 def _is_transient_downstream_payload(payload: Dict[str, Any]) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -145,7 +289,12 @@ def _is_transient_downstream_payload(payload: Dict[str, Any]) -> bool:
 def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     last_error: str = ""
     is_outliner_url = "outliner" in url or "/outline/" in url
-    effective_retries = max(DOWNSTREAM_RETRIES, DOWNSTREAM_OUTLINER_MIN_RETRIES) if is_outliner_url else DOWNSTREAM_RETRIES
+    is_generator_url = "generator" in url or "/generate_document" in url
+    effective_retries = DOWNSTREAM_RETRIES
+    if is_outliner_url:
+        effective_retries = max(effective_retries, DOWNSTREAM_OUTLINER_MIN_RETRIES)
+    if is_generator_url:
+        effective_retries = max(effective_retries, DOWNSTREAM_GENERATOR_MIN_RETRIES)
 
     for attempt in range(1, effective_retries + 1):
         retry_delay = DOWNSTREAM_BACKOFF * (2 ** max(0, attempt - 1))
@@ -185,6 +334,8 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
                 if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After", "")
                     retry_after_seconds = _parse_retry_after_seconds(retry_after)
+                    if is_generator_url:
+                        retry_delay = max(retry_delay, DOWNSTREAM_GENERATOR_MIN_DELAY_429)
                 if is_outliner_url and response.status_code == 503:
                     retry_delay = max(retry_delay, DOWNSTREAM_OUTLINER_MIN_DELAY_503)
             else:
@@ -257,10 +408,12 @@ def generate_document_with_recovery(
 
     for attempt in range(1, total_attempts + 1):
         try:
+            # Keep each downstream call bounded so async tasks do not stay running forever.
+            call_timeout = max(30, int(timeout_seconds))
             result = post_json_with_retry(
                 f"{GENERATOR_URL}/generate_document",
                 generate_payload,
-                timeout_seconds,
+                call_timeout,
             )
             if isinstance(result, dict):
                 result.setdefault("recovery_attempt", attempt)
@@ -289,6 +442,13 @@ def generate_document_with_recovery(
 
 
 def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, Any]:
+    start_ts = time.time()
+
+    def _remaining_timeout(min_seconds: int = 30) -> int:
+        elapsed = time.time() - start_ts
+        remaining = int(timeout_seconds - elapsed)
+        return max(min_seconds, remaining)
+
     document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
     user_requirements = build_requirements_text(req)
 
@@ -299,7 +459,11 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "max_sections": req.chapter_count,
         "max_subsections_per_section": req.subsection_count,
     }
-    outline_resp = post_json_with_retry(f"{OUTLINER_URL}/outline/generate-and-save", outline_payload, timeout_seconds)
+    outline_resp = post_json_with_retry(
+        f"{OUTLINER_URL}/outline/generate-and-save",
+        outline_payload,
+        _remaining_timeout(min_seconds=30),
+    )
 
     if not outline_resp.get("success"):
         raise HTTPException(status_code=500, detail=f"大纲生成失败: {outline_resp}")
@@ -336,7 +500,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
     gen_resp = generate_document_with_recovery(
         document_id=document_id,
         generate_payload=generate_payload,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=_remaining_timeout(min_seconds=30),
     )
 
     history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
@@ -349,6 +513,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 history_items,
                 generated_sections=gen_resp.get("sections", []) if isinstance(gen_resp, dict) else [],
             )
+            citation_quality = _citation_quality_check(partial_content)
             return {
                 "success": True,
                 "partial": True,
@@ -365,6 +530,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                     "forced_subsections": len(gen_resp.get("forced_subsections", [])) if isinstance(gen_resp, dict) else 0,
                     "total_iterations": gen_resp.get("total_iterations", 0) if isinstance(gen_resp, dict) else 0,
                     "generation_time": gen_resp.get("generation_time", "") if isinstance(gen_resp, dict) else "",
+                    "citation_quality": citation_quality,
                     **orchestration_metrics,
                 },
             }
@@ -380,6 +546,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             history_items,
             generated_sections=gen_resp.get("sections", []),
         )
+        citation_quality = _citation_quality_check(markdown_content)
         return {
             "success": True,
             "partial": True,
@@ -396,6 +563,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 "forced_subsections": forced,
                 "total_iterations": gen_resp.get("total_iterations", 0),
                 "generation_time": gen_resp.get("generation_time", ""),
+                "citation_quality": citation_quality,
                 **orchestration_metrics,
             },
         }
@@ -413,6 +581,29 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         history_items,
         generated_sections=gen_resp.get("sections", []),
     )
+    citation_quality = _citation_quality_check(markdown_content)
+
+    if not citation_quality.get("passed", False):
+        return {
+            "success": True,
+            "partial": True,
+            "interrupted": True,
+            "message": f"文档内容已生成，但引用质量未达标：{citation_quality.get('reason')}",
+            "document_id": document_id,
+            "title": title,
+            "content": markdown_content,
+            "stats": {
+                "expected_subsections": expected_subsections,
+                "outlined_subsections": outlined_subsections,
+                "passed_subsections": passed,
+                "failed_subsections": failed,
+                "forced_subsections": forced,
+                "total_iterations": gen_resp.get("total_iterations", 0),
+                "generation_time": gen_resp.get("generation_time", ""),
+                "citation_quality": citation_quality,
+                **orchestration_metrics,
+            },
+        }
 
     return {
         "success": True,
@@ -427,8 +618,96 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             "forced_subsections": forced,
             "total_iterations": gen_resp.get("total_iterations", 0),
             "generation_time": gen_resp.get("generation_time", ""),
+            "citation_quality": citation_quality,
             **orchestration_metrics,
         },
+    }
+
+
+def _extract_urls(text: str) -> List[str]:
+    return re.findall(r"https?://[^\s\]）)>,;]+", text or "", flags=re.IGNORECASE)
+
+
+def _domain_quality(domain: str) -> float:
+    host = (domain or "").lower().strip()
+    if not host:
+        return 0.0
+
+    high_quality_domains = {
+        "nature.com", "science.org", "sciencedirect.com", "springer.com", "ieee.org", "acm.org",
+        "arxiv.org", "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org", "nist.gov", "nih.gov",
+        "gov.cn", "edu.cn", "ruc.edu.cn", "tsinghua.edu.cn", "pku.edu.cn", "cass.cn", "moe.gov.cn",
+    }
+    low_quality_domains = {
+        "baike.baidu.com", "zhidao.baidu.com", "tieba.baidu.com", "jingyan.baidu.com",
+        "m.baidu.com", "weibo.com", "t.co", "bit.ly", "tinyurl.com",
+    }
+
+    if host in low_quality_domains:
+        return 0.15
+    if host in high_quality_domains:
+        return 1.0
+    if host.endswith(".gov") or host.endswith(".edu") or host.endswith(".gov.cn") or host.endswith(".edu.cn"):
+        return 0.95
+    if "wikipedia.org" in host:
+        return 0.55
+    if host.endswith(".org"):
+        return 0.72
+    if host.endswith(".com"):
+        return 0.60
+    return 0.5
+
+
+def _citation_quality_check(markdown: str) -> Dict[str, Any]:
+    if not ENABLE_CITATION_QA:
+        return {"passed": True, "reason": "disabled"}
+
+    subsection_blocks = re.findall(r"^###\s+.*?(?=^###\s+|\Z)", markdown or "", flags=re.MULTILINE | re.DOTALL)
+    if not subsection_blocks:
+        subsection_blocks = [markdown or ""]
+
+    all_urls = _extract_urls(markdown or "")
+    unique_urls = list(dict.fromkeys(all_urls))
+
+    low_quality_count = 0
+    section_details: List[Dict[str, Any]] = []
+    for block in subsection_blocks:
+        urls = list(dict.fromkeys(_extract_urls(block)))
+        high_quality_urls = []
+        for url in urls:
+            domain = (urlparse(url).netloc or "").lower().strip()
+            score = _domain_quality(domain)
+            if score < 0.35:
+                low_quality_count += 1
+            if score >= 0.70:
+                high_quality_urls.append(url)
+        section_details.append({
+            "url_count": len(urls),
+            "high_quality_url_count": len(high_quality_urls),
+        })
+
+    low_quality_ratio = (low_quality_count / max(1, len(unique_urls))) if unique_urls else 1.0
+    missing_high_quality_sections = sum(
+        1 for sec in section_details if sec["high_quality_url_count"] < CITATION_MIN_SECTION_HIGH_QUALITY
+    )
+
+    passed = bool(unique_urls) and missing_high_quality_sections == 0 and low_quality_ratio <= CITATION_LOW_QUALITY_MAX_RATIO
+    reason = "ok"
+    if not unique_urls:
+        reason = "no_citation_urls"
+    elif missing_high_quality_sections > 0:
+        reason = "section_missing_high_quality_source"
+    elif low_quality_ratio > CITATION_LOW_QUALITY_MAX_RATIO:
+        reason = "low_quality_domain_ratio_too_high"
+
+    return {
+        "passed": passed,
+        "reason": reason,
+        "total_urls": len(all_urls),
+        "unique_urls": len(unique_urls),
+        "low_quality_ratio": round(low_quality_ratio, 4),
+        "missing_high_quality_sections": missing_high_quality_sections,
+        "section_details": section_details,
     }
 
 
@@ -1295,9 +1574,18 @@ def generate_document(
     authorization: str = Header(default="", alias="Authorization"),
 ) -> Dict[str, Any]:
     verify_auth(x_api_key=x_api_key, authorization=authorization)
-    effective_timeout = req.timeout_seconds or REQUEST_TIMEOUT
+    timeout_profile = _build_timeout_profile(
+        chapter_count=req.chapter_count,
+        subsection_count=req.subsection_count,
+        requested_timeout=req.timeout_seconds or REQUEST_TIMEOUT,
+    )
+    effective_timeout = timeout_profile["effective_timeout_seconds"]
+    start_time = time.time()
     try:
         result = _build_document(req=req, timeout_seconds=effective_timeout)
+        elapsed = time.time() - start_time
+        _record_timeout_metrics(elapsed_seconds=elapsed, result=result)
+        _inject_timeout_profile(result=result, timeout_profile=timeout_profile)
         return result
     except HTTPException:
         raise
@@ -1337,6 +1625,11 @@ def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
             POFFICES_TASKS[task_id]["message"] = "任务运行中"
             POFFICES_TASKS[task_id]["started_at"] = datetime.now().isoformat()
 
+        timeout_profile = _build_timeout_profile(
+            chapter_count=req.chapter_count,
+            subsection_count=req.subsection_count,
+            requested_timeout=req.timeout_seconds,
+        )
         start_time = time.time()
 
         doc_req = GenerateDocRequest(
@@ -1348,11 +1641,13 @@ def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
             rel_threshold=req.rel_threshold,
             red_threshold=req.red_threshold,
         )
-        result = _build_document(req=doc_req, timeout_seconds=req.timeout_seconds)
+        result = _build_document(req=doc_req, timeout_seconds=timeout_profile["effective_timeout_seconds"])
 
         elapsed = time.time() - start_time
-        if elapsed > req.timeout_seconds:
-            raise TimeoutError(f"任务超时: {elapsed:.1f}s > {req.timeout_seconds}s")
+        _record_timeout_metrics(elapsed_seconds=elapsed, result=result)
+        _inject_timeout_profile(result=result, timeout_profile=timeout_profile)
+        if elapsed > timeout_profile["effective_timeout_seconds"]:
+            raise TimeoutError(f"任务超时: {elapsed:.1f}s > {timeout_profile['effective_timeout_seconds']}s")
 
         with POFFICES_TASKS_LOCK:
             POFFICES_TASKS[task_id]["status"] = "completed"
@@ -1412,6 +1707,12 @@ def poffices_generate(
             "message": "异步任务已创建，请轮询 task status",
         }
 
+    timeout_profile = _build_timeout_profile(
+        chapter_count=req.chapter_count,
+        subsection_count=req.subsection_count,
+        requested_timeout=req.timeout_seconds,
+    )
+
     doc_req = GenerateDocRequest(
         topic=req.query,
         chapter_count=req.chapter_count,
@@ -1422,7 +1723,11 @@ def poffices_generate(
         red_threshold=req.red_threshold,
     )
     try:
-        result = _build_document(req=doc_req, timeout_seconds=req.timeout_seconds)
+        start_time = time.time()
+        result = _build_document(req=doc_req, timeout_seconds=timeout_profile["effective_timeout_seconds"])
+        elapsed = time.time() - start_time
+        _record_timeout_metrics(elapsed_seconds=elapsed, result=result)
+        _inject_timeout_profile(result=result, timeout_profile=timeout_profile)
         return _build_poffices_result(request=request, result=result)
     except HTTPException as exc:
         return {
