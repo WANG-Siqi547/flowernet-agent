@@ -15,6 +15,7 @@ from email.utils import parsedate_to_datetime
 
 import requests
 from docx import Document
+from docx.shared import Pt
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -398,6 +399,51 @@ def extract_orchestration_metrics(gen_resp: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
+def extract_document_quality_metrics(gen_resp: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(gen_resp, dict):
+        return {
+            "quality_score_avg": 0.0,
+            "quality_overall_uncertainty_avg": 0.0,
+            "quality_dimension_avgs": {},
+            "quality_weights": {},
+            "unieval_available_subsections": 0,
+            "unieval_fallback_subsections": 0,
+            "unieval_available_ratio": 0.0,
+            "unieval_fallback_ratio": 0.0,
+            "bandit_selected_arm_counts": {},
+            "bandit_reward_sum": 0.0,
+            "bandit_reward_count": 0,
+            "bandit_reward_avg": 0.0,
+            "bandit_drift_events": 0,
+            "bandit_drift_triggered_subsections": 0,
+            "bandit_drift_trigger_rate": 0.0,
+            "bandit_last_selected_arm": "",
+            "bandit_last_selection_mode": "",
+            "bandit_last_constraints": {},
+        }
+
+    return {
+        "quality_score_avg": float(gen_resp.get("quality_score_avg", 0.0) or 0.0),
+        "quality_overall_uncertainty_avg": float(gen_resp.get("quality_overall_uncertainty_avg", 0.0) or 0.0),
+        "quality_dimension_avgs": gen_resp.get("quality_dimension_avgs", {}) if isinstance(gen_resp.get("quality_dimension_avgs"), dict) else {},
+        "quality_weights": gen_resp.get("quality_weights", {}) if isinstance(gen_resp.get("quality_weights"), dict) else {},
+        "unieval_available_subsections": int(gen_resp.get("unieval_available_subsections", 0) or 0),
+        "unieval_fallback_subsections": int(gen_resp.get("unieval_fallback_subsections", 0) or 0),
+        "unieval_available_ratio": float(gen_resp.get("unieval_available_ratio", 0.0) or 0.0),
+        "unieval_fallback_ratio": float(gen_resp.get("unieval_fallback_ratio", 0.0) or 0.0),
+        "bandit_selected_arm_counts": gen_resp.get("bandit_selected_arm_counts", {}) if isinstance(gen_resp.get("bandit_selected_arm_counts"), dict) else {},
+        "bandit_reward_sum": float(gen_resp.get("bandit_reward_sum", 0.0) or 0.0),
+        "bandit_reward_count": int(gen_resp.get("bandit_reward_count", 0) or 0),
+        "bandit_reward_avg": float(gen_resp.get("bandit_reward_avg", 0.0) or 0.0),
+        "bandit_drift_events": int(gen_resp.get("bandit_drift_events", 0) or 0),
+        "bandit_drift_triggered_subsections": int(gen_resp.get("bandit_drift_triggered_subsections", 0) or 0),
+        "bandit_drift_trigger_rate": float(gen_resp.get("bandit_drift_trigger_rate", 0.0) or 0.0),
+        "bandit_last_selected_arm": str(gen_resp.get("bandit_last_selected_arm", "") or ""),
+        "bandit_last_selection_mode": str(gen_resp.get("bandit_last_selection_mode", "") or ""),
+        "bandit_last_constraints": gen_resp.get("bandit_last_constraints", {}) if isinstance(gen_resp.get("bandit_last_constraints"), dict) else {},
+    }
+
+
 def generate_document_with_recovery(
     document_id: str,
     generate_payload: Dict[str, Any],
@@ -505,6 +551,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
 
     history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
     orchestration_metrics = extract_orchestration_metrics(gen_resp if isinstance(gen_resp, dict) else {})
+    document_quality_metrics = extract_document_quality_metrics(gen_resp if isinstance(gen_resp, dict) else {})
     if not gen_resp.get("success"):
         if history_items:
             partial_content = build_markdown_document(
@@ -532,6 +579,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                     "generation_time": gen_resp.get("generation_time", "") if isinstance(gen_resp, dict) else "",
                     "citation_quality": citation_quality,
                     **orchestration_metrics,
+                    **document_quality_metrics,
                 },
             }
         raise HTTPException(status_code=500, detail=f"文档生成失败: {gen_resp}")
@@ -565,6 +613,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 "generation_time": gen_resp.get("generation_time", ""),
                 "citation_quality": citation_quality,
                 **orchestration_metrics,
+                **document_quality_metrics,
             },
         }
     if passed < outlined_subsections:
@@ -602,6 +651,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 "generation_time": gen_resp.get("generation_time", ""),
                 "citation_quality": citation_quality,
                 **orchestration_metrics,
+                **document_quality_metrics,
             },
         }
 
@@ -620,6 +670,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             "generation_time": gen_resp.get("generation_time", ""),
             "citation_quality": citation_quality,
             **orchestration_metrics,
+            **document_quality_metrics,
         },
     }
 
@@ -780,23 +831,165 @@ def build_markdown_document(
     for key, value in history_map.items():
         content_map.setdefault(key, value)
 
-    lines = [f"# {title}", ""]
-    for section in structure.get("sections", []):
-        section_id = section.get("id", "")
-        section_title = section.get("title", "未命名章节")
-        lines.append(f"## {section_title}")
+    def _normalize_label(value: str) -> str:
+        text = re.sub(r"^第\d+[章节]", "", str(value or "")).strip()
+        text = re.sub(r"^\d+(?:\.\d+)*\s*", "", text).strip()
+        return text or str(value or "").strip()
+
+    def _to_roman(num: int) -> str:
+        vals = [
+            (1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+            (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+            (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I"),
+        ]
+        result = []
+        n = max(1, num)
+        for v, s in vals:
+            while n >= v:
+                result.append(s)
+                n -= v
+        return "".join(result)
+
+    def _to_alpha(num: int) -> str:
+        # 1 -> A, 2 -> B, ...
+        n = max(1, num)
+        chars: List[str] = []
+        while n > 0:
+            n -= 1
+            chars.append(chr(ord("A") + (n % 26)))
+            n //= 26
+        return "".join(reversed(chars))
+
+    def _build_abstract() -> str:
+        section_titles = [
+            _normalize_label(section.get("title", ""))
+            for section in structure.get("sections", [])
+            if str(section.get("title", "")).strip()
+        ]
+        highlighted = "、".join(section_titles[:3]) if section_titles else "各章节主题"
+        return (
+            f"This paper presents a structured exposition on \"{title}\". "
+            f"It develops the topic through a hierarchical organization of sections and subsections, "
+            f"covering key themes such as {highlighted}. "
+            "The document follows a formal IEEE-like layout to improve readability, traceability, and scholarly presentation quality."
+        )
+
+    def _build_keywords() -> str:
+        section_titles = [
+            _normalize_label(section.get("title", ""))
+            for section in structure.get("sections", [])
+            if str(section.get("title", "")).strip()
+        ]
+        keywords = [_normalize_label(title), "technical writing", "academic style", "structured document"]
+        for section_title in section_titles[:3]:
+            if section_title and section_title not in keywords:
+                keywords.append(section_title)
+        return ", ".join(keywords[:6])
+
+    def _anchor_id(section_index: int, subsection_index: Optional[int] = None) -> str:
+        if subsection_index is None:
+            return f"chapter-{section_index}"
+        return f"chapter-{section_index}-{subsection_index}"
+
+    def _clean_subsection_text(text: str) -> str:
+        seen_headings: set[tuple[int, str]] = set()
+        cleaned_lines: List[str] = []
+
+        for raw_line in text.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                if cleaned_lines and cleaned_lines[-1] != "":
+                    cleaned_lines.append("")
+                continue
+
+            heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+            if heading_match:
+                heading_level = max(len(heading_match.group(1)), 4)
+                heading_text = heading_match.group(2).strip()
+                heading_key = (heading_level, heading_text)
+                if heading_key in seen_headings:
+                    continue
+                seen_headings.add(heading_key)
+                cleaned_lines.append(f"{'#' * heading_level} {heading_text}")
+                continue
+
+            cleaned_lines.append(raw_line.rstrip())
+
+        while cleaned_lines and cleaned_lines[-1] == "":
+            cleaned_lines.pop()
+
+        return "\n".join(cleaned_lines).strip()
+
+    def _section_link(section_index: int, section_title: str) -> str:
+        roman = _to_roman(section_index)
+        return f"[{roman}. {section_title}](#{_anchor_id(section_index)})"
+
+    def _subsection_link(section_index: int, subsection_index: int, subsection_title: str) -> str:
+        alpha = _to_alpha(subsection_index)
+        return f"[{alpha}. {subsection_title}](#{_anchor_id(section_index, subsection_index)})"
+
+    def _append_outline_list(lines: List[str]) -> None:
+        lines.append("## Contents")
+        lines.append("")
+        for section_index, section in enumerate(structure.get("sections", []), 1):
+            section_title = section.get("title", f"第{section_index}章")
+            lines.append(_section_link(section_index, section_title))
+            for subsection_index, subsection in enumerate(section.get("subsections", []), 1):
+                subsection_title = subsection.get("title", f"第{subsection_index}节")
+                lines.append(f"   - {_subsection_link(section_index, subsection_index, subsection_title)}")
         lines.append("")
 
-        for subsection in section.get("subsections", []):
+    def _append_references_placeholder(lines: List[str]) -> None:
+        lines.extend(
+            [
+                "## References",
+                "",
+                "[1] A. A. Author, \"Title of article,\" Journal/Conference, vol. x, no. x, pp. xx-xx, Year.",
+                "[2] B. B. Author, Book Title, xth ed. City, Country: Publisher, Year.",
+                "[3] C. C. Author, \"Title of report or web resource,\" Organization, Year. [Online]. Available: URL",
+                "",
+            ]
+        )
+
+    lines = [
+        f"# {title}",
+        "",
+        "## Abstract",
+        "",
+        _build_abstract(),
+        "",
+        "## Index Terms",
+        "",
+        _build_keywords(),
+        "",
+        "---",
+        "",
+    ]
+    _append_outline_list(lines)
+    lines.extend(["---", ""])
+    for section_index, section in enumerate(structure.get("sections", []), 1):
+        section_id = section.get("id", "")
+        section_title = section.get("title", "未命名章节")
+        roman = _to_roman(section_index)
+        lines.append(f'<a id="{_anchor_id(section_index)}"></a>')
+        lines.append(f"## {roman}. {_normalize_label(section_title).upper()}")
+        lines.append("")
+
+        for subsection_index, subsection in enumerate(section.get("subsections", []), 1):
             subsection_id = subsection.get("id", "")
             subsection_title = subsection.get("title", "未命名小节")
+            alpha = _to_alpha(subsection_index)
             key = f"{section_id}::{subsection_id}"
-            subsection_text = content_map.get(key, "（该小节未成功生成）")
+            subsection_text = _clean_subsection_text(content_map.get(key, "（该小节未成功生成）"))
 
-            lines.append(f"### {subsection_title}")
+            lines.append(f'<a id="{_anchor_id(section_index, subsection_index)}"></a>')
+            lines.append(f"### {alpha}. {_normalize_label(subsection_title)}")
             lines.append("")
             lines.append(subsection_text)
             lines.append("")
+
+
+    _append_references_placeholder(lines)
 
     return "\n".join(lines).strip()
 
@@ -954,17 +1147,43 @@ def markdown_to_docx(title: str, content: str) -> BytesIO:
     document = Document()
     document.core_properties.title = title
 
+    normal_style = document.styles["Normal"]
+    normal_style.font.name = "Times New Roman"
+    normal_style.font.size = Pt(11)
+    normal_style.paragraph_format.line_spacing = 1.5
+    normal_style.paragraph_format.space_before = Pt(0)
+    normal_style.paragraph_format.space_after = Pt(6)
+
+    for heading_name, size in (("Heading 1", 14), ("Heading 2", 12), ("Heading 3", 11)):
+        heading_style = document.styles[heading_name]
+        heading_style.font.name = "Times New Roman"
+        heading_style.font.size = Pt(size)
+        heading_style.paragraph_format.space_before = Pt(12)
+        heading_style.paragraph_format.space_after = Pt(6)
+
+    def _is_ignored_line(line: str) -> bool:
+        stripped = line.strip()
+        return not stripped or stripped == "---" or stripped.startswith("<a id=")
+
+    title_added = False
+
     for raw_line in content.splitlines():
         line = raw_line.strip()
-        if not line:
+        if _is_ignored_line(line):
             continue
 
-        if line.startswith("### "):
+        if line.startswith("# ") and not title_added:
+            heading = document.add_heading(line[2:].strip(), level=0)
+            heading.alignment = 1
+            title_added = True
+        elif line.startswith("## Abstract") or line.startswith("## Index Terms") or line.startswith("## References"):
+            document.add_heading(line[3:].strip(), level=2)
+        elif line.startswith("### "):
             document.add_heading(line[4:].strip(), level=3)
         elif line.startswith("## "):
             document.add_heading(line[3:].strip(), level=2)
-        elif line.startswith("# "):
-            document.add_heading(line[2:].strip(), level=1)
+        elif re.match(r"^\d+(?:\.\d+)+\s+", line):
+            document.add_heading(line, level=3)
         else:
             document.add_paragraph(line)
 
@@ -1478,6 +1697,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 "controller_effective_subsections": gen_resp.get("controller_effective_subsections", 0),
                 "rag_used_subsections": gen_resp.get("rag_used_subsections", 0),
                 "rag_search_success_subsections": gen_resp.get("rag_search_success_subsections", 0),
+                **extract_document_quality_metrics(gen_resp if isinstance(gen_resp, dict) else {}),
             },
         }
         

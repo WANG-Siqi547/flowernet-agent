@@ -8,6 +8,19 @@ cd "$WORKDIR"
 
 echo "=== Starting FlowerNet Services ==="
 
+# Enforce UniEval endpoint for verifier multidimensional checks.
+export UNIEVAL_ENDPOINT="${UNIEVAL_ENDPOINT:-http://localhost:8004/score}"
+export REQUIRE_MULTIDIM_QUALITY="${REQUIRE_MULTIDIM_QUALITY:-true}"
+export NO_PROXY="localhost,127.0.0.1"
+export no_proxy="localhost,127.0.0.1"
+
+# Start UniEval
+echo "Starting UniEval on port 8004..."
+nohup $PYTHON flowernet-unieval/main.py > /tmp/unieval.log 2>&1 &
+UNIEVAL_PID=$!
+echo "UniEval PID: $UNIEVAL_PID"
+sleep 4
+
 # Start Verifier
 echo "Starting Verifier on port 8000..."
 nohup $PYTHON flowernet-verifier/main.py > /tmp/verifier.log 2>&1 &
@@ -42,7 +55,7 @@ $PYTHON -c "
 import subprocess
 result = subprocess.run(['lsof', '-i', '-P', '-n'], capture_output=True, text=True)
 for line in result.stdout.split('\n'):
-    if any(p in line for p in [':8000', ':8001', ':8002', ':8003']):
+    if any(p in line for p in [':8000', ':8001', ':8002', ':8003', ':8004']):
         print(line)
 " || echo "Services check output"
 

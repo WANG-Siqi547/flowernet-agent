@@ -27,15 +27,22 @@ class RAGSearchEngine:
             "小节", "章节", "大纲", "写作", "说明", "包括", "以及", "关于"
         }
         self.include_social_cn = os.getenv("RAG_INCLUDE_SOCIAL_CN", "true").lower() == "true"
+        self.include_social_global = os.getenv("RAG_INCLUDE_SOCIAL_GLOBAL", "true").lower() == "true"
+        self.include_academic_sources = os.getenv("RAG_INCLUDE_ACADEMIC_SOURCES", "true").lower() == "true"
         self.high_quality_domains = {
             "nature.com", "science.org", "sciencedirect.com", "springer.com", "ieee.org",
             "acm.org", "arxiv.org", "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org",
             "nist.gov", "nih.gov", "gov.cn", "edu.cn", "ruc.edu.cn", "tsinghua.edu.cn",
-            "pku.edu.cn", "cass.cn", "moe.gov.cn", "xiaohongshu.com", "douyin.com",
+            "pku.edu.cn", "cass.cn", "moe.gov.cn", "researchgate.net", "doi.org",
         }
         self.low_quality_domains = {
             "baike.baidu.com", "zhidao.baidu.com", "tieba.baidu.com", "jingyan.baidu.com",
-            "m.baidu.com", "weibo.com", "t.co", "bit.ly", "tinyurl.com",
+            "m.baidu.com", "t.co", "bit.ly", "tinyurl.com",
+        }
+        self.social_quality_domains = {
+            "zhihu.com", "bilibili.com", "weibo.com", "xiaohongshu.com", "douyin.com",
+            "x.com", "twitter.com", "reddit.com", "linkedin.com", "substack.com",
+            "medium.com", "youtube.com", "facebook.com", "instagram.com",
         }
 
     def search(self, query: str) -> Dict[str, Any]:
@@ -44,6 +51,21 @@ class RAGSearchEngine:
             query_candidates = self._build_query_candidates(query)
             results: List[Dict[str, Any]] = []
             last_error = "no_results_parsed"
+
+            if self.include_academic_sources:
+                academic_results = self._search_academic_sources(query)
+                if academic_results:
+                    ranked_academic = self._rank_results(query, academic_results)
+                    if ranked_academic:
+                        return {
+                            "success": True,
+                            "query": query,
+                            "effective_query": query,
+                            "results": ranked_academic,
+                            "search_time": round(time.time() - started_at, 3),
+                            "error": None,
+                            "source_type": "academic",
+                        }
 
             for query_candidate in query_candidates:
                 raw_html, fetch_error = self._fetch_duckduckgo_html(query_candidate)
@@ -58,6 +80,7 @@ class RAGSearchEngine:
                             "results": ranked_results,
                             "search_time": round(time.time() - started_at, 3),
                             "error": None,
+                            "source_type": "web",
                         }
                 if fetch_error:
                     last_error = fetch_error
@@ -79,6 +102,7 @@ class RAGSearchEngine:
                         "results": ranked_fallback,
                         "search_time": round(time.time() - started_at, 3),
                         "error": "fallback_wikipedia",
+                        "source_type": "wiki",
                     }
 
             return {
@@ -110,8 +134,30 @@ class RAGSearchEngine:
             candidates.extend([
                 f"{semantic} site:xiaohongshu.com",
                 f"{semantic} site:douyin.com",
+                f"{semantic} site:weibo.com",
+                f"{semantic} site:zhihu.com",
+                f"{semantic} site:bilibili.com",
                 f"{semantic} 小红书",
                 f"{semantic} 抖音",
+                f"{semantic} 微博",
+                f"{semantic} 知乎",
+                f"{semantic} B站",
+            ])
+        if self.include_social_global and semantic:
+            candidates.extend([
+                f"{semantic} site:x.com",
+                f"{semantic} site:twitter.com",
+                f"{semantic} site:reddit.com",
+                f"{semantic} site:linkedin.com",
+                f"{semantic} site:substack.com",
+            ])
+        if self.include_academic_sources and semantic:
+            candidates.extend([
+                f"{semantic} site:arxiv.org",
+                f"{semantic} site:ssrn.com",
+                f"{semantic} site:scholar.google.com",
+                f"{semantic} site:springer.com",
+                f"{semantic} site:ieee.org",
             ])
         dedup: List[str] = []
         seen = set()
@@ -126,6 +172,107 @@ class RAGSearchEngine:
             dedup.append(cleaned)
 
         return dedup[:8]
+
+    def _search_academic_sources(self, query: str) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        query_text = " ".join(str(query or "").split())[:180]
+
+        for item in self._search_arxiv(query_text):
+            href = str(item.get("href", ""))
+            if href and href not in seen:
+                seen.add(href)
+                results.append(item)
+                if len(results) >= self.max_results:
+                    return results
+
+        for item in self._search_site_targeted(query_text, "ssrn.com"):
+            href = str(item.get("href", ""))
+            if href and href not in seen:
+                seen.add(href)
+                results.append(item)
+                if len(results) >= self.max_results:
+                    return results
+
+        for item in self._search_site_targeted(query_text, "scholar.google.com"):
+            href = str(item.get("href", ""))
+            if href and href not in seen:
+                seen.add(href)
+                results.append(item)
+                if len(results) >= self.max_results:
+                    return results
+
+        return results
+
+    def _search_arxiv(self, query: str) -> List[Dict[str, Any]]:
+        if not query:
+            return []
+        try:
+            api_url = "http://export.arxiv.org/api/query"
+            response = self.session.get(
+                api_url,
+                params={
+                    "search_query": f"all:{query}",
+                    "start": 0,
+                    "max_results": self.max_results,
+                    "sortBy": "relevance",
+                    "sortOrder": "descending",
+                },
+                timeout=self.timeout,
+                headers={"User-Agent": self._user_agent},
+            )
+            if response.status_code != 200 or not response.text:
+                return []
+
+            import xml.etree.ElementTree as ET
+
+            ns = {
+                "atom": "http://www.w3.org/2005/Atom",
+                "arxiv": "http://arxiv.org/schemas/atom",
+            }
+            root = ET.fromstring(response.text)
+            results: List[Dict[str, Any]] = []
+            for entry in root.findall("atom:entry", ns):
+                title = self._strip_html(" ".join(entry.findtext("atom:title", default="", namespaces=ns).split()))
+                summary = self._strip_html(" ".join(entry.findtext("atom:summary", default="", namespaces=ns).split()))
+                href = ""
+                for link in entry.findall("atom:link", ns):
+                    if link.attrib.get("rel") == "alternate" and link.attrib.get("href"):
+                        href = link.attrib["href"]
+                        break
+                if not href:
+                    id_text = entry.findtext("atom:id", default="", namespaces=ns)
+                    href = id_text.strip()
+                if not title or not href:
+                    continue
+                results.append(
+                    {
+                        "title": title,
+                        "body": summary[:400],
+                        "href": href,
+                        "source": "arxiv.org",
+                    }
+                )
+                if len(results) >= self.max_results:
+                    break
+            return results
+        except Exception:
+            return []
+
+    def _search_site_targeted(self, query: str, domain: str) -> List[Dict[str, Any]]:
+        if not query or not domain:
+            return []
+        site_query = f"{query} site:{domain}"
+        raw_html, _ = self._fetch_duckduckgo_html(site_query)
+        if not raw_html:
+            return []
+        items = self._parse_results(raw_html, self.max_results)
+        filtered: List[Dict[str, Any]] = []
+        for item in items:
+            href = str(item.get("href", ""))
+            if domain in self._extract_domain(href):
+                filtered.append(item)
+        return filtered[: self.max_results]
 
     def _tokenize_query(self, text: str) -> List[str]:
         tokens = re.findall(r"[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{1,30}", text or "")
@@ -149,14 +296,20 @@ class RAGSearchEngine:
             return 0.15
         if host in self.high_quality_domains:
             return 1.0
+        if host in self.social_quality_domains:
+            if host in {"zhihu.com", "bilibili.com", "reddit.com", "substack.com", "medium.com"}:
+                return 0.72
+            if host in {"x.com", "twitter.com", "linkedin.com", "youtube.com", "facebook.com", "instagram.com"}:
+                return 0.68
+            return 0.66
         if host.endswith(".gov") or host.endswith(".edu") or host.endswith(".gov.cn") or host.endswith(".edu.cn"):
             return 0.95
         if "wikipedia.org" in host:
-            return 0.55
+            return 0.70
         if host.endswith(".org"):
-            return 0.72
+            return 0.78
         if host.endswith(".com"):
-            return 0.60
+            return 0.62
         return 0.5
 
     def _semantic_score(self, query: str, item: Dict[str, Any]) -> float:

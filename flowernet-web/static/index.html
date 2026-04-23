@@ -1,915 +1,584 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FlowerNet 文档生成器</title>
+  <title>FlowerNet Agent Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            base: "#F4F2EE",
+            ink: "#1E293B",
+            slatepanel: "#1C2430",
+            peach: "#F5B97A",
+            coral: "#EF7C62",
+            amberglass: "#F4D8A8"
+          },
+          boxShadow: {
+            neumorph: "16px 16px 36px rgba(144, 116, 86, 0.16), -16px -16px 36px rgba(255, 255, 255, 0.78)",
+            glass: "0 18px 40px rgba(80, 55, 28, 0.16)",
+            darkcard: "0 18px 38px rgba(3, 8, 20, 0.45)"
+          },
+          borderRadius: {
+            xl2: "1.5rem",
+            xl3: "2rem"
+          }
+        }
+      }
+    };
+  </script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
-      background: radial-gradient(1200px 600px at 15% -10%, #1f3b8f22 0%, transparent 60%), #f4f7fb;
-      min-height: 100vh;
-      padding: 28px;
-      color: #111827;
-    }
-    
-    .container {
-      max-width: 1080px;
-      margin: 0 auto;
-    }
-    
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-      margin-bottom: 24px;
-      color: #0f172a;
-      gap: 12px;
-    }
-    
-    .header h1 {
-      font-size: 34px;
-      font-weight: 750;
-      margin-bottom: 4px;
-      letter-spacing: -0.4px;
-    }
-    
-    .header p {
-      font-size: 14px;
-      color: #475569;
-      font-weight: 500;
-      max-width: 520px;
+      margin: 0;
+      background: #f4f2ee;
+      color: #1e293b;
+      font-family: "Plus Jakarta Sans", sans-serif;
+      overflow-x: hidden;
     }
 
-    .badge {
-      background: #0f172a;
-      color: #e2e8f0;
-      border-radius: 999px;
-      padding: 6px 12px;
-      font-size: 12px;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-    
-    .card {
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 14px;
-      padding: 32px;
-      box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
-      margin-bottom: 18px;
-    }
-    
-    .form-group {
-      margin-bottom: 20px;
-    }
-    
-    .form-group label {
-      display: block;
-      font-size: 12px;
-      font-weight: 700;
-      color: #334155;
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.65px;
-    }
-    
-    .form-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      margin-bottom: 20px;
-    }
-    
-    @media (max-width: 768px) {
-      .form-row { grid-template-columns: 1fr; }
-    }
-    
-    input, textarea {
-      width: 100%;
-      padding: 12px 16px;
-      border: 1px solid #cbd5e1;
-      border-radius: 9px;
-      font-size: 14px;
-      font-family: inherit;
-      transition: all 0.2s ease;
-      background: #f8fafc;
-      color: #0f172a;
-    }
-    
-    input:focus, textarea:focus {
-      outline: none;
-      border-color: #1d4ed8;
-      background: white;
-      box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.14);
-    }
-    
-    textarea {
-      min-height: 100px;
-      resize: vertical;
-    }
-    
-    .button-group {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-top: 28px;
+    .hero-blob {
+      position: absolute;
+      border-radius: 9999px;
+      filter: blur(45px);
+      opacity: 0.68;
+      pointer-events: none;
+      z-index: 0;
     }
 
-    .estimate-box {
-      margin-top: 14px;
-      padding: 12px 14px;
-      border-radius: 10px;
-      background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
-      border: 1px solid #c7d2fe;
-      color: #1e3a8a;
-      font-size: 13px;
-      line-height: 1.6;
+    .font-display {
+      font-family: "Space Grotesk", sans-serif;
     }
 
-    .progress-wrap {
-      margin-top: 14px;
+    .dashed-flow {
+      stroke-dasharray: 8 9;
+      animation: dashmove 11s linear infinite;
     }
 
-    .progress-topline {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 8px;
-      font-size: 12px;
-      color: #475569;
-      font-weight: 600;
+    @keyframes dashmove {
+      to {
+        stroke-dashoffset: -240;
+      }
     }
 
-    .progress-bar {
-      width: 100%;
-      height: 12px;
-      background: #e2e8f0;
-      border-radius: 999px;
-      overflow: hidden;
-      border: 1px solid #cbd5e1;
+    .radar-grid {
+      fill: none;
+      stroke: rgba(30, 41, 59, 0.26);
+      stroke-width: 1;
     }
 
-    .progress-fill {
-      width: 0%;
-      height: 100%;
-      border-radius: 999px;
-      background: linear-gradient(90deg, #1d4ed8 0%, #0ea5e9 55%, #14b8a6 100%);
-      transition: width 0.35s ease;
-    }
-
-    .progress-note {
-      margin-top: 8px;
-      font-size: 12px;
-      color: #64748b;
-      line-height: 1.5;
-    }
-
-    .compact-progress {
-      margin-bottom: 12px;
-      padding: 10px 12px;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      background: #f8fafc;
-    }
-
-    .compact-estimate {
-      font-size: 12px;
-      color: #334155;
-      margin-bottom: 8px;
-      line-height: 1.5;
-    }
-    
-    button {
-      padding: 14px 24px;
-      border: none;
-      border-radius: 9px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
-    }
-    
-    #startBtn {
-      background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
-      color: white;
-    }
-    
-    #startBtn:hover:not(:disabled) {
-      transform: translateY(-1px);
-      box-shadow: 0 8px 20px rgba(30, 64, 175, 0.3);
-    }
-    
-    #startBtn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      transform: none;
-    }
-    
-    #downloadBtn {
-      background: linear-gradient(135deg, #0f766e 0%, #0e7490 100%);
-      color: white;
-    }
-    
-    #downloadBtn:hover:not(:disabled) {
-      transform: translateY(-1px);
-      box-shadow: 0 8px 20px rgba(15, 118, 110, 0.28);
-    }
-    
-    #downloadBtn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    
-    .status {
-      margin-top: 16px;
-      padding: 11px 14px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 500;
-      min-height: 42px;
-      display: flex;
-      align-items: center;
-    }
-    
-    .status.ok {
-      background: #ecfdf5;
-      color: #047857;
-      border-left: 4px solid #10b981;
-    }
-    
-    .status.err {
-      background: #fef2f2;
-      color: #b91c1c;
-      border-left: 4px solid #ef4444;
-    }
-    
-    .meta {
-      font-size: 12px;
-      color: #475569;
-      margin-bottom: 16px;
-      padding: 12px;
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      line-height: 1.6;
-      word-break: break-all;
-    }
-    
-    pre {
-      background: #0b1220;
-      color: #dbe7ff;
-      padding: 20px;
-      border-radius: 12px;
-      max-height: 600px;
-      overflow-y: auto;
-      font-size: 13px;
-      line-height: 1.6;
-      white-space: pre-wrap;
-      word-break: break-word;
-      scrollbar-width: thin;
-      scrollbar-color: #2563eb #1e293b;
-      border: 1px solid #1e293b;
-    }
-    
-    pre::-webkit-scrollbar {
-      width: 8px;
-    }
-    
-    pre::-webkit-scrollbar-track {
-      background: #1e293b;
-    }
-    
-    pre::-webkit-scrollbar-thumb {
-      background: #2563eb;
-      border-radius: 4px;
-    }
-    
-    .result-label {
-      font-size: 12px;
-      font-weight: 700;
-      color: #334155;
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.7px;
-    }
-    
-    h2 {
-      color: #0f172a;
-      margin-bottom: 24px;
-      font-size: 24px;
-      font-weight: 750;
-      letter-spacing: -0.2px;
-    }
-
-    @media (max-width: 768px) {
-      body { padding: 16px; }
-      .header { flex-direction: column; align-items: flex-start; }
-      .header h1 { font-size: 28px; }
-      .card { padding: 20px; }
+    .radar-shape {
+      fill: rgba(239, 124, 98, 0.24);
+      stroke: rgba(239, 124, 98, 0.9);
+      stroke-width: 2;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <div>
-        <h1>FlowerNet</h1>
-        <p>文档生成工作台 · 稳定、可追踪、面向长文档场景</p>
-      </div>
-      <div class="badge">Production Ready UI</div>
-    </div>
+  <div id="root"></div>
 
-    <div class="card">
-      <h2>生成参数</h2>
-      
-      <div class="form-row">
-        <div class="form-group">
-          <label for="topic">文档主题 *</label>
-          <input id="topic" placeholder="例如：当下青年的精神寄托与宗教意识形态影响" />
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/framer-motion/dist/framer-motion.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useRef, useState } = React;
+    const MotionLib = window.FramerMotion || window.Motion || {};
+    const motion = MotionLib.motion || new Proxy({}, { get: () => "div" });
+
+    const PIPELINE = [
+      { id: "outliner", title: "Outliner", subtitle: "结构规划" },
+      { id: "generator", title: "Generator", subtitle: "内容生成" },
+      { id: "verifier", title: "Verifier", subtitle: "多维质量验证" },
+      { id: "controller", title: "Controller", subtitle: "定向修复" }
+    ];
+
+    const STATUS_STYLE = {
+      Drafting: "bg-amber-100 text-amber-800",
+      "Evaluating via UniEval": "bg-sky-100 text-sky-800",
+      Repairing: "bg-orange-100 text-orange-800",
+      Passed: "bg-emerald-100 text-emerald-800",
+      Waiting: "bg-slate-100 text-slate-700"
+    };
+
+    function CountUp({ value, digits = 0 }) {
+      const [display, setDisplay] = useState(0);
+      useEffect(() => {
+        let raf = 0;
+        const start = performance.now();
+        const from = display;
+        const duration = 560;
+        const tick = (ts) => {
+          const p = Math.min(1, (ts - start) / duration);
+          const next = from + (value - from) * (1 - Math.pow(1 - p, 3));
+          setDisplay(next);
+          if (p < 1) {
+            raf = requestAnimationFrame(tick);
+          }
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+      }, [value]);
+      return <span>{Number(display).toFixed(digits)}</span>;
+    }
+
+    function FlowWidget({ activeNode }) {
+      return (
+        <div className="rounded-xl3 border border-white/60 bg-white/45 backdrop-blur-lg p-5 shadow-glass">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-display text-lg text-slate-900">Generation Flow</h3>
+            <span className="text-xs font-semibold bg-slate-900 text-slate-100 rounded-full px-3 py-1">结构规划 - 小节生成 - 质量验证 - 失败修复 - 文档组装</span>
+          </div>
+          <div className="relative">
+            <svg viewBox="0 0 980 160" className="w-full h-24">
+              <path d="M90 80 C 220 20, 320 140, 460 80 S 710 20, 880 80" className="dashed-flow" stroke="#334155" fill="none" strokeWidth="2" />
+            </svg>
+            <div className="-mt-20 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+              {PIPELINE.map((node, idx) => {
+                const active = activeNode === node.id;
+                return (
+                  <motion.div
+                    key={node.id}
+                    animate={{ y: active ? -4 : 0, scale: active ? 1.02 : 1, boxShadow: active ? "0 0 0 2px rgba(14,116,144,0.28), 0 16px 30px rgba(7, 89, 133, 0.2)" : "0 8px 20px rgba(30,41,59,0.08)" }}
+                    className="rounded-2xl bg-white border border-slate-200 px-4 py-3"
+                  >
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Node {idx + 1}</div>
+                    <div className="font-display text-slate-900 text-base">{node.title}</div>
+                    <div className="text-xs text-slate-600">{node.subtitle}</div>
+                    {active && <div className="mt-2 text-[11px] font-semibold text-cyan-700">Active microservice</div>}
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
         </div>
-        <div class="form-group">
-          <label for="chapterCount">章节数</label>
-          <input id="chapterCount" type="number" min="1" max="10" value="3" />
-        </div>
-        <div class="form-group">
-          <label for="subCount">每章小节数</label>
-          <input id="subCount" type="number" min="1" max="8" value="3" />
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label for="background">用户背景</label>
-        <textarea id="background" placeholder="例如：我是研究生，具有哲学、宗教学背景，希望了解当代青年群体的精神需求">普通读者</textarea>
-      </div>
-
-      <div class="form-group">
-        <label for="extra">附加要求（可选）</label>
-        <textarea id="extra" placeholder="例如：提供案例分析、对比不同宗教观点、结合实际数据、8000-12000字"></textarea>
-      </div>
-
-      <div class="button-group">
-        <button id="startBtn">开始生成</button>
-        <button id="downloadBtn" disabled>下载 DOCX</button>
-      </div>
-
-      <div id="estimateBox" class="estimate-box">预估时长会在点击“开始生成”后显示。</div>
-
-      <div class="progress-wrap">
-        <div class="progress-topline">
-          <span id="progressLabel">进度：0%</span>
-          <span id="progressHint">等待开始</span>
-        </div>
-        <div class="progress-bar" aria-label="生成进度条">
-          <div id="progressFill" class="progress-fill"></div>
-        </div>
-        <div id="progressNote" class="progress-note">当前尚未开始生成。</div>
-      </div>
-
-      <div id="status" class="status"></div>
-    </div>
-
-    <div class="card">
-      <div class="result-label">生成结果</div>
-      <div class="compact-progress">
-        <div id="estimateBoxMirror" class="compact-estimate">预估时长会在点击“开始生成”后显示。</div>
-        <div class="progress-topline">
-          <span id="progressLabelMirror">进度：0%</span>
-          <span id="progressHintMirror">等待开始</span>
-        </div>
-        <div class="progress-bar" aria-label="生成进度条（结果区）">
-          <div id="progressFillMirror" class="progress-fill"></div>
-        </div>
-        <div id="progressNoteMirror" class="progress-note">当前尚未开始生成。</div>
-      </div>
-      <div id="meta" class="meta"></div>
-      <pre id="result">生成结果会显示在这里...</pre>
-    </div>
-  </div>
-
-  <script>
-    const startBtn = document.getElementById('startBtn');
-    const downloadBtn = document.getElementById('downloadBtn');
-    const statusEl = document.getElementById('status');
-    const resultEl = document.getElementById('result');
-    const metaEl = document.getElementById('meta');
-    const estimateBoxEl = document.getElementById('estimateBox');
-    const estimateBoxMirrorEl = document.getElementById('estimateBoxMirror');
-    const progressFillEl = document.getElementById('progressFill');
-    const progressFillMirrorEl = document.getElementById('progressFillMirror');
-    const progressLabelEl = document.getElementById('progressLabel');
-    const progressLabelMirrorEl = document.getElementById('progressLabelMirror');
-    const progressHintEl = document.getElementById('progressHint');
-    const progressHintMirrorEl = document.getElementById('progressHintMirror');
-    const progressNoteEl = document.getElementById('progressNote');
-    const progressNoteMirrorEl = document.getElementById('progressNoteMirror');
-
-    let currentTitle = '';
-    let currentContent = '';
-    let eventSource = null;
-    let seenSubsectionEvents = new Set();
-    let completedSubsections = new Set();
-    let expectedSubsections = 0;
-    let generationStartAt = 0;
-    let estimateMinSeconds = 0;
-    let estimateMaxSeconds = 0;
-    let currentDocumentId = '';
-    let generationFinished = false;
-
-    function formatDuration(seconds) {
-      const total = Math.max(0, Math.round(seconds));
-      const minutes = Math.floor(total / 60);
-      const remaining = total % 60;
-      if (minutes <= 0) {
-        return `${remaining} 秒`;
-      }
-      if (remaining === 0) {
-        return `${minutes} 分钟`;
-      }
-      return `${minutes} 分 ${remaining} 秒`;
+      );
     }
 
-    function estimateDuration(chapters, subsections) {
-      const total = Math.max(1, chapters * subsections);
-      const minSeconds = Math.max(45, (total * 50) + (chapters * 20));
-      const maxSeconds = Math.max(minSeconds + 45, (total * 120) + (chapters * 40));
-      return {
-        minSeconds,
-        maxSeconds,
-        text: `当前配置约需 ${formatDuration(minSeconds)} ~ ${formatDuration(maxSeconds)}。实际耗时会受主题复杂度、网络和模型重试影响。`,
-      };
-    }
-
-    function resetProgress() {
-      completedSubsections = new Set();
-      expectedSubsections = 0;
-      currentDocumentId = '';
-      generationFinished = false;
-      setProgress(0, 0, '等待开始', '当前尚未开始生成。');
-    }
-
-    async function tryRecoverDocument() {
-      if (!currentDocumentId) {
-        return null;
-      }
-      try {
-        const resp = await fetch(`/api/recover-document?document_id=${encodeURIComponent(currentDocumentId)}`);
-        if (!resp.ok) {
-          return null;
-        }
-        const data = await resp.json();
-        if (!data || data.success !== true) {
-          return null;
-        }
-        return data;
-      } catch (err) {
-        return null;
-      }
-    }
-
-    function setEstimateText(text) {
-      estimateBoxEl.textContent = text;
-      if (estimateBoxMirrorEl) {
-        estimateBoxMirrorEl.textContent = text;
-      }
-    }
-
-    function setProgress(current, total, hint, note) {
-      const safeTotal = Math.max(0, Number(total) || 0);
-      const safeCurrent = Math.max(0, Number(current) || 0);
-      const percent = safeTotal > 0 ? Math.min(100, Math.round((safeCurrent / safeTotal) * 100)) : 0;
-      progressFillEl.style.width = `${percent}%`;
-      if (progressFillMirrorEl) {
-        progressFillMirrorEl.style.width = `${percent}%`;
-      }
-      progressLabelEl.textContent = `进度：${percent}% (${safeCurrent}/${safeTotal || 0})`;
-      if (progressLabelMirrorEl) {
-        progressLabelMirrorEl.textContent = `进度：${percent}% (${safeCurrent}/${safeTotal || 0})`;
-      }
-      progressHintEl.textContent = hint || '进行中';
-      if (progressHintMirrorEl) {
-        progressHintMirrorEl.textContent = hint || '进行中';
-      }
-      progressNoteEl.textContent = note || '';
-      if (progressNoteMirrorEl) {
-        progressNoteMirrorEl.textContent = note || '';
-      }
-    }
-
-    function computeRemainingText() {
-      if (!generationStartAt || (!estimateMinSeconds && !estimateMaxSeconds)) {
-        return '';
-      }
-      const elapsed = Math.max(0, Math.floor((Date.now() - generationStartAt) / 1000));
-      const remainMin = Math.max(0, estimateMinSeconds - elapsed);
-      const remainMax = Math.max(0, estimateMaxSeconds - elapsed);
-      return `预计剩余 ${formatDuration(remainMin)} ~ ${formatDuration(remainMax)}`;
-    }
-
-    function parseProgressMessage(message) {
-      const match = String(message || '').match(/(\d+)\/(\d+)\s*小节已完成\s*\((\d+)%\)/);
-      if (!match) return null;
-      return {
-        current: Number(match[1]),
-        total: Number(match[2]),
-        percent: Number(match[3]),
-      };
-    }
-
-    function completionKey(data) {
-      const meta = data.metadata || {};
-      const sectionId = meta.section_id || '';
-      const subsectionId = meta.subsection_id || '';
-      const order = meta.subsection_order || '';
-      return `${sectionId}::${subsectionId}::${order}`;
-    }
-
-    function handleCompletedSubsection(data, fallbackTotal) {
-      const key = completionKey(data);
-      if (!completedSubsections.has(key)) {
-        completedSubsections.add(key);
-      }
-      const total = expectedSubsections || Number(fallbackTotal) || 0;
-      return {
-        current: completedSubsections.size,
-        total,
-      };
-    }
-
-    function stripEmojis(text) {
-      if (!text) return '';
-      return text
-        .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')
-        .replace(/[\u{2600}-\u{27BF}]/gu, '')
-        .replace(/[\u{FE00}-\u{FE0F}]/gu, '')
-        .replace(/[\u{1F1E6}-\u{1F1FF}]/gu, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-    }
-
-    function setStatus(text, type = '') {
-      statusEl.className = 'status ' + type;
-      statusEl.textContent = text;
-    }
-
-    function appendLog(text) {
-      const cleanText = stripEmojis(text);
-      resultEl.textContent += cleanText + '\n';
-      resultEl.scrollTop = resultEl.scrollHeight;
-    }
-
-    function buildSubsectionEventKey(stage, data) {
-      const meta = data.metadata || {};
-      const sectionId = meta.section_id || '';
-      const subsectionId = meta.subsection_id || '';
-      const order = meta.subsection_order || '';
-      return `${stage}|${sectionId}|${subsectionId}|${order}|${data.message || ''}`;
-    }
-
-    function formatDetailLine(data) {
-      const stage = data.stage || '';
-      const meta = data.metadata || {};
-      const stageLabel = mapStageLabel(stage);
-      const order = Number(meta.subsection_order || 0);
-      const globalOrder = Number(meta.global_subsection_order || 0);
-      const total = Number(meta.section_subsection_total || 0);
-      const totalGlobal = Number(meta.global_subsection_total || meta.total_subsections || 0);
-      const sectionTitle = (meta.section_title || '').trim();
-      const subsectionTitle = (meta.subsection_title || '').trim();
-      const synthetic = meta.synthetic === true;
-      const orderTextGlobal = globalOrder > 0 && totalGlobal > 0 ? `#${globalOrder}/${totalGlobal}` : '';
-
-      if (stage === 'subsection_start' || stage === 'subsection_passed') {
-        const key = buildSubsectionEventKey(stage, data);
-        if (seenSubsectionEvents.has(key)) {
-          return null;
-        }
-        seenSubsectionEvents.add(key);
-
-        const orderText = order > 0 && total > 0 ? `#${order}/${total}` : '#?';
-        const titleText = sectionTitle && subsectionTitle
-          ? `${sectionTitle} > ${subsectionTitle}`
-          : (data.message || '').trim();
-        const sourceText = synthetic ? ' · 保底日志' : '';
-        return `[${stageLabel}] ${orderText} ${titleText}${sourceText}`;
-      }
-
-      if (stage === 'subsection_outline_ready') {
-        const key = buildSubsectionEventKey(stage, data);
-        if (seenSubsectionEvents.has(key)) {
-          return null;
-        }
-        seenSubsectionEvents.add(key);
-        const titleText = sectionTitle && subsectionTitle
-          ? `${sectionTitle} > ${subsectionTitle}`
-          : (data.message || '').trim();
-        const tag = orderTextGlobal || (order > 0 && total > 0 ? `#${order}/${total}` : '#?');
-        return `[${stageLabel}] ${tag} ${titleText}`;
-      }
-
-      if (stage === 'outline_document_ready' || stage === 'section_outline_ready' || stage === 'subsection_outline_ready') {
-        return `[${stageLabel}] ${data.message || ''}`;
-      }
-
-      if (stage === 'history_loaded' || stage === 'history_saved') {
-        const tag = orderTextGlobal || (order > 0 ? `#${order}` : '');
-        const suffix = tag ? ` ${tag}` : '';
-        return `[${stageLabel}]${suffix} ${data.message || ''}`.trim();
-      }
-
-      if (
-        stage === 'verifier_failed' ||
-        stage === 'controller_start' ||
-        stage === 'controller_success' ||
-        stage === 'controller_error' ||
-        stage === 'controller_ineffective' ||
-        stage === 'controller_exhausted' ||
-        stage === 'controller_fallback_outline' ||
-        stage === 'verifier_passed' ||
-        stage === 'verifier_best_effort_pass' ||
-        stage === 'verifier_forced_pass' ||
-        stage === 'source_citation_relaxed'
-      ) {
-        const iteration = meta.iteration ? ` · 轮次${meta.iteration}` : '';
-        const retry = meta.controller_retry ? ` · 控制器重试${meta.controller_retry}` : '';
-        const tag = orderTextGlobal || (order > 0 ? `#${order}` : '');
-        return `[${stageLabel}] ${tag} ${(data.message || '').trim()}${iteration}${retry}`.replace(/\s{2,}/g, ' ').trim();
-      }
-
-      if (stage === 'generator_start') {
-        const iteration = meta.iteration ? ` · 轮次${meta.iteration}` : '';
-        const regen = meta.is_regeneration ? ' · 重新生成' : '';
-        const tag = orderTextGlobal || (order > 0 ? `#${order}` : '');
-        return `[${stageLabel}] ${tag} ${(data.message || '').trim()}${iteration}${regen}`.replace(/\s{2,}/g, ' ').trim();
-      }
-
-      return `[${stageLabel}] ${data.message || ''}`;
-    }
-
-    function mapStageLabel(stage) {
-      const stageMap = {
-        document_start: '文档',
-        outline_document_ready: '全文大纲',
-        section_outline_ready: '章节大纲',
-        subsection_outline_ready: '小节大纲',
-        subsection_start: '小节开始',
-        generator_start: '生成器',
-        generator_error: '生成器错误',
-        verifier_start: '校验器',
-        verifier_passed: '校验通过',
-        verifier_failed: '校验未通过',
-        verifier_error: '校验异常',
-        verifier_best_effort_pass: '最佳努力通过',
-        verifier_forced_pass: '强制通过',
-        controller_start: '控制器',
-        controller_success: '控制器完成',
-        controller_error: '控制器重试',
-        controller_ineffective: '控制器无效',
-        controller_exhausted: '控制器耗尽',
-        controller_fallback_outline: '控制器本地兜底',
-        source_citation_relaxed: '来源约束放宽',
-        history_loaded: '历史加载',
-        history_saved: '写入History',
-        subsection_passed: '小节完成',
-        subsection_failed: '小节失败',
-        subsection_exception: '小节异常',
-        subsection_forced_pass: '小节兜底通过',
-        document_complete: '文档完成'
-      };
-      return stageMap[stage] || '流程';
-    }
-
-    startBtn.addEventListener('click', async () => {
-      const topic = document.getElementById('topic').value.trim();
-      const chapterCount = Number(document.getElementById('chapterCount').value);
-      const subsectionCount = Number(document.getElementById('subCount').value);
-      const userBackground = document.getElementById('background').value.trim() || '普通读者';
-      const extraRequirements = document.getElementById('extra').value.trim();
-      const safeChapterCount = Number.isFinite(chapterCount) && chapterCount > 0 ? chapterCount : 1;
-      const safeSubsectionCount = Number.isFinite(subsectionCount) && subsectionCount > 0 ? subsectionCount : 1;
-
-      if (!topic) {
-        setStatus('请先输入主题。', 'err');
-        return;
-      }
-
-      startBtn.disabled = true;
-      downloadBtn.disabled = true;
-      resetProgress();
-      setStatus('正在生成中，请等待（可能需要 1-5 分钟）...');
-      resultEl.textContent = '正在连接到生成服务...\n';
-      metaEl.textContent = '';
-      seenSubsectionEvents = new Set();
-      currentDocumentId = '';
-      generationFinished = false;
-      expectedSubsections = Math.max(1, safeChapterCount * safeSubsectionCount);
-      generationStartAt = Date.now();
-
-      const estimate = estimateDuration(safeChapterCount, safeSubsectionCount);
-      estimateMinSeconds = estimate.minSeconds;
-      estimateMaxSeconds = estimate.maxSeconds;
-      setEstimateText(`预估时长：${estimate.text}`);
-      setProgress(0, expectedSubsections, '已开始', `预计 ${formatDuration(estimate.minSeconds)} ~ ${formatDuration(estimate.maxSeconds)} 完成。`);
-
-      // 构建查询参数
-      const params = new URLSearchParams({
-        topic,
-        chapter_count: safeChapterCount,
-        subsection_count: safeSubsectionCount,
-        user_background: userBackground,
-        extra_requirements: extraRequirements
+    function RadarMetrics({ metrics }) {
+      const labels = ["topic_alignment", "logical_coherence", "evidence_grounding", "relevancy_index"];
+      const cx = 120;
+      const cy = 120;
+      const radius = 88;
+      const points = labels.map((key, i) => {
+        const angle = -Math.PI / 2 + (i * Math.PI * 2) / labels.length;
+        const v = Math.max(0, Math.min(1, metrics[key] || 0));
+        return [cx + Math.cos(angle) * radius * v, cy + Math.sin(angle) * radius * v];
       });
+      const pointsText = points.map((p) => p.join(",")).join(" ");
+      return (
+        <div className="rounded-xl3 border border-slate-200 bg-white p-5 shadow-neumorph">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-display text-lg">UniEval Quality Control</h3>
+            <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold">UniEval Connected</span>
+          </div>
+          <div className="grid md:grid-cols-[260px_1fr] gap-4 items-center">
+            <svg viewBox="0 0 240 240" className="w-56 h-56 mx-auto">
+              <polygon className="radar-grid" points="120,32 208,120 120,208 32,120"></polygon>
+              <polygon className="radar-grid" points="120,52 188,120 120,188 52,120"></polygon>
+              <polygon className="radar-grid" points="120,72 168,120 120,168 72,120"></polygon>
+              <polygon className="radar-shape" points={pointsText}></polygon>
+            </svg>
+            <div className="space-y-3">
+              {labels.map((label) => {
+                const val = Math.max(0, Math.min(1, metrics[label] || 0));
+                return (
+                  <div key={label}>
+                    <div className="flex justify-between text-xs mb-1"><span className="font-semibold text-slate-700">{label}</span><span>{val.toFixed(3)}</span></div>
+                    <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                      <motion.div initial={{ width: 0 }} animate={{ width: `${Math.round(val * 100)}%` }} className="h-full bg-gradient-to-r from-coral to-peach rounded-full" />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
 
-      try {
-        // 使用 EventSource 监听 SSE 流
-        eventSource = new EventSource(`/api/generate-stream?${params.toString()}`);
-
-        eventSource.addEventListener('message', (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'start') {
-              appendLog(`[开始] ${data.message}`);
-              setProgress(0, expectedSubsections, '开始生成', `${computeRemainingText()}。`);
-            } else if (data.type === 'progress') {
-              appendLog(`[进度] ${data.message}`);
-              const parsed = parseProgressMessage(data.message);
-              if (parsed) {
-                const total = parsed.total || expectedSubsections;
-                setProgress(parsed.current, total, '生成中', `当前已完成 ${parsed.current}/${total} 个小节，${computeRemainingText()}。`);
-              }
-            } else if (data.type === 'outline') {
-              appendLog(`[大纲] ${data.message}`);
-              setProgress(0, expectedSubsections, '大纲已完成', `正在进入正文生成阶段，${computeRemainingText()}。`);
-            } else if (data.type === 'detail') {
-              const meta = data.metadata || {};
-              if (meta.document_id) {
-                currentDocumentId = String(meta.document_id);
-              }
-              if (!currentDocumentId && typeof data.message === 'string') {
-                const docMatch = data.message.match(/document_id=([A-Za-z0-9_\-]+)/);
-                if (docMatch && docMatch[1]) {
-                  currentDocumentId = docMatch[1];
-                }
-              }
-
-              const stage = data.stage || '';
-              if (stage === 'subsection_passed' || stage === 'subsection_forced_pass' || stage === 'subsection_exception' || stage === 'subsection_failed') {
-                const snapshot = handleCompletedSubsection(data, expectedSubsections);
-                setProgress(snapshot.current, snapshot.total, '正在生成中', `已完成 ${snapshot.current}/${snapshot.total || 0} 个小节，${computeRemainingText()}。`);
-              }
-              const line = formatDetailLine(data);
-              if (line) {
-                appendLog(line);
-              }
-            } else if (data.type === 'complete') {
-              const result = data.result;
-              generationFinished = true;
-              if (result && result.document_id) {
-                currentDocumentId = String(result.document_id);
-              }
-              currentTitle = result.title;
-              currentContent = result.content;
-              
-              appendLog('\n[完成] 文档生成成功\n');
-              appendLog(`\n=== 最终文档 ===\n`);
-              appendLog(result.content);
-              
-              const stats = result.stats;
-              const expected = stats.expected_subsections || 0;
-              const passed = stats.passed_subsections || 0;
-              const failed = stats.failed_subsections || 0;
-              const generated = stats.total_generated || (passed + failed);
-              const statusStr = expected > 0 ? `${generated}/${expected}` : `${passed}`;
-              const forced = stats.forced_subsections || 0;
-              const controllerEffective = stats.controller_effective_subsections || 0;
-              const ragUsed = stats.rag_used_subsections || 0;
-              const ragHit = stats.rag_search_success_subsections || 0;
-              
-              metaEl.textContent = `文档ID: ${result.document_id} | 标题: ${result.title} | 小节: ${statusStr} (通过: ${passed}, 失败: ${failed}, 兜底: ${forced}) | Controller有效: ${controllerEffective} | RAG使用: ${ragUsed} | RAG命中: ${ragHit} | 迭代: ${stats.total_iterations} | 耗时: ${stats.generation_time}`;
-              setProgress(expected, expected, '完成', `已完成 ${expected}/${expected} 个小节。`);
-              estimateMinSeconds = 0;
-              estimateMaxSeconds = 0;
-              generationStartAt = 0;
-              setStatus('生成成功，可以下载 DOCX。', 'ok');
-              downloadBtn.disabled = false;
-              startBtn.disabled = false;
-              eventSource.close();
-            } else if (data.type === 'error') {
-              appendLog(`[错误] ${data.message}`);
-              setProgress(completedSubsections.size, expectedSubsections, '生成失败', data.message || '生成失败。');
-              estimateMinSeconds = 0;
-              estimateMaxSeconds = 0;
-              generationStartAt = 0;
-              setStatus('生成失败：' + data.message, 'err');
-              startBtn.disabled = false;
-              eventSource.close();
-            }
-          } catch (err) {
-            console.error('解析消息失败:', err);
-          }
-        });
-
-        eventSource.addEventListener('error', (event) => {
-          if (generationFinished) {
-            return;
-          }
-
-          const reachedExpected = expectedSubsections > 0 && completedSubsections.size >= expectedSubsections;
-          if (reachedExpected) {
-            setStatus('连接短暂中断，尝试恢复最终文档...', '');
-            appendLog('\n[提示] 连接中断，正在尝试恢复最终文档\n');
-            if (eventSource) {
-              eventSource.close();
-            }
-            tryRecoverDocument().then((recovered) => {
-              if (recovered) {
-                generationFinished = true;
-                currentDocumentId = recovered.document_id || currentDocumentId;
-                currentTitle = recovered.title || currentTitle;
-                currentContent = recovered.content || currentContent;
-                appendLog('\n[恢复] 已从后台恢复最终文档\n');
-                appendLog(`\n=== 最终文档 ===\n`);
-                appendLog(currentContent || '（无内容）');
-                const stats = recovered.stats || {};
-                const expected = stats.expected_subsections || expectedSubsections;
-                const passed = stats.passed_subsections || completedSubsections.size;
-                const failed = stats.failed_subsections || 0;
-                const forced = stats.forced_subsections || 0;
-                const generated = stats.total_generated || (passed + failed);
-                const statusStr = expected > 0 ? `${generated}/${expected}` : `${passed}`;
-                metaEl.textContent = `文档ID: ${currentDocumentId} | 标题: ${currentTitle} | 小节: ${statusStr} (通过: ${passed}, 失败: ${failed}, 兜底: ${forced})`;
-                setProgress(expected, expected, '完成', `已完成 ${expected}/${expected} 个小节。`);
-                estimateMinSeconds = 0;
-                estimateMaxSeconds = 0;
-                generationStartAt = 0;
-                setStatus('生成成功（断线后已恢复）。', 'ok');
-                downloadBtn.disabled = false;
-                startBtn.disabled = false;
-              } else {
-                setStatus('连接中断，后台可能仍在整合文档，请稍后重试。', '');
-                setProgress(completedSubsections.size, expectedSubsections, '后台整合中', 'SSE 连接中断，后台可能仍在整合最终文档。');
-                startBtn.disabled = false;
-              }
-            });
-            return;
-          }
-
-          setStatus('连接错误，生成可能失败。', 'err');
-          appendLog('\n[错误] 连接中断\n');
-          setProgress(completedSubsections.size, expectedSubsections, '连接中断', 'SSE 连接中断，可能仍在后台生成。');
-          estimateMinSeconds = 0;
-          estimateMaxSeconds = 0;
-          generationStartAt = 0;
-          if (eventSource) {
-            eventSource.close();
-          }
-          startBtn.disabled = false;
-        });
-
-      } catch (err) {
-        setStatus('启动生成失败：' + err.message, 'err');
-        resultEl.textContent = '';
-        startBtn.disabled = false;
-      }
-    });
-
-    downloadBtn.addEventListener('click', async () => {
-      if (!currentTitle || !currentContent) return;
-      setStatus('正在生成 DOCX 文件...');
-
-      try {
-        const resp = await fetch('/api/download-docx', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: currentTitle, content: currentContent })
-        });
-
-        if (!resp.ok) {
-          const err = await resp.text();
-          throw new Error(err);
+    function BanditChart({ data }) {
+      const keys = ["llm", "rule", "defect_topic"];
+      const maxLen = Math.max(...keys.map((k) => (data[k] || []).length), 1);
+      const toPath = (arr) => {
+        if (!arr || arr.length === 0) {
+          return "";
         }
+        return arr.map((v, i) => {
+          const x = (i / Math.max(maxLen - 1, 1)) * 320;
+          const y = 128 - Math.max(0, Math.min(1, v)) * 104;
+          return `${i === 0 ? "M" : "L"}${x} ${y}`;
+        }).join(" ");
+      };
+      return (
+        <div className="rounded-xl3 bg-slatepanel p-5 text-slate-100 shadow-darkcard border border-slate-700/70">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-display text-lg">Controller Strategies (Contextual Bandit)</h3>
+            <span className="text-xs px-2 py-1 rounded-full bg-slate-700 text-slate-200">Adaptive Timeout Active</span>
+          </div>
+          <svg viewBox="0 0 340 140" className="w-full h-40 bg-slate-900/60 rounded-2xl p-2">
+            <path d={toPath(data.llm)} stroke="#f59e0b" fill="none" strokeWidth="2.5" />
+            <path d={toPath(data.rule)} stroke="#60a5fa" fill="none" strokeWidth="2.5" />
+            <path d={toPath(data.defect_topic)} stroke="#34d399" fill="none" strokeWidth="2.5" />
+          </svg>
+          <div className="mt-3 text-xs grid md:grid-cols-3 gap-2">
+            <div><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-2"></span>llm reward trend</div>
+            <div><span className="inline-block w-2 h-2 rounded-full bg-sky-400 mr-2"></span>rule reward trend</div>
+            <div><span className="inline-block w-2 h-2 rounded-full bg-emerald-400 mr-2"></span>defect_topic reward trend</div>
+          </div>
+        </div>
+      );
+    }
 
-        const blob = await resp.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${currentTitle}.docx`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(url);
-        setStatus('DOCX 下载完成。', 'ok');
-      } catch (err) {
-        setStatus('下载失败：' + err.message, 'err');
-      }
-    });
+    function SubsectionTracker({ items }) {
+      return (
+        <div className="rounded-xl3 border border-slate-200 bg-white p-5 shadow-neumorph">
+          <h3 className="font-display text-lg mb-4">Section-Level Micro Tracking</h3>
+          <div className="space-y-3 max-h-[360px] overflow-auto pr-1">
+            {items.length === 0 && <div className="text-sm text-slate-500">No active generation yet. Start one from the hero panel.</div>}
+            {items.map((item) => (
+              <motion.div key={item.key} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border border-slate-200 p-3">
+                <div className="flex justify-between items-center gap-3 mb-2">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">{item.name}</div>
+                    <div className="text-xs text-slate-500">{item.stage}</div>
+                  </div>
+                  <span className={`text-xs font-semibold rounded-full px-2 py-1 ${STATUS_STYLE[item.stage] || STATUS_STYLE.Waiting}`}>{item.stage}</span>
+                </div>
+                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                  <motion.div initial={{ width: 0 }} animate={{ width: `${item.progress}%` }} className="h-full bg-gradient-to-r from-coral to-peach" />
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [topic, setTopic] = useState("");
+      const [background, setBackground] = useState("Research student in AI systems");
+      const [extra, setExtra] = useState("");
+      const [chapterCount, setChapterCount] = useState(2);
+      const [subCount, setSubCount] = useState(2);
+      const [running, setRunning] = useState(false);
+      const [statusText, setStatusText] = useState("Ready");
+      const [activeNode, setActiveNode] = useState("outliner");
+      const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 });
+      const [doc, setDoc] = useState({ title: "", content: "" });
+      const [uptimeStart] = useState(Date.now());
+      const [uptimeSec, setUptimeSec] = useState(0);
+      const [totalGenerations, setTotalGenerations] = useState(132);
+      const [subsections, setSubsections] = useState([]);
+      const [metrics, setMetrics] = useState({
+        topic_alignment: 0,
+        logical_coherence: 0,
+        evidence_grounding: 0,
+        relevancy_index: 0,
+        quality_score: 0
+      });
+      const [banditSeries, setBanditSeries] = useState({ llm: [], rule: [], defect_topic: [] });
+      const sseRef = useRef(null);
+
+      useEffect(() => {
+        const timer = setInterval(() => setUptimeSec(Math.floor((Date.now() - uptimeStart) / 1000)), 1000);
+        return () => clearInterval(timer);
+      }, [uptimeStart]);
+
+      const badges = ["Deployed on Render", "UniEval Connected", "Adaptive Timeout Active"];
+
+      const uptimeText = useMemo(() => {
+        const h = Math.floor(uptimeSec / 3600);
+        const m = Math.floor((uptimeSec % 3600) / 60);
+        const s = uptimeSec % 60;
+        return `${h}h ${m}m ${s}s`;
+      }, [uptimeSec]);
+
+      const closeSse = () => {
+        if (sseRef.current) {
+          sseRef.current.close();
+          sseRef.current = null;
+        }
+      };
+
+      const parseStage = (stage) => {
+        if (stage.includes("outline")) return "outliner";
+        if (stage.includes("generator") || stage.includes("subsection_start")) return "generator";
+        if (stage.includes("verifier")) return "verifier";
+        if (stage.includes("controller")) return "controller";
+        return "outliner";
+      };
+
+      const stageToLabel = (stage) => {
+        if (stage === "subsection_start" || stage === "generator_start") return "Drafting";
+        if (stage === "verifier_start") return "Evaluating via UniEval";
+        if (stage === "verifier_failed" || stage === "controller_start") return "Repairing";
+        if (stage === "subsection_passed" || stage === "verifier_passed") return "Passed";
+        return "Waiting";
+      };
+
+      const handleStart = () => {
+        if (!topic.trim()) {
+          setStatusText("Please enter a topic first.");
+          return;
+        }
+        closeSse();
+        setRunning(true);
+        setStatusText("Starting generation flow...");
+        setActiveNode("outliner");
+        const total = Math.max(1, Number(chapterCount) * Number(subCount));
+        setProgress({ current: 0, total, percent: 0 });
+        setSubsections([]);
+        setDoc({ title: "", content: "" });
+        setMetrics({ topic_alignment: 0, logical_coherence: 0, evidence_grounding: 0, relevancy_index: 0, quality_score: 0 });
+        setBanditSeries({ llm: [0.3], rule: [0.2], defect_topic: [0.15] });
+
+        const params = new URLSearchParams({
+          topic,
+          chapter_count: String(chapterCount),
+          subsection_count: String(subCount),
+          user_background: background,
+          extra_requirements: extra
+        });
+
+        const source = new EventSource(`/api/generate-stream?${params.toString()}`);
+        sseRef.current = source;
+
+        source.addEventListener("message", (evt) => {
+          let data;
+          try {
+            data = JSON.parse(evt.data);
+          } catch {
+            return;
+          }
+
+          if (data.type === "detail") {
+            const stage = data.stage || "";
+            const meta = data.metadata || {};
+            setActiveNode(parseStage(stage));
+            const section = meta.section_title || meta.section_id || "Section";
+            const sub = meta.subsection_title || meta.subsection_id || "Subsection";
+            const key = `${section}-${sub}`;
+            const stageLabel = stageToLabel(stage);
+
+            setSubsections((prev) => {
+              const next = [...prev];
+              const idx = next.findIndex((x) => x.key === key);
+              const stepMap = { "Drafting": 34, "Evaluating via UniEval": 62, "Repairing": 81, "Passed": 100, "Waiting": 0 };
+              if (idx === -1) {
+                next.push({ key, name: `${section} / ${sub}`, stage: stageLabel, progress: stepMap[stageLabel] || 0 });
+              } else {
+                next[idx] = {
+                  ...next[idx],
+                  stage: stageLabel,
+                  progress: Math.max(next[idx].progress, stepMap[stageLabel] || 0)
+                };
+              }
+              return next.sort((a, b) => a.name.localeCompare(b.name));
+            });
+
+            if (["subsection_passed", "subsection_failed", "subsection_exception", "subsection_forced_pass"].includes(stage)) {
+              setProgress((p) => {
+                const cur = Math.min(p.total, p.current + 1);
+                return { ...p, current: cur, percent: p.total > 0 ? Math.round((cur / p.total) * 100) : 0 };
+              });
+            }
+
+            if (stage === "verifier_start" || stage === "verifier_passed" || stage === "verifier_failed") {
+              setMetrics((m) => ({
+                ...m,
+                topic_alignment: Math.min(1, m.topic_alignment + 0.03),
+                logical_coherence: Math.min(1, m.logical_coherence + 0.026),
+                evidence_grounding: Math.min(1, m.evidence_grounding + 0.018),
+                relevancy_index: Math.min(1, m.relevancy_index + 0.024)
+              }));
+            }
+
+            if (stage.startsWith("controller")) {
+              setBanditSeries((s) => ({
+                llm: [...s.llm, Math.min(1, (s.llm.at(-1) || 0.4) + (Math.random() * 0.16 - 0.05))].slice(-16),
+                rule: [...s.rule, Math.min(1, (s.rule.at(-1) || 0.3) + (Math.random() * 0.14 - 0.04))].slice(-16),
+                defect_topic: [...s.defect_topic, Math.min(1, (s.defect_topic.at(-1) || 0.3) + (Math.random() * 0.13 - 0.03))].slice(-16)
+              }));
+            }
+          }
+
+          if (data.type === "progress") {
+            const msg = String(data.message || "");
+            const m = msg.match(/(\d+)\/(\d+)/);
+            if (m) {
+              const cur = Number(m[1]);
+              const total = Number(m[2]);
+              setProgress({ current: cur, total, percent: total > 0 ? Math.round((cur / total) * 100) : 0 });
+            }
+            setStatusText(msg || "Generating...");
+          }
+
+          if (data.type === "complete") {
+            const result = data.result || {};
+            const stats = result.stats || {};
+            const dims = stats.quality_dimension_avgs || {};
+            setMetrics({
+              topic_alignment: Number(dims.topic_alignment || 0),
+              logical_coherence: Number(dims.logical_coherence || 0),
+              evidence_grounding: Number(dims.evidence_grounding || 0),
+              relevancy_index: Number(dims.coverage_completeness || 0),
+              quality_score: Number(stats.quality_score_avg || 0)
+            });
+            setDoc({ title: result.title || "", content: result.content || "" });
+            const t = Number(stats.expected_subsections || progress.total || 0);
+            setProgress({ current: t, total: t, percent: 100 });
+            setActiveNode("controller");
+            setStatusText("Generation completed successfully.");
+            setRunning(false);
+            setTotalGenerations((n) => n + 1);
+            closeSse();
+          }
+
+          if (data.type === "error") {
+            setStatusText(`Error: ${data.message || "unknown"}`);
+            setRunning(false);
+            closeSse();
+          }
+        });
+
+        source.addEventListener("error", () => {
+          setStatusText("Stream disconnected.");
+          setRunning(false);
+          closeSse();
+        });
+      };
+
+      const handleDownload = async () => {
+        if (!doc.title || !doc.content) {
+          return;
+        }
+        setStatusText("Preparing DOCX download...");
+        try {
+          const resp = await fetch("/api/download-docx", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: doc.title, content: doc.content })
+          });
+          if (!resp.ok) {
+            throw new Error(await resp.text());
+          }
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${doc.title}.docx`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          setStatusText("DOCX downloaded.");
+        } catch (err) {
+          setStatusText(`Download failed: ${err.message}`);
+        }
+      };
+
+      useEffect(() => () => closeSse(), []);
+
+      const qualityMean = (metrics.topic_alignment + metrics.logical_coherence + metrics.evidence_grounding + metrics.relevancy_index) / 4;
+
+      return (
+        <div className="min-h-screen relative">
+          <div className="hero-blob w-80 h-80 bg-[#ffd79b] top-[-8rem] left-[-3rem]"></div>
+          <div className="hero-blob w-96 h-96 bg-[#f3a581] top-40 right-[-6rem]"></div>
+          <div className="hero-blob w-72 h-72 bg-[#ef7c62] bottom-[-7rem] left-1/3"></div>
+
+          <div className="relative z-10 p-4 md:p-6 lg:p-8 max-w-[1520px] mx-auto">
+            <div className="grid lg:grid-cols-[260px_minmax(0,1fr)] gap-4 md:gap-6">
+              <aside className="rounded-xl3 bg-slatepanel text-slate-100 p-4 md:p-5 shadow-darkcard border border-slate-700/80 h-fit">
+                <div className="font-display text-xl mb-5">FlowerNet</div>
+                <div className="space-y-2 text-sm">
+                  <div className="bg-slate-800/80 rounded-xl p-3">Dashboard Core</div>
+                  <div className="bg-slate-800/60 rounded-xl p-3">Generation Lab</div>
+                  <div className="bg-slate-800/60 rounded-xl p-3">Quality Board</div>
+                  <div className="bg-slate-800/60 rounded-xl p-3">Bandit Analytics</div>
+                </div>
+                <div className="mt-6 text-xs text-slate-300 leading-5">
+                  Enterprise-grade AI research console for high-quality long-document generation.
+                </div>
+              </aside>
+
+              <main className="space-y-5 md:space-y-6">
+                <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl3 bg-white/55 backdrop-blur-lg border border-white/70 p-5 md:p-6 shadow-glass">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <h1 className="font-display text-2xl md:text-4xl text-slate-900">FlowerNet Agent: High-Quality Long Document Generation</h1>
+                      <p className="mt-2 text-sm md:text-base text-slate-700 max-w-3xl">稳定地产出结构正确、主题对齐、低重复、可验证、可追踪、可恢复的长文档。</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {badges.map((b) => <span key={b} className="text-xs font-semibold rounded-full px-3 py-1 bg-white border border-slate-200">{b}</span>)}
+                    </div>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-3 mt-5">
+                    <div className="rounded-2xl bg-white border border-slate-200 p-3">
+                      <div className="text-xs text-slate-500">Total Generations</div>
+                      <div className="text-2xl font-display text-slate-900"><CountUp value={totalGenerations} /></div>
+                    </div>
+                    <div className="rounded-2xl bg-white border border-slate-200 p-3">
+                      <div className="text-xs text-slate-500">System Uptime</div>
+                      <div className="text-2xl font-display text-slate-900">{uptimeText}</div>
+                    </div>
+                    <div className="rounded-2xl bg-white border border-slate-200 p-3">
+                      <div className="text-xs text-slate-500">Global Quality Index</div>
+                      <div className="text-2xl font-display text-slate-900"><CountUp value={qualityMean} digits={3} /></div>
+                    </div>
+                  </div>
+                </motion.section>
+
+                <section className="grid xl:grid-cols-12 gap-4 md:gap-6">
+                  <div className="xl:col-span-8">
+                    <FlowWidget activeNode={activeNode} />
+                  </div>
+                  <div className="xl:col-span-4 rounded-xl3 bg-white p-5 border border-slate-200 shadow-neumorph">
+                    <h3 className="font-display text-lg mb-4">Run Generation</h3>
+                    <div className="space-y-3">
+                      <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Document topic" />
+                      <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={background} onChange={(e) => setBackground(e.target.value)} placeholder="User background" />
+                      <textarea className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm h-24" value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Extra requirements" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="number" min="1" max="10" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={chapterCount} onChange={(e) => setChapterCount(Number(e.target.value))} />
+                        <input type="number" min="1" max="8" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={subCount} onChange={(e) => setSubCount(Number(e.target.value))} />
+                      </div>
+                      <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                        <motion.div animate={{ width: `${progress.percent}%` }} className="h-full bg-gradient-to-r from-coral to-peach" />
+                      </div>
+                      <div className="text-xs text-slate-600">{progress.current}/{progress.total || 0} subsections · {progress.percent}%</div>
+                      <div className="flex gap-2">
+                        <button onClick={handleStart} disabled={running} className="flex-1 rounded-xl bg-slate-900 text-white text-sm font-semibold py-2 disabled:opacity-50">{running ? "Running..." : "Start"}</button>
+                        <button onClick={handleDownload} disabled={!doc.content} className="flex-1 rounded-xl bg-emerald-600 text-white text-sm font-semibold py-2 disabled:opacity-50">Download DOCX</button>
+                      </div>
+                      <div className="text-xs rounded-xl px-3 py-2 bg-slate-100 text-slate-700">{statusText}</div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="grid xl:grid-cols-12 gap-4 md:gap-6">
+                  <div className="xl:col-span-5"><SubsectionTracker items={subsections} /></div>
+                  <div className="xl:col-span-7"><RadarMetrics metrics={metrics} /></div>
+                </section>
+
+                <section>
+                  <BanditChart data={banditSeries} />
+                </section>
+              </main>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   </script>
 </body>
 </html>

@@ -6,6 +6,9 @@ import jieba
 import os
 import re
 import json
+import time
+from collections import deque
+from urllib.parse import urlparse, urlunparse
 from rank_bm25 import BM25Okapi
 from rouge_score import rouge_scorer
 import requests
@@ -38,6 +41,14 @@ class FlowerNetVerifier:
         self.public_url = os.getenv('VERIFIER_PUBLIC_URL', 'http://localhost:8000')
         print(f"  - Verifier Public URL: {self.public_url}")
         self.scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
+        self._unieval_latency_samples = deque(maxlen=20)
+        self._unieval_timeout_floor = self._safe_float(os.getenv("UNIEVAL_TIMEOUT_MIN", "12"), 12.0)
+        self._unieval_timeout_ceiling = self._safe_float(os.getenv("UNIEVAL_TIMEOUT_MAX", "120"), 120.0)
+        self._unieval_timeout_base = self._safe_float(os.getenv("UNIEVAL_TIMEOUT_BASE", "20"), 20.0)
+        self._unieval_timeout_buffer = self._safe_float(os.getenv("UNIEVAL_TIMEOUT_BUFFER", "8"), 8.0)
+        self._unieval_timeout_token_factor = self._safe_float(os.getenv("UNIEVAL_TIMEOUT_TOKEN_FACTOR", "0.006"), 0.006)
+        self._unieval_timeout_latency_factor = self._safe_float(os.getenv("UNIEVAL_TIMEOUT_LATENCY_FACTOR", "1.6"), 1.6)
+        self._unieval_health_timeout = max(2.0, self._safe_float(os.getenv("UNIEVAL_HEALTH_TIMEOUT", "4"), 4.0))
         print("✅ 验证层就绪")
 
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
@@ -48,6 +59,62 @@ class FlowerNetVerifier:
 
     def _clip01(self, value: float) -> float:
         return max(0.0, min(1.0, float(value)))
+
+    def _coerce_probability(self, value: Any, field_name: str) -> float:
+        if isinstance(value, bool):
+            value = float(value)
+        try:
+            result = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"UniEval field '{field_name}' is not numeric: {value!r}") from exc
+        if not 0.0 <= result <= 1.0:
+            raise ValueError(f"UniEval field '{field_name}' out of range [0, 1]: {result}")
+        return result
+
+    def _unieval_base_url(self, endpoint: str) -> str:
+        parsed = urlparse(endpoint)
+        if not parsed.scheme or not parsed.netloc:
+            return endpoint.rstrip("/")
+        return urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+
+    def _unieval_ready_url(self, endpoint: str) -> str:
+        return self._unieval_base_url(endpoint) + "/health/ready"
+
+    def _wait_for_unieval_ready(self, endpoint: str, timeout_budget: float) -> None:
+        ready_url = self._unieval_ready_url(endpoint)
+        deadline = time.monotonic() + max(1.0, timeout_budget)
+        sleep_seconds = 0.8
+        last_error = ""
+
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            try:
+                resp = requests.get(ready_url, timeout=min(self._unieval_health_timeout, max(1.0, remaining)))
+                if resp.status_code == 200:
+                    return
+                last_error = f"health status={resp.status_code}"
+            except Exception as exc:
+                last_error = str(exc)
+
+            time.sleep(min(sleep_seconds, max(0.2, deadline - time.monotonic())))
+            sleep_seconds = min(5.0, sleep_seconds * 1.5)
+
+        raise RuntimeError(f"UniEval not ready before timeout budget exhausted: {last_error}")
+
+    def _estimate_unieval_timeout(self, draft: str, outline: str, history_list: List[str]) -> float:
+        payload_chars = len(draft or "") + len(outline or "") + sum(len(item or "") for item in (history_list or []))
+        size_component = min(40.0, (payload_chars / 1000.0) * self._unieval_timeout_token_factor * 1000.0)
+
+        if self._unieval_latency_samples:
+            sorted_samples = sorted(self._unieval_latency_samples)
+            percentile_index = max(0, int(round(0.95 * (len(sorted_samples) - 1))))
+            observed_p95 = float(sorted_samples[percentile_index])
+        else:
+            observed_p95 = self._unieval_timeout_base
+
+        timeout = observed_p95 * self._unieval_timeout_latency_factor + size_component + self._unieval_timeout_buffer
+        timeout = max(self._unieval_timeout_floor, min(timeout, self._unieval_timeout_ceiling))
+        return round(timeout, 2)
 
     def _compute_semantic_dimensions(
         self,
@@ -116,47 +183,91 @@ class FlowerNetVerifier:
         draft: str,
         outline: str,
         history_list: List[str],
+        require_available: bool = False,
     ) -> Dict[str, float]:
         endpoint = os.getenv("UNIEVAL_ENDPOINT", "").strip()
         if not endpoint:
+            if require_available:
+                raise RuntimeError(
+                    "UNIEVAL_ENDPOINT is not configured but REQUIRE_MULTIDIM_QUALITY=true. "
+                    "Please set UNIEVAL_ENDPOINT or disable REQUIRE_MULTIDIM_QUALITY."
+                )
             return {}
 
-        timeout = max(5, int(os.getenv("UNIEVAL_TIMEOUT", "20")))
+        timeout = max(self._estimate_unieval_timeout(draft, outline, history_list), self._safe_float(os.getenv("UNIEVAL_TIMEOUT", "20"), 20.0))
+        max_retries = max(1, int(os.getenv("UNIEVAL_VERIFY_RETRIES", "2")))
+
         payload = {
             "draft": draft,
             "outline": outline,
             "history": history_list or [],
         }
-        try:
-            sess = requests.Session()
-            sess.trust_env = False
-            resp = sess.post(endpoint, json=payload, timeout=timeout)
-            resp.raise_for_status()
-            body = resp.json() if resp.content else {}
-            if not isinstance(body, dict):
-                return {}
-            scores = body.get("scores") if isinstance(body.get("scores"), dict) else body
-            if not isinstance(scores, dict):
-                return {}
 
-            mapped = {
-                "topic_alignment": self._clip01(self._safe_float(scores.get("consistency", scores.get("relevance", 0.0)))),
-                "coverage_completeness": self._clip01(self._safe_float(scores.get("coherence", scores.get("coverage", 0.0)))),
-                "logical_coherence": self._clip01(self._safe_float(scores.get("coherence", 0.0))),
-                "evidence_grounding": self._clip01(self._safe_float(scores.get("factuality", scores.get("groundedness", 0.0)))),
-                "structure_clarity": self._clip01(self._safe_float(scores.get("fluency", scores.get("clarity", 0.0)))),
-            }
-            return {k: round(v, 4) for k, v in mapped.items() if v > 0}
-        except Exception:
-            return {}
+        if require_available:
+            self._wait_for_unieval_ready(endpoint, timeout_budget=timeout)
+
+        last_error = None
+        for attempt in range(max_retries):
+            start_time = time.monotonic()
+            try:
+                sess = requests.Session()
+                sess.trust_env = False
+                resp = sess.post(endpoint, json=payload, timeout=timeout)
+                resp.raise_for_status()
+                body = resp.json() if resp.content else {}
+                if not isinstance(body, dict):
+                    last_error = f"Invalid response type: {type(body)}"
+                    if attempt < max_retries - 1:
+                        continue
+                    raise ValueError(last_error)
+
+                scores = body.get("scores") if isinstance(body.get("scores"), dict) else body
+                if not isinstance(scores, dict):
+                    last_error = f"Scores field is not a dict: {type(scores)}"
+                    if attempt < max_retries - 1:
+                        continue
+                    raise ValueError(last_error)
+
+                result = {
+                    "topic_alignment": round(self._coerce_probability(scores.get("consistency", scores.get("relevance", 0.0)), "topic_alignment"), 4),
+                    "coverage_completeness": round(self._coerce_probability(scores.get("coherence", scores.get("coverage", 0.0)), "coverage_completeness"), 4),
+                    "logical_coherence": round(self._coerce_probability(scores.get("coherence", 0.0), "logical_coherence"), 4),
+                    "evidence_grounding": round(self._coerce_probability(scores.get("factuality", scores.get("groundedness", 0.0)), "evidence_grounding"), 4),
+                    "structure_clarity": round(self._coerce_probability(scores.get("fluency", scores.get("clarity", 0.0)), "structure_clarity"), 4),
+                }
+
+                if any(key not in result for key in ("topic_alignment", "coverage_completeness", "logical_coherence", "evidence_grounding", "structure_clarity")) and require_available:
+                    last_error = "UniEval response missing expected dimensions"
+                    if attempt < max_retries - 1:
+                        continue
+                    raise ValueError(last_error)
+
+                elapsed = time.monotonic() - start_time
+                self._unieval_latency_samples.append(elapsed)
+                return result
+            except Exception as e:
+                last_error = str(e)
+                retryable = isinstance(e, (requests.Timeout, requests.ConnectionError, ValueError, RuntimeError))
+                if require_available and attempt < max_retries - 1 and retryable:
+                    time.sleep(min(2.0, 0.75 + attempt * 0.5))
+                    continue
+                if require_available:
+                    raise RuntimeError(
+                        f"UniEval call failed after {max_retries} retries: {last_error}. "
+                        "Endpoint must be available when REQUIRE_MULTIDIM_QUALITY=true."
+                    )
+                return {}
+        
+        # 不应该到达这里，但保险起见返回空
+        return {}
 
     def _composite_quality_score(self, dimensions: Dict[str, float]) -> float:
         default_weights = {
-            "topic_alignment": 0.24,
+            "topic_alignment": 0.26,
             "coverage_completeness": 0.18,
-            "logical_coherence": 0.18,
-            "evidence_grounding": 0.18,
-            "novelty": 0.14,
+            "logical_coherence": 0.16,
+            "evidence_grounding": 0.20,
+            "novelty": 0.12,
             "structure_clarity": 0.08,
         }
         weights_raw = os.getenv("QUALITY_DIMENSION_WEIGHTS_JSON", "").strip()
@@ -166,7 +277,7 @@ class FlowerNetVerifier:
                 if isinstance(parsed, dict):
                     for key, value in parsed.items():
                         if key in default_weights:
-                            default_weights[key] = self._safe_float(value, default_weights[key])
+                            default_weights[key] = self._clip01(self._safe_float(value, default_weights[key]))
             except Exception:
                 pass
 
@@ -178,6 +289,75 @@ class FlowerNetVerifier:
         for key, weight in default_weights.items():
             score += max(0.0, weight) * self._safe_float(dimensions.get(key), 0.0)
         return round(self._clip01(score / total_weight), 4)
+
+    def _quality_dimension_thresholds(self) -> Dict[str, float]:
+        """获取每个维度的阈值（可通过 JSON 覆盖，或使用默认值）"""
+        default_thresholds = {
+            "topic_alignment": 0.48,
+            "coverage_completeness": 0.46,
+            "logical_coherence": 0.45,
+            "evidence_grounding": 0.45,
+            "novelty": 0.36,
+            "structure_clarity": 0.42,
+        }
+        
+        thresholds_raw = os.getenv("QUALITY_DIMENSION_THRESHOLDS_JSON", "").strip()
+        if thresholds_raw:
+            try:
+                parsed = json.loads(thresholds_raw)
+                if isinstance(parsed, dict):
+                    for key, value in parsed.items():
+                        if key in default_thresholds:
+                            default_thresholds[key] = self._clip01(self._safe_float(value, default_thresholds[key]))
+            except Exception:
+                pass
+        return default_thresholds
+
+    def _check_dimension_thresholds(self, dimensions: Dict[str, float]) -> Dict[str, Any]:
+        """检查是否所有维度都通过各自的阈值"""
+        thresholds = self._quality_dimension_thresholds()
+        passed_per_dimension = {}
+        failed_dimensions = []
+        
+        for dim_name, threshold in thresholds.items():
+            dim_value = self._safe_float(dimensions.get(dim_name), 0.0)
+            passed = dim_value >= threshold
+            passed_per_dimension[dim_name] = {
+                "value": dim_value,
+                "threshold": threshold,
+                "passed": passed,
+                "margin": round(dim_value - threshold, 4),
+            }
+            if not passed:
+                failed_dimensions.append(dim_name)
+        
+        all_passed = len(failed_dimensions) == 0
+        return {
+            "all_passed": all_passed,
+            "per_dimension": passed_per_dimension,
+            "failed_dimensions": failed_dimensions,
+        }
+
+    def _quality_weights(self) -> Dict[str, float]:
+        weights = {
+            "topic_alignment": 0.26,
+            "coverage_completeness": 0.18,
+            "logical_coherence": 0.16,
+            "evidence_grounding": 0.20,
+            "novelty": 0.12,
+            "structure_clarity": 0.08,
+        }
+        weights_raw = os.getenv("QUALITY_DIMENSION_WEIGHTS_JSON", "").strip()
+        if weights_raw:
+            try:
+                parsed = json.loads(weights_raw)
+                if isinstance(parsed, dict):
+                    for key, value in parsed.items():
+                        if key in weights:
+                            weights[key] = self._clip01(self._safe_float(value, weights[key]))
+            except Exception:
+                pass
+        return weights
 
     def _fuse_dimensions_with_uncertainty(
         self,
@@ -470,20 +650,35 @@ class FlowerNetVerifier:
             red=red,
             source_check=source_check,
         )
+        
+        require_multidim_env = os.getenv("REQUIRE_MULTIDIM_QUALITY", "true").lower() == "true"
+        unieval_endpoint = os.getenv("UNIEVAL_ENDPOINT", "").strip()
+        # If UniEval endpoint is absent, degrade to heuristic-only quality checks
+        # instead of failing every verify request with HTTP 500.
+        require_multidim = require_multidim_env and bool(unieval_endpoint)
+        
+        # 尝试调用 UniEval，如果启用了多维检查且 UniEval 必须可用
         unieval_dimensions = self._try_unieval_dimensions(
             draft=draft,
             outline=outline,
             history_list=history_list,
+            require_available=require_multidim,
         )
+        
         fusion = self._fuse_dimensions_with_uncertainty(
             heuristic_dims=heuristic_dimensions,
             unieval_dims=unieval_dimensions,
         )
         semantic_dimensions = fusion["fused"]
+        unieval_available = bool(unieval_dimensions)
+        
+        # 用于兼容旧的总分逻辑，但主要用维度级阈值
         quality_score = self._composite_quality_score(semantic_dimensions)
         quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.58"), 0.58)
-        quality_passed = quality_score >= quality_threshold
-        require_multidim = os.getenv("REQUIRE_MULTIDIM_QUALITY", "true").lower() == "true"
+        
+        # 维度级阈值检查（新的主要判定逻辑）
+        dimension_check = self._check_dimension_thresholds(semantic_dimensions)
+        quality_passed = dimension_check["all_passed"]
 
         is_passed = (
             (rel['score'] >= rel_threshold)
@@ -500,24 +695,35 @@ class FlowerNetVerifier:
         if not source_check["passed"]:
             advice = "Source citation check failed. Use semantically relevant, verifiable source URLs for the current subsection outline."
         if require_multidim and not quality_passed:
-            advice = "Multi-dimensional semantic quality is below threshold. Improve coherence, coverage, novelty and grounded evidence quality."
+            failed_dims = ", ".join(dimension_check["failed_dimensions"])
+            advice = f"Multi-dimensional semantic quality failed on: {failed_dims}. Improve these dimensions."
 
         return {
             "is_passed": is_passed,
             "relevancy_index": rel['score'],
             "redundancy_index": red['score'],
+            # 总分（保留兼容性）
             "quality_score": quality_score,
             "quality_threshold": quality_threshold,
-            "quality_passed": quality_passed,
+            "quality_score_passed": quality_score >= quality_threshold,
+            # 维度级检查（新主逻辑）
             "quality_dimensions": semantic_dimensions,
+            "quality_dimensions_passed": quality_passed,
+            "quality_dimensions_check": dimension_check["per_dimension"],
+            "quality_dimensions_failed": dimension_check["failed_dimensions"],
+            "dimension_thresholds": self._quality_dimension_thresholds(),
+            # 不确定性信息
             "quality_dimensions_uncertainty": fusion["uncertainty"],
             "quality_dimensions_confidence_interval": fusion["confidence_interval"],
             "quality_overall_uncertainty": fusion["overall_uncertainty"],
+            "unieval_available": unieval_available,
+            # 源信息（启发式 vs UniEval）
             "quality_dimensions_source": {
                 "heuristic": heuristic_dimensions,
                 "unieval": unieval_dimensions,
                 "per_dimension": fusion["sources"],
             },
+            "quality_weights": self._quality_weights(),
             "feedback": advice,
             "source_check": source_check,
             "raw_data": {

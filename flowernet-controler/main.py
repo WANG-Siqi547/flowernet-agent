@@ -175,6 +175,45 @@ def _build_defect_graph(feedback: Dict[str, Any], rel_score: float, red_score: f
     }
 
 
+def _build_dimension_guidance(feedback: Dict[str, Any]) -> List[str]:
+    """把 Verifier 的失败维度转换成可直接写入改纲 prompt 的约束文本。"""
+    if not isinstance(feedback, dict):
+        return []
+
+    failed_dims = feedback.get("quality_dimensions_failed")
+    if not isinstance(failed_dims, list):
+        failed_dims = []
+
+    checks = feedback.get("quality_dimensions_check") if isinstance(feedback.get("quality_dimensions_check"), dict) else {}
+    thresholds = feedback.get("dimension_thresholds") if isinstance(feedback.get("dimension_thresholds"), dict) else {}
+    dims = feedback.get("quality_dimensions") if isinstance(feedback.get("quality_dimensions"), dict) else {}
+
+    dimension_messages = {
+        "topic_alignment": "主题对齐不足：重新强化该小节的中心论点、关键定义和必须回答的问题，避免泛化叙述。",
+        "coverage_completeness": "覆盖不完整：补全大纲中缺失的关键子点、流程步骤、约束条件或对比维度。",
+        "logical_coherence": "逻辑连贯性不足：按因果、递进或问题-解决结构重排小节层级，减少跳跃式叙述。",
+        "evidence_grounding": "证据接地性不足：明确要求加入可验证事实、引用、示例或数据支撑，避免空泛结论。",
+        "novelty": "新颖性不足：要求引入新的角度、反例、比较对象或未覆盖的信息，避免重复前文。",
+        "structure_clarity": "结构清晰度不足：要求使用清晰的小标题、分点或步骤式结构，增强可读性和条理性。",
+    }
+
+    guidance: List[str] = []
+    for dim in failed_dims:
+        dim_name = str(dim)
+        value = dims.get(dim_name)
+        threshold = thresholds.get(dim_name)
+        check = checks.get(dim_name) if isinstance(checks, dict) else {}
+        if dim_name in dimension_messages:
+            if isinstance(value, (int, float)) and isinstance(threshold, (int, float)):
+                guidance.append(
+                    f"- {dim_name}: {dimension_messages[dim_name]} 当前值={float(value):.4f}，阈值={float(threshold):.4f}，margin={float(check.get('margin', float(value) - float(threshold))):.4f}。"
+                )
+            else:
+                guidance.append(f"- {dim_name}: {dimension_messages[dim_name]}")
+
+    return guidance
+
+
 def _estimate_arm_cost_latency(source: str, prompt_len: int, output_len: int, llm_elapsed: float) -> Tuple[float, float]:
     # A simple, stable proxy used for constrained optimization and reproducible OPE logs.
     if source == "llm":
@@ -884,6 +923,9 @@ async def improve_outline(req: ImproveOutlineRequest):
             for i, h in enumerate(recent, 1):
                 history_context += f"[已通过小节 {i}]（前200字）: {h[:200]}\n"
 
+        dimension_guidance = _build_dimension_guidance(req.feedback)
+        dimension_guidance_text = "\n".join(dimension_guidance) if dimension_guidance else "- 暂无明确失败维度，按笼统反馈进行最小修改。"
+
         improvement_prompt = f"""
 你是一个文档写作指导专家。本次你的任务是改进一个小节的详细写作大纲，使得根据该大纲生成的内容能够通过以下验证指标：
 - 相关性（relevancy_index）需 >= {rel_threshold:.2f}（当前: {rel_score:.4f}）
@@ -902,6 +944,10 @@ async def improve_outline(req: ImproveOutlineRequest):
 
 【Verifier 反馈】
 {feedback_text}
+
+【失败维度定向修复建议】
+{dimension_guidance_text}
+
 {history_context}
 【改进要求】
 {"1. 相关性不足（" + str(round(rel_score,4)) + " < " + str(rel_threshold) + "）：大纲要更明确、具体，强调该小节的核心主题，列出必须涵盖的关键点，确保每个写作要点都与主题直接相关。" if rel_score < rel_threshold else "1. 相关性已满足，保持当前主题聚焦度。"}

@@ -11,10 +11,27 @@ import os
 import sys
 import threading
 import importlib.util
+
+
+def load_dotenv_file(path):
+    """Load simple KEY=VALUE pairs from a .env file."""
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root in sys.path:
     sys.path.remove(project_root)
 sys.path.insert(0, project_root)
+
+load_dotenv_file(os.path.join(project_root, ".env"))
 
 from generator import FlowerNetGenerator, FlowerNetOrchestrator
 
@@ -178,7 +195,11 @@ def get_orchestrator():
         
         # 为 orchestrator 注入本地 generator 实例，避免 HTTP 递归调用
         # 使用与主 Generator 相同的 provider chain 和模型配置
-        provider = os.getenv('GENERATOR_PROVIDER', 'sensenova')
+        provider = (
+            os.getenv('GENERATOR_PROVIDER_CHAIN', '').strip()
+            or os.getenv('GENERATOR_PROVIDER', '').strip()
+            or 'sensenova,azure,gemini,dashscope,openrouter,ollama'
+        )
         model = os.getenv('GENERATOR_MODEL', None)
         local_gen = FlowerNetGenerator(provider=provider, model=model)
         orchestrator._local_generator = local_gen
@@ -221,7 +242,11 @@ def get_document_generation_orchestrator():
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化 Generator"""
-    provider = os.getenv('GENERATOR_PROVIDER', 'sensenova')
+    provider = (
+        os.getenv('GENERATOR_PROVIDER_CHAIN', '').strip()
+        or os.getenv('GENERATOR_PROVIDER', '').strip()
+        or 'sensenova,azure,gemini,dashscope,openrouter,ollama'
+    )
     model = os.getenv('GENERATOR_MODEL', None)
     ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
     preload_on_startup = os.getenv('GENERATOR_PRELOAD_ON_STARTUP', 'false').lower() == 'true'

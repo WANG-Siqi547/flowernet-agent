@@ -163,7 +163,11 @@ async def startup_event():
     global outliner, history_manager
     
     # 初始化 Outliner
-    provider = os.getenv('OUTLINER_PROVIDER_CHAIN', '').strip() or os.getenv('OUTLINER_PROVIDER', 'sensenova')
+    provider = (
+        os.getenv('OUTLINER_PROVIDER_CHAIN', '').strip()
+        or os.getenv('OUTLINER_PROVIDER', '').strip()
+        or 'sensenova,azure,gemini,dashscope,openrouter,ollama'
+    )
     model = os.getenv('OUTLINER_MODEL', 'gpt-4o-mini')
 
     api_key = os.getenv('GOOGLE_API_KEY', '')

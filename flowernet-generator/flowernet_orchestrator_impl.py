@@ -56,7 +56,7 @@ class DocumentGenerationOrchestrator:
         outliner_url: str = "http://localhost:8003",
         max_iterations: int = 5,
         history_manager: Optional[Any] = None,
-        history_window_size: int = 2,  # 历史窗口大小：只使用最近N个小节
+        history_window_size: int = 3,  # 历史窗口大小：只使用最近N个小节
         max_forced_iterations: int = 15  # 兼容旧参数：不再用于强制通过
     ):
         """初始化编排器"""
@@ -93,6 +93,7 @@ class DocumentGenerationOrchestrator:
         self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "180")))
         self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "8")))
         self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "8.0")))
+        self.generator_max_tokens = max(400, int(os.getenv("ORCH_GENERATOR_MAX_TOKENS", "600")))
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -106,10 +107,10 @@ class DocumentGenerationOrchestrator:
         self.rag_min_citations = max(1, int(os.getenv("RAG_MIN_CITATIONS", "1")))
         self.rag_max_results = max(1, int(os.getenv("RAG_MAX_RESULTS", "5")))
         self.rag_timeout = max(3, int(os.getenv("RAG_TIMEOUT", "10")))
-        self.prompt_outline_max_chars = max(500, int(os.getenv("PROMPT_OUTLINE_MAX_CHARS", "2500")))
-        self.prompt_original_max_chars = max(500, int(os.getenv("PROMPT_ORIGINAL_MAX_CHARS", "2500")))
-        self.prompt_rag_max_chars = max(200, int(os.getenv("PROMPT_RAG_MAX_CHARS", "800")))
-        self.prompt_history_max_chars = max(200, int(os.getenv("PROMPT_HISTORY_MAX_CHARS", "1000")))
+        self.prompt_outline_max_chars = max(500, int(os.getenv("PROMPT_OUTLINE_MAX_CHARS", "4500")))
+        self.prompt_original_max_chars = max(500, int(os.getenv("PROMPT_ORIGINAL_MAX_CHARS", "3500")))
+        self.prompt_rag_max_chars = max(200, int(os.getenv("PROMPT_RAG_MAX_CHARS", "1200")))
+        self.prompt_history_max_chars = max(200, int(os.getenv("PROMPT_HISTORY_MAX_CHARS", "1500")))
 
         self.search_engine = (
             RAGSearchEngine(max_results=self.rag_max_results, timeout=self.rag_timeout)
@@ -138,6 +139,109 @@ class DocumentGenerationOrchestrator:
         effective_rel = max(0.0, rel_threshold - relax_amount)
         effective_red = min(1.0, red_threshold + relax_amount)
         return round(effective_rel, 4), round(effective_red, 4)
+
+    @staticmethod
+    def _quality_dimension_keys() -> List[str]:
+        return [
+            "topic_alignment",
+            "coverage_completeness",
+            "logical_coherence",
+            "evidence_grounding",
+            "structure_clarity",
+            "novelty",
+        ]
+
+    def _init_document_quality_summary(self) -> Dict[str, Any]:
+        return {
+            "quality_score_sum": 0.0,
+            "quality_score_count": 0,
+            "quality_overall_uncertainty_sum": 0.0,
+            "quality_overall_uncertainty_count": 0,
+            "quality_dimension_sums": {key: 0.0 for key in self._quality_dimension_keys()},
+            "quality_dimension_counts": {key: 0 for key in self._quality_dimension_keys()},
+            "quality_weights": {},
+            "unieval_available_subsections": 0,
+            "unieval_fallback_subsections": 0,
+        }
+
+    def _init_document_bandit_summary(self) -> Dict[str, Any]:
+        return {
+            "bandit_selected_arm_counts": {
+                "llm": 0,
+                "rule": 0,
+                "rule_structured": 0,
+                "defect_topic": 0,
+                "defect_evidence": 0,
+                "defect_structure": 0,
+            },
+            "bandit_reward_sum": 0.0,
+            "bandit_reward_count": 0,
+            "bandit_reward_avg": 0.0,
+            "bandit_drift_events": 0,
+            "bandit_drift_triggered_subsections": 0,
+            "bandit_last_selected_arm": "",
+            "bandit_last_selection_mode": "",
+            "bandit_last_constraints": {},
+        }
+
+    def _accumulate_quality_summary(self, summary: Dict[str, Any], verification: Dict[str, Any]) -> None:
+        if not isinstance(summary, dict) or not isinstance(verification, dict):
+            return
+        quality_score = verification.get("quality_score")
+        if isinstance(quality_score, (int, float)):
+            summary["quality_score_sum"] += float(quality_score)
+            summary["quality_score_count"] += 1
+
+        overall_unc = verification.get("quality_overall_uncertainty")
+        if isinstance(overall_unc, (int, float)):
+            summary["quality_overall_uncertainty_sum"] += float(overall_unc)
+            summary["quality_overall_uncertainty_count"] += 1
+
+        weights = verification.get("quality_weights")
+        if isinstance(weights, dict) and weights:
+            summary["quality_weights"] = dict(weights)
+
+        dimensions = verification.get("quality_dimensions")
+        if isinstance(dimensions, dict):
+            summary["unieval_available_subsections"] += 1
+            for key in self._quality_dimension_keys():
+                value = dimensions.get(key)
+                if isinstance(value, (int, float)):
+                    summary["quality_dimension_sums"][key] = summary["quality_dimension_sums"].get(key, 0.0) + float(value)
+                    summary["quality_dimension_counts"][key] = summary["quality_dimension_counts"].get(key, 0) + 1
+
+        if verification.get("quality_dimensions_uncertainty"):
+            summary["unieval_fallback_subsections"] += 1
+
+    def _accumulate_bandit_summary(self, summary: Dict[str, Any], subsection_result: Dict[str, Any]) -> None:
+        if not isinstance(summary, dict) or not isinstance(subsection_result, dict):
+            return
+        bandit = subsection_result.get("bandit") if isinstance(subsection_result.get("bandit"), dict) else {}
+        if not bandit:
+            return
+
+        selected_arm = str(bandit.get("selected_arm") or subsection_result.get("controller_source") or "").strip()
+        if selected_arm in summary.get("bandit_selected_arm_counts", {}):
+            summary["bandit_selected_arm_counts"][selected_arm] += 1
+        summary["bandit_last_selected_arm"] = selected_arm or summary.get("bandit_last_selected_arm", "")
+        summary["bandit_last_selection_mode"] = str(bandit.get("selection", {}).get("mode", "") or summary.get("bandit_last_selection_mode", ""))
+
+        reward = bandit.get("reward")
+        if isinstance(reward, (int, float)):
+            summary["bandit_reward_sum"] += float(reward)
+            summary["bandit_reward_count"] += 1
+            summary["bandit_reward_avg"] = summary["bandit_reward_sum"] / max(1, summary["bandit_reward_count"])
+
+        drift = bandit.get("drift") if isinstance(bandit.get("drift"), dict) else {}
+        if drift:
+            drift_events = int(drift.get("drift_events", 0) or 0)
+            summary["bandit_drift_events"] = max(summary.get("bandit_drift_events", 0), drift_events)
+            if drift.get("triggered"):
+                summary["bandit_drift_triggered_subsections"] += 1
+
+        constraints = bandit.get("constraints") if isinstance(bandit.get("constraints"), dict) else {}
+        if constraints:
+            summary["bandit_last_constraints"] = dict(constraints)
 
     def set_local_generator(self, generator):
         """设置本地Generator实例，避免HTTP自调用"""
@@ -284,6 +388,17 @@ class DocumentGenerationOrchestrator:
         rel_score = float(feedback.get("relevancy_index", 0) or 0)
         red_score = float(feedback.get("redundancy_index", 0) or 0)
         feedback_text = str(feedback.get("feedback", "") or "")
+        failed_dimensions = feedback.get("quality_dimensions_failed") if isinstance(feedback.get("quality_dimensions_failed"), list) else []
+        dimension_check = feedback.get("quality_dimensions_check") if isinstance(feedback.get("quality_dimensions_check"), dict) else {}
+        dimension_thresholds = feedback.get("dimension_thresholds") if isinstance(feedback.get("dimension_thresholds"), dict) else {}
+        dimension_messages = {
+            "topic_alignment": "主题对齐不足：要更聚焦小节核心主题，补充关键定义、目标或必须回答的问题。",
+            "coverage_completeness": "覆盖不完整：补齐小节应覆盖的关键子点、步骤、约束或对比维度。",
+            "logical_coherence": "逻辑连贯性不足：重排为更清晰的因果、递进或问题-解决结构。",
+            "evidence_grounding": "证据接地性不足：加入可验证事实、数据、引用或示例支撑，避免空话。",
+            "novelty": "新颖性不足：引入新的角度、反例、比较对象或差异化信息，避免重复前文。",
+            "structure_clarity": "结构清晰度不足：使用更明确的小标题、分点和步骤式组织。",
+        }
 
         extra_lines: List[str] = []
         if rel_score < rel_threshold:
@@ -305,6 +420,19 @@ class DocumentGenerationOrchestrator:
                 f"- 去重要求：避免与前文表达重复，确保 redundancy_index <= {red_threshold:.2f}。"
             )
             extra_lines.append("- 内容策略：优先使用新的事实、案例、数据或反例，不复述已有段落。")
+
+        if failed_dimensions:
+            extra_lines.append("- 多维质量要求：以下维度必须分别修复，任何一个维度未达标都不允许通过。")
+            for dim_name in failed_dimensions:
+                dim_value = dimension_check.get(dim_name, {}).get("value") if isinstance(dimension_check, dict) else None
+                dim_threshold = dimension_thresholds.get(dim_name)
+                dim_text = dimension_messages.get(dim_name, f"{dim_name} 维度需要提升。")
+                if isinstance(dim_value, (int, float)) and isinstance(dim_threshold, (int, float)):
+                    extra_lines.append(
+                        f"- {dim_name}: {dim_text} 当前值={float(dim_value):.4f}，阈值={float(dim_threshold):.4f}。"
+                    )
+                else:
+                    extra_lines.append(f"- {dim_name}: {dim_text}")
 
         if feedback_text:
             extra_lines.append("- 验证反馈约束：" + feedback_text[:180])
@@ -372,6 +500,31 @@ class DocumentGenerationOrchestrator:
             "controller_ineffective_total": 0,
             "controller_fallback_outline_total": 0,
             "controller_exhausted_total": 0,
+            "quality_score_sum": 0.0,
+            "quality_score_count": 0,
+            "quality_overall_uncertainty_sum": 0.0,
+            "quality_overall_uncertainty_count": 0,
+            "quality_dimension_sums": {key: 0.0 for key in self._quality_dimension_keys()},
+            "quality_dimension_counts": {key: 0 for key in self._quality_dimension_keys()},
+            "quality_weights": {},
+            "unieval_available_subsections": 0,
+            "unieval_fallback_subsections": 0,
+            "bandit_selected_arm_counts": {
+                "llm": 0,
+                "rule": 0,
+                "rule_structured": 0,
+                "defect_topic": 0,
+                "defect_evidence": 0,
+                "defect_structure": 0,
+            },
+            "bandit_reward_sum": 0.0,
+            "bandit_reward_count": 0,
+            "bandit_reward_avg": 0.0,
+            "bandit_drift_events": 0,
+            "bandit_drift_triggered_subsections": 0,
+            "bandit_last_selected_arm": "",
+            "bandit_last_selection_mode": "",
+            "bandit_last_constraints": {},
         }
         
         start_time = datetime.now()
@@ -484,6 +637,8 @@ class DocumentGenerationOrchestrator:
                         if subsection_gen_result.get("success"):
                             generated_content = subsection_gen_result.get("draft", "")
                             verification = subsection_gen_result.get("verification", {})
+                            self._accumulate_quality_summary(document_result, verification)
+                            self._accumulate_bandit_summary(document_result, subsection_gen_result)
                             history_order = len(passed_history)
                             forced_pass = bool(subsection_gen_result.get("forced_pass", False))
                             force_reason = str(subsection_gen_result.get("force_reason", "") or "")
@@ -568,6 +723,7 @@ class DocumentGenerationOrchestrator:
                                 "success": True,
                                 "iterations": subsection_gen_result.get("iterations", 0),
                                 "verification": verification,
+                                "bandit": subsection_gen_result.get("bandit", {}),
                                 "forced_pass": forced_pass,
                                 "force_reason": force_reason,
                                 "controller_triggered": controller_triggered,
@@ -590,6 +746,7 @@ class DocumentGenerationOrchestrator:
                                 "success": True,
                                 "iterations": subsection_gen_result.get("iterations", 0),
                                 "verification": subsection_gen_result.get("verification", {}),
+                                "bandit": subsection_gen_result.get("bandit", {}),
                                 "forced_pass": True,
                                 "force_reason": "subsection_fallback_on_error",
                                 "rag_used": bool(subsection_gen_result.get("rag_used", False)),
@@ -625,6 +782,7 @@ class DocumentGenerationOrchestrator:
                             "success": True,
                             "iterations": 0,
                             "verification": {},
+                            "bandit": {},
                             "forced_pass": True,
                             "force_reason": "subsection_exception_fallback",
                             "length": len(fallback_content),
@@ -661,6 +819,38 @@ class DocumentGenerationOrchestrator:
                 len(document_result["failed_subsections"])
             )
 
+            quality_score_count = max(1, int(document_result.get("quality_score_count", 0) or 0))
+            overall_uncertainty_count = max(1, int(document_result.get("quality_overall_uncertainty_count", 0) or 0))
+            document_result["quality_score_avg"] = round(
+                float(document_result.get("quality_score_sum", 0.0) or 0.0) / quality_score_count,
+                4,
+            )
+            document_result["quality_overall_uncertainty_avg"] = round(
+                float(document_result.get("quality_overall_uncertainty_sum", 0.0) or 0.0) / overall_uncertainty_count,
+                4,
+            )
+            document_result["quality_dimension_avgs"] = {
+                key: round(
+                    float(document_result.get("quality_dimension_sums", {}).get(key, 0.0) or 0.0)
+                    / max(1, int(document_result.get("quality_dimension_counts", {}).get(key, 0) or 0)),
+                    4,
+                )
+                for key in self._quality_dimension_keys()
+            }
+            document_result["unieval_available_ratio"] = round(
+                float(document_result.get("unieval_available_subsections", 0) or 0) / max(1, total_subsections_generated),
+                4,
+            )
+            document_result["unieval_fallback_ratio"] = round(
+                float(document_result.get("unieval_fallback_subsections", 0) or 0) / max(1, total_subsections_generated),
+                4,
+            )
+            document_result["bandit_reward_avg"] = round(float(document_result.get("bandit_reward_avg", 0.0) or 0.0), 4)
+            document_result["bandit_drift_trigger_rate"] = round(
+                float(document_result.get("bandit_drift_triggered_subsections", 0) or 0) / max(1, total_subsections_generated),
+                4,
+            )
+
             # 文档级永不失败：只要流程走完就返回完整文档，失败小节全部转为兜底通过
             document_result["success"] = True
             
@@ -677,6 +867,8 @@ class DocumentGenerationOrchestrator:
             print(f"   - Controller 触发小节: {document_result['controller_triggered_subsections']}/{len(content_prompts)}")
             print(f"   - Controller 调用总数: {document_result['controller_calls_total']}")
             print(f"   - 总迭代: {document_result['total_iterations']} 次")
+            print(f"   - UniEval 平均分: {document_result['quality_score_avg']}")
+            print(f"   - Bandit 平均奖励: {document_result['bandit_reward_avg']}")
             print(f"   - 耗时: {document_result['generation_time']}")
             print(f"{'='*70}")
             self._emit_progress_event(
@@ -762,6 +954,7 @@ class DocumentGenerationOrchestrator:
         controller_effective = False
         best_candidate: Optional[Dict[str, Any]] = None
         generator_failure_streak = 0
+        generator_degraded_mode = False
         metrics: Dict[str, int] = {
             "verifier_failed": 0,
             "controller_calls": 0,
@@ -771,6 +964,7 @@ class DocumentGenerationOrchestrator:
             "controller_ineffective": 0,
             "controller_fallback_outline": 0,
             "controller_exhausted": 0,
+            "generator_degraded_mode": 0,
         }
         
         # 应用历史窗口：只使用最近N个小节（避免历史过长导致冗余度计算失真）
@@ -931,6 +1125,7 @@ class DocumentGenerationOrchestrator:
                             "forced_pass": (not max_pass_ok),
                             "force_reason": "max_attempts_reached" if not max_pass_ok else "best_effort_after_max_attempts",
                         },
+                        "bandit": best_candidate.get("bandit", {}),
                         "all_drafts": all_drafts,
                         "forced_pass": (not max_pass_ok),
                         "force_reason": "max_attempts_reached" if not max_pass_ok else "best_effort_after_max_attempts",
@@ -960,6 +1155,7 @@ class DocumentGenerationOrchestrator:
                     "rag_selected_query": rag_selected_query,
                     "controller_effective": bool(controller_last_result.get("effective", False)),
                     "controller_source": controller_last_result.get("source", ""),
+                    "bandit": {},
                     "verification": {
                         "relevancy_index": 0.0,
                         "redundancy_index": 1.0,
@@ -1006,6 +1202,7 @@ class DocumentGenerationOrchestrator:
             )
             
             gen_result = self._call_generator(enhanced_prompt)
+            bandit_debug = gen_result.get("bandit", {}) if isinstance(gen_result, dict) else {}
             
             if not gen_result.get("success"):
                 generator_failure_streak += 1
@@ -1026,6 +1223,32 @@ class DocumentGenerationOrchestrator:
                 max_generator_failures = min(effective_attempt_cap, self.max_generator_failures_per_subsection)
                 if generator_failure_streak >= max_generator_failures:
                     fail_error = str(gen_result.get("error", "generator_unavailable"))
+
+                    # 首次达到连续失败阈值时，先进入降级重试而不是立即强制通过。
+                    if not generator_degraded_mode:
+                        generator_degraded_mode = True
+                        generator_failure_streak = 0
+                        metrics["generator_degraded_mode"] += 1
+                        rag_context = ""
+                        source_citation_required = False
+                        self._emit_progress_event(
+                            document_id=document_id,
+                            section_id=section_id,
+                            subsection_id=subsection_id,
+                            stage="generator_degraded_retry",
+                            message=f"Generator 连续失败 {max_generator_failures} 次，切换降级模式后继续重试",
+                            metadata={
+                                "iteration": iterations,
+                                "max_generator_failures": max_generator_failures,
+                                "error": fail_error,
+                                "degraded_mode": True,
+                                "rag_context_cleared": True,
+                                "source_citation_required": False,
+                            },
+                        )
+                        time.sleep(self._compute_retry_delay(iterations))
+                        continue
+
                     fail_outline = str(current_outline).strip()
                     fallback_text = f"（系统兜底）{subsection_id}\n\n{fail_outline}"
                     self._emit_progress_event(
@@ -1033,11 +1256,12 @@ class DocumentGenerationOrchestrator:
                         section_id=section_id,
                         subsection_id=subsection_id,
                         stage="subsection_forced_pass",
-                        message=f"Generator 在本小节内连续失败 {generator_failure_streak} 次，触发兜底通过",
+                        message=f"Generator 在降级模式下仍连续失败 {generator_failure_streak} 次，触发兜底通过",
                         metadata={
                             "iteration": iterations,
                             "max_generator_failures": max_generator_failures,
                             "error": fail_error,
+                            "degraded_mode": True,
                         },
                     )
                     if self.history_manager:
@@ -1069,13 +1293,13 @@ class DocumentGenerationOrchestrator:
                         "verification": {
                             "relevancy_index": 0.0,
                             "redundancy_index": 1.0,
-                            "feedback": "generator_repeated_failure_fallback",
+                            "feedback": "generator_repeated_failure_after_degraded_mode",
                             "forced_pass": True,
-                            "force_reason": "generator_repeated_failure",
+                            "force_reason": "generator_repeated_failure_after_degraded_mode",
                         },
                         "all_drafts": all_drafts,
                         "forced_pass": True,
-                        "force_reason": "generator_repeated_failure",
+                        "force_reason": "generator_repeated_failure_after_degraded_mode",
                         "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
                         "controller_retry_count": controller_retry_count,
                         "metrics": metrics,
@@ -1215,12 +1439,8 @@ class DocumentGenerationOrchestrator:
                     "rag_selected_query": rag_selected_query,
                     "controller_effective": bool(controller_last_result.get("effective", False)),
                     "controller_source": controller_last_result.get("source", ""),
-                    "verification": {
-                        "relevancy_index": rel_score,
-                        "redundancy_index": red_score,
-                        "feedback": feedback,
-                        "source_check": source_check,
-                    },
+                    "verification": verify_result,
+                    "bandit": bandit_debug,
                     "all_drafts": all_drafts,
                     "forced_pass": False,
                     "force_reason": "",
@@ -1236,15 +1456,11 @@ class DocumentGenerationOrchestrator:
                     "rag_selected_query": rag_selected_query,
                     "controller_effective": bool(controller_last_result.get("effective", False)),
                     "controller_source": controller_last_result.get("source", ""),
+                    "bandit": bandit_debug,
                 "draft": draft,
                 "outline": current_outline,
                 "iteration": iterations,
-                "verification": {
-                    "relevancy_index": rel_score,
-                    "redundancy_index": red_score,
-                    "feedback": feedback,
-                    "source_check": source_check,
-                },
+                "verification": verify_result,
             }
             if best_candidate is None:
                 best_candidate = current_candidate
@@ -1579,6 +1795,8 @@ class DocumentGenerationOrchestrator:
 - 对关键事实、数据、结论，必须直接写出具体来源信息，不要使用“[来源N]”占位符
 - 推荐正文引用格式： （来源：文章标题，链接：https://example.com/xxx）
 - 至少提供 1 处可点击的具体网页链接；若有图片链接，也请直接写出图片 URL
+- 优先使用学术来源：arXiv、SSRN、Google Scholar、期刊/大学/官方机构页面
+- 在无法找到学术来源时，允许使用高质量社媒和技术社区来源（如知乎、B站、微博、X/Twitter、Reddit、Medium）
 - 只能引用上方“参考资料”里给出的来源，不允许编造不存在的论文、文章、链接或图片链接
 - 每个关键事实至少提供 1 组“事实句 + 可验证来源URL”的证据最小单元
 - 禁止引用与当前小节主题语义不一致的链接；如果标题/摘要和小节要点不匹配，禁止使用
@@ -1608,7 +1826,7 @@ class DocumentGenerationOrchestrator:
             try:
                 print(f"      [_call_generator] Calling local generator.generate_draft...")
                 start = time.time()
-                result = self._local_generator.generate_draft(prompt=prompt, max_tokens=320)
+                result = self._local_generator.generate_draft(prompt=prompt, max_tokens=self.generator_max_tokens)
                 elapsed = time.time() - start
                 print(f"      [_call_generator] Local call returned in {elapsed:.1f}s: success={result.get('success')}")
                 return result
@@ -1624,7 +1842,7 @@ class DocumentGenerationOrchestrator:
                 )
                 response = self.session.post(
                     f"{self.generator_url}/generate",
-                    json={"prompt": prompt, "max_tokens": 320},
+                    json={"prompt": prompt, "max_tokens": self.generator_max_tokens},
                     timeout=self.generator_http_timeout,
                 )
 
@@ -1792,6 +2010,10 @@ class DocumentGenerationOrchestrator:
                 "iteration": iteration,
                 "rel_threshold": rel_threshold,
                 "red_threshold": red_threshold,
+                "quality_dimensions_failed": feedback.get("quality_dimensions_failed", []),
+                "quality_dimensions_check": feedback.get("quality_dimensions_check", {}),
+                "dimension_thresholds": feedback.get("dimension_thresholds", {}),
+                "quality_dimensions": feedback.get("quality_dimensions", {}),
             }
             if document_id:
                 payload["document_id"] = document_id
