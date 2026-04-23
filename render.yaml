@@ -41,7 +41,7 @@ services:
     name: flowernet-unieval
     env: docker
     region: singapore
-    plan: starter
+    plan: free
     dockerfilePath: ./flowernet-unieval/Dockerfile
     dockerContext: ./flowernet-unieval
     envVars:
@@ -57,10 +57,6 @@ services:
         value: "300"
       - key: UNIEVAL_BOOL_THRESHOLD
         value: "0.5"
-    disks:
-      - name: flowernet-unieval-cache
-        mountPath: /opt/render/project/hf-cache
-        sizeGB: 5
     healthCheckPath: /health/live
     
   # ==========================================
