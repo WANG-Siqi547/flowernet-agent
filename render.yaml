@@ -165,12 +165,6 @@ services:
         value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       - key: DASHSCOPE_API_KEY
         sync: false
-      - key: SENSENOVA_MODEL
-        value: SenseNova-V6-5-Turbo
-      - key: SENSENOVA_API_URL
-        value: https://api.sensenova.cn/v1/llm/chat-completions
-      - key: SENSENOVA_API_KEY
-        sync: false
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: AZURE_OPENAI_API_BASE
@@ -255,12 +249,6 @@ services:
       - key: DASHSCOPE_API_URL
         value: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
       - key: DASHSCOPE_API_KEY
-        sync: false
-      - key: SENSENOVA_MODEL
-        value: SenseNova-V6-5-Turbo
-      - key: SENSENOVA_API_URL
-        value: https://api.sensenova.cn/v1/llm/chat-completions
-      - key: SENSENOVA_API_KEY
         sync: false
       - key: AZURE_OPENAI_API_KEY
         sync: false
