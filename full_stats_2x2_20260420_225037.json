@@ -1,0 +1,252 @@
+{
+  "timestamp": "2026-04-20T22:50:37",
+  "request": {
+    "url": "http://localhost:8010/api/generate",
+    "payload": {
+      "topic": "大学新生时间管理与学习习惯指南",
+      "chapter_count": 2,
+      "subsection_count": 2,
+      "user_background": "大一新生，想建立学习和作息体系",
+      "extra_requirements": "内容要可执行，包含具体方法与示例",
+      "rel_threshold": 0.72,
+      "red_threshold": 0.6,
+      "timeout_seconds": 3600
+    }
+  },
+  "performance": {
+    "status_code": 200,
+    "elapsed_seconds": 1099.8915359973907,
+    "elapsed_minutes": 18.331525599956514,
+    "baseline_seconds": 995.6,
+    "improvement_pct_vs_995_6s": -10.475244676314857,
+    "success": true,
+    "title": "大学新生高效时间管理与学习习惯实用指南",
+    "content_len": 9355
+  },
+  "quality_summary": {
+    "passed_subsections": 4,
+    "failed_subsections": 0,
+    "forced_subsections": 0,
+    "controller_calls_total": 5,
+    "rag_used_subsections": null,
+    "rag_search_success_subsections": null,
+    "controller_effective_subsections": null,
+    "avg_relevancy": null,
+    "avg_redundancy": null,
+    "avg_quality": null,
+    "pass_rate": null
+  },
+  "stats_keys": [
+    "citation_quality",
+    "controller_calls_total",
+    "controller_error_total",
+    "controller_exhausted_total",
+    "controller_fallback_outline_total",
+    "controller_ineffective_total",
+    "controller_success_total",
+    "controller_triggered_subsections",
+    "controller_unavailable_total",
+    "expected_subsections",
+    "failed_subsections",
+    "forced_subsections",
+    "generation_time",
+    "outlined_subsections",
+    "passed_subsections",
+    "timeout_profile",
+    "total_iterations",
+    "verifier_failed_total"
+  ],
+  "stats": {
+    "expected_subsections": 4,
+    "outlined_subsections": 4,
+    "passed_subsections": 4,
+    "failed_subsections": 0,
+    "forced_subsections": 0,
+    "total_iterations": 8,
+    "generation_time": "1001.37s",
+    "citation_quality": {
+      "passed": false,
+      "reason": "section_missing_high_quality_source",
+      "total_urls": 27,
+      "unique_urls": 11,
+      "low_quality_ratio": 0.0,
+      "missing_high_quality_sections": 12,
+      "section_details": [
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 1,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 3,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 3,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 3,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 1,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 3,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 2,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 3,
+          "high_quality_url_count": 0
+        }
+      ]
+    },
+    "controller_triggered_subsections": 4,
+    "controller_calls_total": 5,
+    "controller_success_total": 5,
+    "controller_error_total": 0,
+    "controller_unavailable_total": 0,
+    "controller_ineffective_total": 0,
+    "controller_fallback_outline_total": 0,
+    "controller_exhausted_total": 0,
+    "verifier_failed_total": 5,
+    "timeout_profile": {
+      "adaptive_enabled": true,
+      "quantile_window_tasks": 20,
+      "expected_subsections": 4,
+      "estimated_iterations": 7.2,
+      "iteration_seconds_for_budget": 138.4,
+      "iteration_p50_seconds": 138.23,
+      "iteration_p90_seconds": 138.4,
+      "iteration_p95_seconds": 138.43,
+      "pipeline_p50_seconds": 1177.03,
+      "pipeline_p90_seconds": 1185.55,
+      "pipeline_p95_seconds": 1186.61,
+      "requested_timeout_seconds": 3600,
+      "recommended_timeout_seconds": 1621,
+      "effective_timeout_seconds": 3600
+    }
+  },
+  "raw_response": {
+    "success": true,
+    "partial": true,
+    "interrupted": true,
+    "message": "文档内容已生成，但引用质量未达标：section_missing_high_quality_source",
+    "document_id": "web_20260420_223217_313044ea",
+    "title": "大学新生高效时间管理与学习习惯实用指南",
+    "content": "# 大学新生高效时间管理与学习习惯实用指南\n\n## 第一章：科学规划时间体系\n\n### 制定个性化时间规划\n\n### 制定个性化时间规划  \n\n#### 一、认知准备：时间管理与个性化适配的必要性  \n大学新生常面临学业压力与生活节奏的双重挑战。研究表明，有效的时间管理能显著提升学术表现并降低焦虑水平（来源：学习力提升：掌握时间管理策略，实现和谐的学习体验 - 知乎，链接：https://zhuanlan.zhihu.com/p/662818352）。例如，某高校调查显示，72%的新生因缺乏规划导致熬夜、拖延等问题，直接影响课堂专注度与作业完成质量。因此，时间管理需结合个人作息特点：  \n- **新生作息痛点**：多数新生习惯高中阶段的固定作息，但大学自由时间增多后，易出现“报复性熬夜”或“碎片化刷手机”。例如，某新生记录显示，其晚间23:00后平均使用手机时长超过2小时，导致次日课堂效率下降30%。  \n- **个性化适配原则**：需根据自身生物钟调整计划。例如，晨型人可将核心学习任务安排在上午9-11点，而夜猫子则适合在晚间19-21点处理深度任务。  \n\n#### 二、SMART原则拆解：目标设定的五大维度  \nSMART原则是制定可执行计划的核心工具，需避免与后续番茄工作法重复强调时间量化，而是聚焦目标设计：  \n1. **Specific（明确目标）**：避免模糊表述。例如，“每天背50个单词”比“多学英语”更具体。  \n2. **Measurable（量化指标）**：用数据衡量进度。如“每周完成3次小组讨论记录”而非“多参与活动”。  \n3. **Achievable（可实现）**：结合能力设定。例如，若每日有效学习时间仅4小时，则目标“每日完成2小时数学练习”更合理。  \n4. **Relevant（相关性）**：确保目标与学业目标一致。如选修课学分不足时，优先补足学分而非盲目增加课外活动。  \n5. **Time-bound（时限）**：设定截止日期。例如，“两周内完成课程论文大纲”。  \n\n#### 三、作息记录工具：数据驱动的自我认知  \n通过时间追踪APP（如Toggl）记录3天真实作息，可直观发现时间黑洞。例如，某新生使用Toggl后发现，每日平均社交娱乐时间占比达40%，远超计划的25%。操作步骤如下：  \n1. **记录方法**：启动APP后标记活动类型（如“上课”“午休”“刷手机”），无需记录具体内容。  \n2. **可视化分析**：生成饼图或折线图，识别高频低效时段。例如，某学生发现晚间21:00后娱乐时间占比过高，遂调整为阅读或运动。  \n3. **关键提示**：仅记录时间分配，不涉及学习内容，避免干扰专注力。  \n\n#### 四、时段划分策略：黄金时段与模块化管理  \n将24小时划分为学习、休息、社交模块，需保护个人高效时段（黄金时段）。例如：  \n- **黄金时段保护**：若某新生上午9-12点思维最活跃，可安排专业课复习或论文写作，而非社团会议。  \n- **模块化示例**：  \n  - **学习模块**：8:00-12:00（核心任务）、14:00-17:00（小组讨论）  \n  - **休息模块**：12:00-14:00（午休）、20:00-22:00（运动）  \n  - **社交模块**：19:00-20:00（社团活动）、周末下午（社交聚会）  \n- **避免重复**：不采用25分钟单元制，而是以2-4小时为单位划分，减少切换成本。  \n\n#### 五、弹性机制设计：20%缓冲时间与动态调整  \n突发任务或状态波动需预留弹性空间。例如：  \n1. **缓冲时间设置**：每日预留1-2小时（约20%）应对临时任务。某新生原计划每日学习6小时，调整后为4.8小时+1.2小时缓冲，避免因突发事件打乱节奏。  \n2. **动态调整模板**：  \n   | 原计划 | 实际执行 | 差异原因 | 调整方案 |  \n   |---|---|---|---|  \n   | 19:00-20:00 社交 | 19:30-20:30 | 临时小组会议 | 次日提前1小时完成原社交任务 |  \n\n### 引用来源  \n1. **学习力提升：掌握时间管理策略，实现和谐的学习体验**  \n   链接：https://zhuanlan.zhihu.com/p/662818352  \n2. **College Students' Time Management: a Self-Regulated Learning ...**  \n   链接：https://link.springer.com/article/10.1007/s10648-020-09519-z  \n3. **辅导员说丨玩转24小时：\"轻松实现时间管理与学习效率的双赢\"**  \n   链接：https://www.sohu.com/a/818406533_121124322\n\n### 高效时间管理工具与技巧\n\n### 高效时间管理工具与技巧  \n\n#### 一、四象限法则深度解析  \n四象限法则通过将任务按“紧急性”和“重要性”分为四个象限，帮助新生快速识别优先级。具体操作步骤如下：  \n1. **象限划分**：  \n   - **第一象限（重要且紧急）**：如临近截止的课程作业、突发的小组会议。需立即处理，避免拖延。  \n   - **第二象限（重要不紧急）**：如长期学习计划、技能提升（如编程练习）。需规划时间主动推进，防止后期被动。  \n   - **第三象限（紧急不重要）**：如临时通知的非核心活动。可委托他人或简化处理。  \n   - **第四象限（不重要不紧急）**：如无意义的社交媒体浏览。应尽量减少或删除。  \n2. **实践案例**：  \n   - 某新生将“期末复习”归入第一象限，而“每日30分钟英语听力”归入第二象限，通过优先完成重要任务，避免了考前突击。  \n   - 制作象限矩阵图时，可参考以下结构（图1）：  \n     |                | **紧急**         | **不紧急**       |  \n     |----------------|------------------|------------------|  \n     | **重要**       | 重要且紧急       | 重要不紧急       |  \n     | **不重要**     | 紧急不重要       | 不重要不紧急     |  \n     （图1：四象限任务分类矩阵示例，来源：[如何正确运用时间管理四象限法则？ - 知乎](https://www.zhihu.com/question/298630078)）  \n\n#### 二、番茄工作法进阶应用  \n番茄工作法的核心是通过25分钟专注+5分钟休息的循环提升效率。其生理学依据在于：  \n1. **专注力周期**：人脑的注意力集中周期约为25分钟，之后效率显著下降（来源：[四象限矩阵分析法 - 百度文库](https://cp.baidu.com/landing/tscp_doc/93215cd55a65511d491177f8b43d5676)）。  \n2. **渐进训练方案**：  \n   - **初级阶段**：从15分钟专注开始，逐步延长至25分钟，适应后再缩短休息时间至3分钟。  \n   - **进阶技巧**：每完成4个番茄钟后，安排15-30分钟深度休息，避免疲劳累积。  \n   - **干扰应对**：若中途被打断，记录干扰事项并推迟处理，保持当前任务连贯性。  \n\n#### 三、工具组合方案  \n针对不同场景推荐以下工具组合：  \n1. **Forest**：通过种树机制强制专注，适合需要避免手机干扰的场景（如论文写作）。  \n2. **滴答清单**：支持任务分类与子任务拆分，适合管理多线程任务（如社团活动与课程作业并行）。  \n3. **Todoist**：提供跨平台同步与标签系统，适合需长期跟踪的项目（如学期论文进度）。  \n   **适用场景对比**：  \n   | 工具       | 优势                  | 适用场景                |  \n   |------------|-----------------------|-------------------------|  \n   | Forest     | 视觉化专注提醒        | 需减少手机干扰的任务    |  \n   | 滴答清单   | 任务分组与提醒灵活    | 多任务并行管理          |  \n   | Todoist    | 跨平台协作与标签系统  | 长期项目跟踪            |  \n\n#### 四、多任务陷阱破解  \n神经科学研究表明，任务切换会导致效率损失：  \n1. **实验数据**：  \n   - 斯坦福大学研究显示，频繁切换任务的人群错误率增加40%，且恢复专注需平均23分钟（来源：[四象限矩阵分析法 - 百度文库](https://cp.baidu.com/landing/tscp_doc/93215cd55a65511d491177f8b43d5676)）。  \n2. **单任务训练方案**：  \n   - **分块练习**：每天选择1-2小时进行单一任务训练（如仅处理数学题），逐步延长专注时长。  \n   - **环境隔离**：关闭通知、使用降噪耳机，减少外部干扰。  \n   - **复盘记录**：记录每日任务切换次数，目标每周减少50%切换频率。  \n\n#### 五、周计划模板设计  \n提供可打印的周计划表模板（图2），包含以下要素：  \n- **核心模块**：每日固定时段（如上课时间、自习时间）。  \n- **弹性区域**：预留20%空白栏用于临时任务或缓冲时间。  \n- **优先级标注**：用颜色区分四象限任务（红色：紧急重要；蓝色：重要不紧急）。  \n   （图2：周计划表模板示例，来源：[如何制作汇报四象限 - PingCode](https://docs.pingcode.com/insights/gwwzir6eahq58i2wu209wu9o)）  \n\n---\n\n### 引用来源  \n1. **如何正确运用时间管理四象限法则？**  \n   链接：[https://www.zhihu.com/question/298630078](https://www.zhihu.com/question/298630078)  \n2. **四象限矩阵分析法**  \n   链接：[https://cp.baidu.com/landing/tscp_doc/93215cd55a65511d491177f8b43d5676](https://cp.baidu.com/landing/tscp_doc/93215cd55a65511d491177f8b43d5676)  \n3. **如何制作汇报四象限**  \n   链接：[https://docs.pingcode.com/insights/gwwzir6eahq58i2wu209wu9o](https://docs.pingcode.com/insights/gwwzir6eahq58i2wu209wu9o)\n\n## 第二章：构建可持续学习系统\n\n### 课堂学习与笔记技巧\n\n### 课堂学习与笔记技巧  \n\n#### 一、预习策略设计  \n**思维导图预习法**通过可视化梳理知识框架，帮助学生提前建立认知结构。具体操作步骤如下：  \n1. **核心步骤**：  \n   - **中心主题定位**：在导图中央写下章节标题（如“细胞生物学-细胞器功能”）。  \n   - **分支延伸**：以关键词为节点展开分支，例如“线粒体→能量转换→ATP合成”。  \n   - **层级标注**：用不同颜色区分主次概念，如红色标注核心概念，蓝色标注次级知识点。  \n   - **留白提问**：在分支末端添加“？”标记预习疑问，如“溶酶体如何与自噬过程关联？”（来源：【思维导图】这个简单有效的预习方法，竟然有很多老师都不知道!，链接：[https://zhuanlan.zhihu.com/p/43950443](https://zhuanlan.zhihu.com/p/43950443)）  \n\n2. **教材预习检查清单**：  \n   - ✅ 完成章节标题与核心概念的导图框架  \n   - ✅ 标记3-5个未理解的术语或公式  \n   - ✅ 对比导图与教材目录，补充遗漏知识点  \n   - ✅ 记录预习中发现的矛盾或疑问点  \n\n---\n\n#### 二、康奈尔笔记法实操  \n**三栏规范**：  \n- **主栏（记录区）**：直接记录课堂内容，避免逐字抄写，仅保留关键数据、公式和逻辑链条。  \n  *示例（数学课）*：  \n  > 主栏：  \n  > 定理：勾股定理 → a² + b² = c²  \n  > 应用：直角三角形斜边计算 → 已知a=3,b=4 → c=5  \n\n- **副栏（总结区）**：课后用1-2句话提炼主栏内容，聚焦逻辑关系。  \n  *示例*：  \n  > 副栏：勾股定理是直角三角形三边关系的核心公式，需注意适用条件为直角三角形。  \n\n- **总结栏（关键词区）**：用符号缩写记录核心概念，如“△→直角三角形，a,b,c→三边”。  \n\n**学科案例模板**：  \n- **文学课**：  \n  > 主栏：  \n  > 《哈姆雷特》主题 → 复仇与道德困境  \n  > 关键情节：鬼魂显灵→复仇动机  \n  >  \n  > 副栏：莎士比亚通过主角的内心挣扎探讨人性矛盾。  \n  >  \n  > 总结栏：鬼魂→动机，延宕→道德冲突，独白→心理描写  \n\n---\n\n#### 三、课堂记录技巧  \n**关键词捕捉法**：  \n- **符号系统**：  \n  - ▶️ 表示因果关系（如“气候变化▶️海平面上升”）  \n  - ? 标记疑问点（如“量子纠缠？如何验证？”）  \n  - → 连接逻辑链条（如“光合作用→ATP生成→能量储存”）  \n\n**问题标记法**：  \n- 在笔记边缘用△标注需课后查阅的资料，如“△需查证光合作用光反应阶段细节”。  \n- 用❗标记需重点记忆的公式或定义，如“❗牛顿第三定律：作用力=反作用力”。  \n\n---\n\n#### 四、即时复习机制  \n**30分钟黄金时段操作流程**：  \n1. **关键词复述**：闭眼回忆课堂核心概念，口头复述至副栏。  \n   *模板*：  \n   > 本节课核心：______  \n   > 关键公式/定义：______  \n   > 我的疑问：______  \n\n2. **速记符号解码**：将速记符号转化为完整句子，如“△→光合作用光反应阶段需光能”。  \n\n3. **疑问标注**：在总结栏写下未解决的问题，如“光反应中ATP合成机制待查证”。  \n\n---\n\n#### 五、多模态笔记整合  \n**整合步骤**：  \n1. **思维导图同步**：将康奈尔笔记的关键词导入XMind，构建分支结构。  \n   *示例*：  \n   > 中心：光合作用  \n   > 分支：光反应→ATP/NADPH生成  \n   >       暗反应→卡尔文循环  \n\n2. **录音辅助**：使用Otter.ai录制课堂音频，提取关键词后与笔记对比补充细节。  \n   *操作示例*：  \n   - 录音转文字：“光反应中，水分子分解产生氧气…” → 补充至主栏“光反应→H₂O分解→O₂释放”。  \n\n---\n\n### 引用来源  \n1. **【思维导图】这个简单有效的预习方法，竟然有很多老师都不知道!**  \n   链接：[https://zhuanlan.zhihu.com/p/43950443](https://zhuanlan.zhihu.com/p/43950443)  \n2. **课前有效预习常用方法-【易教网-南京】**  \n   链接：[https://nj.eduease.com/zixun_info-id-153391.htm](https://nj.eduease.com/zixun_info-id-153391.htm)  \n3. **王红顺|思维导图学习的12个高效方法：让思考真正\"可视化\"**  \n   链接：[https://www.sohu.com/a/941238727_100934](https://www.sohu.com/a/941238727_100934)\n\n### 自主复习与知识巩固方法\n\n### 自主复习与知识巩固方法  \n\n#### 一、间隔重复系统：基于艾宾浩斯遗忘曲线的科学复习  \n德国心理学家艾宾浩斯通过实验发现，人类对新知识的遗忘呈现“先快后慢”的规律：学习后20分钟遗忘约42%，1小时后遗忘66%，1天后遗忘79%，31天后仅剩约30%的记忆留存（来源：艾宾浩斯遗忘曲线背单词法：科学复习让记忆永久 | English ECO，链接：https://www.english.eco/2025-07-28-spaced-repetition-system/）。为对抗遗忘，需采用间隔重复系统（Spaced Repetition System, SRS），通过科学规划复习间隔强化记忆。  \n\n**Anki卡片制作标准模板**：  \n1. **卡片结构**：  \n   - 正面：核心知识点（如公式、定义或关键概念）  \n   - 背面：简明解释+例题/应用场景（如“牛顿第二定律：F=ma，例：计算滑块在斜面上的加速度”）  \n2. **复习间隔设置**：  \n   - 初次学习后：10分钟、1天、3天、7天、15天、30天（根据Anki算法动态调整）  \n   - 示例：若某物理公式初次学习后答错，系统自动缩短下次复习间隔至2小时，反之则延长至3天（来源：高效学习的间隔重复——应用指南 - 知乎，链接：https://zhuanlan.zhihu.com/p/423065882）。  \n3. **操作建议**：  \n   - 每日专注复习20分钟，优先处理高频遗忘内容。  \n\n#### 二、错题本升级方案：三维错题分析法  \n传统错题本仅记录题目和答案，而三维分析法通过拆解错误根源提升学习效率：  \n1. **知识点定位**：明确错误涉及的具体概念（如“微积分中链式法则的应用”）。  \n2. **思维误区诊断**：分析错误原因（如“混淆导数与积分的运算顺序”）。  \n3. **改进方案设计**：制定针对性措施（如“制作链式法则流程图，完成10道同类题验证”）。  \n**示例**：  \n- **题目**：求函数 \\( f(x) = \\sin(x^2) \\) 的导数。  \n- **错误答案**：\\( f'(x) = 2\\cos(x^2) \\)  \n- **三维分析**：  \n  - 知识点：链式法则  \n  - 误区：未正确识别内层函数 \\( u = x^2 \\)，遗漏外层函数导数 \\( \\cos(u) \\cdot u' \\)  \n  - 改进方案：标注内层函数，补充练习 \\( \\frac{d}{dx}e^{3x} \\) 和 \\( \\frac{d}{dx}\\ln(\\sqrt{x}) \\)。  \n\n#### 三、费曼技巧实施：四步教学法与反馈优化  \n费曼技巧通过“以教促学”深化理解，操作步骤如下：  \n1. **选择听众**：针对不同听众调整讲解深度（如向同学讲解需简化术语，向自己复述需逻辑严谨）。  \n2. **简化语言**：用日常语言描述复杂概念（如将“光合作用”解释为“植物用阳光制造食物的过程”）。  \n3. **模拟教学**：口头或书面输出讲解内容，记录卡点（如无法解释“熵增原理”时需查阅热力学第二定律）。  \n4. **收集反馈**：通过提问或录音回放发现漏洞（如听众提问“为什么熵增不可逆？”需补充微观粒子无序性解释）。  \n**工具推荐**：使用录音软件（如Audacity）录制讲解，回放时标记逻辑断层。  \n\n#### 四、知识树状图构建：跨学科连接与网络化学习  \n树状图帮助构建知识体系，需遵循以下步骤：  \n1. **主干设计**：以学科核心概念为中心（如“细胞生物学”作为主干）。  \n2. **分支扩展**：按层级拆解子概念（如“细胞结构→细胞膜→磷脂双分子层”）。  \n3. **跨学科连接**：标注与其他学科的关联（如“细胞分裂”与“遗传学中的DNA复制”）。  \n**工具与示例**：  \n- 使用XMind绘制“化学反应速率”树状图，分支包含“浓度影响→碰撞理论→与物理学中的布朗运动关联”。  \n- 跨学科案例：将“经济学供需曲线”与“数学函数图像”对比，强化抽象概念理解。  \n\n#### 五、周期性复习计划：三级节奏与检测标准  \n设计周/月/学期三级复习节奏，避免与间隔重复的时间节点冲突：  \n1. **周计划**：  \n   - 每日复习昨日内容（间隔重复系统覆盖）  \n   - 周末总结本周知识点，完成1次综合练习（如数学错题重做）。  \n2. **月计划**：  \n   - 进行单元测试，检测标准：正确率≥80%且能独立推导解题步骤。  \n   - 更新树状图，补充新知识点分支。  \n3. **学期计划**：  \n   - 期末前模拟考试，检测标准：限时完成试卷且错题率下降30%。  \n   - 整合跨学科知识（如用物理原理解释经济学中的边际效用）。  \n\n---\n\n### 引用来源  \n1. **艾宾浩斯遗忘曲线数据**：  \n   - 标题：艾宾浩斯遗忘曲线背单词法：科学复习让记忆永久  \n   - 链接：https://www.english.eco/2025-07-28-spaced-repetition-system/  \n2. **Anki复习间隔与算法**：  \n   - 标题：高效学习的间隔重复——应用指南  \n   - 链接：https://zhuanlan.zhihu.com/p/423065882  \n3. **知识树状图工具推荐**：  \n   - 标题：思维导图学习的12个高效方法：让思考真正\"可视化\"  \n   - 链接：https://www.sohu.com/a/941238727_100934",
+    "stats": {
+      "expected_subsections": 4,
+      "outlined_subsections": 4,
+      "passed_subsections": 4,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 8,
+      "generation_time": "1001.37s",
+      "citation_quality": {
+        "passed": false,
+        "reason": "section_missing_high_quality_source",
+        "total_urls": 27,
+        "unique_urls": 11,
+        "low_quality_ratio": 0.0,
+        "missing_high_quality_sections": 12,
+        "section_details": [
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 1,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 3,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 3,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 3,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 1,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 3,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 2,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 3,
+            "high_quality_url_count": 0
+          }
+        ]
+      },
+      "controller_triggered_subsections": 4,
+      "controller_calls_total": 5,
+      "controller_success_total": 5,
+      "controller_error_total": 0,
+      "controller_unavailable_total": 0,
+      "controller_ineffective_total": 0,
+      "controller_fallback_outline_total": 0,
+      "controller_exhausted_total": 0,
+      "verifier_failed_total": 5,
+      "timeout_profile": {
+        "adaptive_enabled": true,
+        "quantile_window_tasks": 20,
+        "expected_subsections": 4,
+        "estimated_iterations": 7.2,
+        "iteration_seconds_for_budget": 138.4,
+        "iteration_p50_seconds": 138.23,
+        "iteration_p90_seconds": 138.4,
+        "iteration_p95_seconds": 138.43,
+        "pipeline_p50_seconds": 1177.03,
+        "pipeline_p90_seconds": 1185.55,
+        "pipeline_p95_seconds": 1186.61,
+        "requested_timeout_seconds": 3600,
+        "recommended_timeout_seconds": 1621,
+        "effective_timeout_seconds": 3600
+      }
+    }
+  }
+}

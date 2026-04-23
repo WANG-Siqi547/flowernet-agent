@@ -93,7 +93,7 @@ def main():
         web_env.update({
             "OUTLINER_URL": "http://localhost:8003",
             "GENERATOR_URL": "http://localhost:8002",
-            "REQUEST_TIMEOUT": web_env.get("REQUEST_TIMEOUT", "3600"),
+            "REQUEST_TIMEOUT": web_env.get("REQUEST_TIMEOUT", "7200"),
             "NO_PROXY": "localhost,127.0.0.1",
             "no_proxy": "localhost,127.0.0.1",
         })

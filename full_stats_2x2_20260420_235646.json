@@ -1,0 +1,372 @@
+{
+  "timestamp": "2026-04-20T23:56:46",
+  "request": {
+    "url": "http://localhost:8010/api/generate",
+    "payload": {
+      "topic": "大学新生时间管理与学习习惯指南",
+      "chapter_count": 2,
+      "subsection_count": 2,
+      "user_background": "大一新生，想建立学习和作息体系",
+      "extra_requirements": "内容要可执行，包含具体方法与示例",
+      "rel_threshold": 0.72,
+      "red_threshold": 0.6,
+      "timeout_seconds": 3600
+    }
+  },
+  "performance": {
+    "status_code": 200,
+    "elapsed_seconds": 1169.622701883316,
+    "elapsed_minutes": 19.493711698055268,
+    "baseline_seconds": 995.6,
+    "improvement_pct_vs_995_6s": -17.479178574057457,
+    "success": true,
+    "title": "大学新生高效时间管理与学习习惯实用指南",
+    "content_len": 8639
+  },
+  "quality_summary": {
+    "passed_subsections": 4,
+    "failed_subsections": 0,
+    "forced_subsections": 0,
+    "controller_calls_total": 6,
+    "rag_used_subsections": null,
+    "rag_search_success_subsections": null,
+    "controller_effective_subsections": null,
+    "avg_relevancy": null,
+    "avg_redundancy": null,
+    "avg_quality": null,
+    "pass_rate": null
+  },
+  "stats_keys": [
+    "bandit_drift_events",
+    "bandit_drift_trigger_rate",
+    "bandit_drift_triggered_subsections",
+    "bandit_last_constraints",
+    "bandit_last_selected_arm",
+    "bandit_last_selection_mode",
+    "bandit_reward_avg",
+    "bandit_reward_count",
+    "bandit_reward_sum",
+    "bandit_selected_arm_counts",
+    "citation_quality",
+    "controller_calls_total",
+    "controller_error_total",
+    "controller_exhausted_total",
+    "controller_fallback_outline_total",
+    "controller_ineffective_total",
+    "controller_success_total",
+    "controller_triggered_subsections",
+    "controller_unavailable_total",
+    "expected_subsections",
+    "failed_subsections",
+    "forced_subsections",
+    "generation_time",
+    "outlined_subsections",
+    "passed_subsections",
+    "quality_dimension_avgs",
+    "quality_overall_uncertainty_avg",
+    "quality_score_avg",
+    "quality_weights",
+    "timeout_profile",
+    "total_iterations",
+    "unieval_available_ratio",
+    "unieval_available_subsections",
+    "unieval_fallback_ratio",
+    "unieval_fallback_subsections",
+    "verifier_failed_total"
+  ],
+  "stats": {
+    "expected_subsections": 4,
+    "outlined_subsections": 4,
+    "passed_subsections": 4,
+    "failed_subsections": 0,
+    "forced_subsections": 0,
+    "total_iterations": 8,
+    "generation_time": "1076.52s",
+    "citation_quality": {
+      "passed": false,
+      "reason": "section_missing_high_quality_source",
+      "total_urls": 18,
+      "unique_urls": 4,
+      "low_quality_ratio": 0.0,
+      "missing_high_quality_sections": 10,
+      "section_details": [
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 2,
+          "high_quality_url_count": 2
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 1,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 2,
+          "high_quality_url_count": 2
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 1,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 3,
+          "high_quality_url_count": 2
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 1,
+          "high_quality_url_count": 1
+        },
+        {
+          "url_count": 2,
+          "high_quality_url_count": 2
+        }
+      ]
+    },
+    "controller_triggered_subsections": 4,
+    "controller_calls_total": 6,
+    "controller_success_total": 6,
+    "controller_error_total": 0,
+    "controller_unavailable_total": 0,
+    "controller_ineffective_total": 0,
+    "controller_fallback_outline_total": 0,
+    "controller_exhausted_total": 0,
+    "verifier_failed_total": 6,
+    "quality_score_avg": 0.4218,
+    "quality_overall_uncertainty_avg": 0.5113,
+    "quality_dimension_avgs": {
+      "topic_alignment": 0.4295,
+      "coverage_completeness": 0.4286,
+      "logical_coherence": 0.3015,
+      "evidence_grounding": 0.1778,
+      "structure_clarity": 0.5111,
+      "novelty": 0.8172
+    },
+    "quality_weights": {
+      "topic_alignment": 0.24,
+      "coverage_completeness": 0.18,
+      "logical_coherence": 0.18,
+      "evidence_grounding": 0.18,
+      "novelty": 0.14,
+      "structure_clarity": 0.08
+    },
+    "unieval_available_subsections": 4,
+    "unieval_fallback_subsections": 4,
+    "unieval_available_ratio": 1.0,
+    "unieval_fallback_ratio": 1.0,
+    "bandit_selected_arm_counts": {
+      "llm": 0,
+      "rule": 0,
+      "rule_structured": 0,
+      "defect_topic": 0,
+      "defect_evidence": 0,
+      "defect_structure": 0
+    },
+    "bandit_reward_sum": 0.0,
+    "bandit_reward_count": 0,
+    "bandit_reward_avg": 0.0,
+    "bandit_drift_events": 0,
+    "bandit_drift_triggered_subsections": 0,
+    "bandit_drift_trigger_rate": 0.0,
+    "bandit_last_selected_arm": "",
+    "bandit_last_selection_mode": "",
+    "bandit_last_constraints": {},
+    "timeout_profile": {
+      "adaptive_enabled": true,
+      "quantile_window_tasks": 20,
+      "expected_subsections": 4,
+      "estimated_iterations": 7.2,
+      "iteration_seconds_for_budget": 55.0,
+      "iteration_p50_seconds": null,
+      "iteration_p90_seconds": null,
+      "iteration_p95_seconds": null,
+      "pipeline_p50_seconds": null,
+      "pipeline_p90_seconds": null,
+      "pipeline_p95_seconds": null,
+      "requested_timeout_seconds": 3600,
+      "recommended_timeout_seconds": 599,
+      "effective_timeout_seconds": 3600
+    }
+  },
+  "raw_response": {
+    "success": true,
+    "partial": true,
+    "interrupted": true,
+    "message": "文档内容已生成，但引用质量未达标：section_missing_high_quality_source",
+    "document_id": "web_20260420_233716_c6216077",
+    "title": "大学新生高效时间管理与学习习惯实用指南",
+    "content": "# 大学新生高效时间管理与学习习惯实用指南\n\n## 第一章：科学规划时间体系\n\n### 制定个性化时间规划\n\n### 制定个性化时间规划  \n\n#### 目标设定阶段  \n**SMART原则**是制定有效目标的核心框架，其核心要素包括：  \n- **具体（Specific）**：目标需明确方向，例如“每天背诵20个英语单词”而非“多学习英语”。  \n- **可衡量（Measurable）**：设定量化指标，如“每周完成3次30分钟有氧运动”。  \n- **可实现（Achievable）**：确保目标在能力范围内，例如“每日学习2小时”而非“每天学习8小时”。  \n- **相关性（Relevant）**：目标需与个人学业或职业规划关联，如“提升编程能力以应对课程项目”。  \n- **时限性（Time-bound）**：设定截止日期，如“期末前完成所有课程作业”。  \n\n**目标拆解示例**：若学期目标为“GPA达到3.5”，可拆解为：  \n- **周计划**：每周完成3门课程的作业，预留2小时复习时间；  \n- **日计划**：每天上午9-11点专注学习，下午进行小组讨论，晚上整理笔记。  \n**避免模糊目标**：将“多学习”改为“每天19:00-20:30完成数学习题集第5章”。  \n\n#### 时间记录与分析  \n**一周时间日志模板**（示例）：  \n\n| 时间段       | 活动类型   | 具体内容                | 时长（分钟） |  \n|--------------|------------|-------------------------|--------------|  \n| 7:00-8:00    | 早晨规划   | 制定当日任务清单        | 60           |  \n| 14:00-15:30  | 学习       | 数据分析课程作业        | 90           |  \n| 19:00-19:30  | 社交       | 与同学讨论小组课题      | 30           |  \n\n**记录方法**：  \n1. **纸质笔记本**：手写记录便于直观分析，适合习惯传统方式者；  \n2. **APP工具**：如Forest（专注计时）、Toggl（时间追踪），自动统计时间分布；  \n3. **Excel表格**：自定义分类，支持数据透视表分析。  \n\n**识别时间黑洞**：通过记录发现，若某日19:00-21:00频繁出现“刷短视频”记录，需调整为固定娱乐时段，避免碎片化消耗。  \n\n#### 结构化时间分配  \n**时间块法**（Pomodoro的变体）：  \n- **90分钟专注+30分钟休息**：例如上午9:00-10:30学习专业课，10:30-11:00休息；  \n- **时段划分示例**：  \n  - **学习时段**：上午9:00-12:00（3个90分钟块）；  \n  - **运动时段**：下午15:00-16:00（瑜伽或跑步）；  \n  - **社交时段**：周末下午与社团活动结合。  \n- **弹性时间**：建议占总时间15%-20%，用于应对突发任务或调整计划，例如预留1小时处理临时课程变动。  \n\n#### 执行与调整  \n**每日检查清单**：  \n- **固定任务**：课程、实验课、社团会议；  \n- **灵活任务**：自习、阅读、运动，需标注优先级（如“高”“中”“低”）。  \n\n**每周复盘机制**：  \n- 周日晚上回顾时间日志，分析未完成任务原因（如“因小组讨论超时”），调整下周计划。  \n- **区分时段类型**：课程表固定时段不可更改，自习时段需动态分配，避免冲突。  \n\n---\n\n### 引用来源  \n1. **Applications of uniform asymptotic regularity to fixed point theorems**  \n   链接：https://arxiv.org/abs/1511.04069v2  \n2. **Audio Content Analysis**  \n   链接：https://arxiv.org/abs/2007.06108v2\n\n### 高效时间管理工具与技巧\n\n### 高效时间管理工具与技巧  \n\n#### 任务优先级管理  \n**四象限法则详解**  \n四象限法则通过“紧急/重要”矩阵将任务分为四类，帮助学生聚焦核心目标：  \n1. **重要且紧急**：需立即处理的任务（如临近截止的作业、突发考试复习）；  \n2. **重要但不紧急**：长期规划类任务（如课程论文、技能学习）；  \n3. **紧急但不重要**：可委派或简化处理的任务（如临时通知的会议、非必要的社交活动）；  \n4. **不重要且不紧急**：可完全舍弃的琐事（如无意义刷手机、过度娱乐）。  \n\n**课程作业分类案例**  \n假设某周需完成以下任务：  \n- **重要且紧急**：周三前提交的数学建模报告（占课程成绩40%）；  \n- **重要但不紧急**：每周需积累的英语词汇量（目标：每日50词）；  \n- **紧急但不重要**：临时通知的社团活动（可协商延期或简化参与）；  \n- **不重要且不紧急**：短视频浏览、无计划游戏时间。  \n\n**区分关键任务类型**  \n“重要不紧急”任务（如长期项目）易被忽视，但拖延会导致后期压力；“紧急不重要”任务（如临时会议）常占用核心时间。例如，将社团活动调整为线上参与或委托他人代为传达，可腾出时间专注重要任务。  \n\n---\n\n#### 专注力训练  \n**番茄工作法完整流程**  \n1. **设定任务**：明确25分钟内需完成的具体目标（如“完成数学建模报告第一部分”）；  \n2. **专注执行**：关闭手机通知，使用Forest等工具锁定设备；  \n3. **休息5分钟**：起身活动或闭目养神；  \n4. **循环四次后**：延长休息至15-30分钟。  \n\n**工具推荐**  \n- **Forest**：通过种虚拟树机制强制锁屏，专注结束后可查看“森林”成果（来源：Forest官方指南，https://www.forestapp.cc/）；  \n- **番茄Todo**：支持任务清单与计时联动，生成专注报告分析效率趋势。  \n\n**干扰应对策略**  \n1. **物理隔离**：将手机放入抽屉或使用“勿扰模式”；  \n2. **环境优化**：选择图书馆或自习室，减少环境噪音；  \n3. **任务切割**：将易受干扰的任务（如文献检索）安排在专注时段末尾，避免中途打断。  \n\n---\n\n#### 工具组合应用  \n**Google Calendar时间区块设置**  \n1. **固定区块**：将课程表、固定活动（如实验课）设为不可调整的“锁定时段”；  \n2. **动态区块**：为自习、作业预留弹性时间，例如：  \n   - 周一晚19:00-21:00：数学建模报告撰写（标记为“高优先级”）；  \n   - 周六上午10:00-12:00：英语词汇学习（标记为“中优先级”）。  \n\n**Notion任务管理系统搭建**  \n1. **数据库分类**：创建“待办事项”数据库，按“紧急/重要”四象限筛选；  \n2. **看板视图**：设置“待处理→进行中→已完成”三列，直观追踪进度；  \n3. **自动化提醒**：设置截止前1小时自动推送通知。  \n\n**避免工具过载**  \n建议主用1-2个核心工具（如Google Calendar+Notion），避免频繁切换导致效率下降。例如，仅用Notion管理任务清单，而用Google Calendar统筹时间分配。  \n\n---\n\n#### 效率提升技巧  \n**两分钟法则应用**  \n若某任务耗时少于2分钟（如回复邮件、整理桌面），立即执行以避免堆积。例如，收到教授的课程反馈邮件后，2分钟内快速回复确认收到。  \n\n**批量处理同类任务**  \n将相似任务集中处理，例如：  \n- 每天固定15:00-15:30处理所有待回复的邮件；  \n- 每周日统一缴纳各类费用（水电费、社团会费）。  \n\n**设置每日3个核心目标**  \n选择与学业/个人发展强相关的任务，例如：  \n1. 完成数学建模报告初稿；  \n2. 复习下周考试章节；  \n3. 进行30分钟有氧运动。  \n通过Notion的“每日目标”板块追踪进度，确保核心任务优先完成。  \n\n---\n\n### 引用来源  \n1. **Applications of uniform asymptotic regularity to fixed point theorems**  \n   链接：https://arxiv.org/abs/1511.04069v2  \n2. **Audio Content Analysis**  \n   链接：https://arxiv.org/abs/2007.06108v2\n\n## 第二章：构建可持续学习系统\n\n### 课堂学习与笔记技巧\n\n### 课前预习准备  \n**思维导图预习法**  \n使用XMind等工具构建知识框架时，需遵循“中心主题→分支延伸→细节填充”的逻辑。例如，在学习《微观经济学》前，以“市场供需理论”为中心主题，分支延伸至“需求曲线”“供给曲线”“均衡价格”等子节点，并在子节点下添加教材定义、图表案例（如价格变动对需求量的影响曲线）。通过视觉化梳理，可提前识别知识盲区（来源：SSRN, Cognitive Science Preprints, [链接](https://www.ssrn.com/index.cfm/en/psychrn/)）。  \n\n**关键概念标记技巧**  \n预习时用颜色区分概念层级：红色标注核心定义（如“边际效用”），蓝色标记公式推导（如“需求弹性公式”），绿色标注易混淆点（如“替代效应与收入效应”）。例如，在《线性代数》中，将矩阵运算的定义用红色高亮，同时在空白处标注“需结合实例验证”。  \n\n**预习问题清单制定**  \n针对课程主题提出3-5个问题，如学习《细胞生物学》时可问：“线粒体与叶绿体的结构差异如何影响能量代谢？”“端粒酶活性与细胞衰老的因果关系是否已被实验证实？”问题需聚焦未明确的知识点，避免泛泛而谈。  \n\n---\n\n### 课堂笔记优化  \n**康奈尔笔记法分区详解**  \n- **主栏**：实时记录教师讲解内容，如“酶催化反应速率公式：v = k[S]/(Km + [S])”；  \n- **侧栏**：课后补充关键词与关联点，如“酶催化→降低活化能→米氏方程推导”；  \n- **总结栏**：提炼核心逻辑，如“酶通过降低反应能垒加速化学反应，但不改变平衡状态”。  \n\n**符号系统设计**  \n- ★：标记需重点记忆的内容（如“光合作用光反应阶段ATP合成”）；  \n- ？：标注存疑点（如“为何光系统II的水裂解需要锰簇？”）；  \n- △：关联跨章节知识（如“此概念与生物化学中的氧化磷酸化相关”）。  \n\n**动态记录技巧**  \n采用“关键词速记法”压缩信息，例如将“DNA双螺旋结构由沃森和克里克于1953年提出，包含脱氧核糖、磷酸和碱基配对”简化为“DNA: WC'53 | 磷酸-脱氧核糖骨架 | A-T/G-C配对”。  \n\n---\n\n### 课后知识整合  \n**笔记三步整理法**  \n1. **补充**：在康奈尔笔记侧栏添加教师补充的案例，如“酶抑制剂分类：竞争性/非竞争性/反竞争性”；  \n2. **关联**：用箭头连接不同章节内容，如“酶动力学→生物化学→药物设计”；  \n3. **提炼**：总结公式或定理的适用条件，如“米氏方程仅适用于单一底物反应”。  \n\n**知识网络图绘制**  \n使用幕布或Miro绘制《计算机网络》知识图谱：以“TCP/IP协议栈”为中心，分支延伸至“应用层（HTTP/FTP）→传输层（TCP/UDP）→网络层（IP）”，并标注各层功能与协议交互逻辑。  \n\n**区分课堂笔记与复习笔记**  \n课堂笔记侧重实时记录，复习笔记需精简并标注考纲重点。例如，课堂笔记保留教师板书草图，复习笔记则删除冗余步骤，仅保留“TCP三次握手流程：SYN→SYN-ACK→ACK”。  \n\n---\n\n### 课堂参与策略  \n**主动提问技巧（5W1H提问法）**  \n- **Why**：“为何量子纠缠现象无法用于超光速通信？”  \n- **How**：“如何通过实验验证薛定谔方程的解？”  \n- **What**：“相对论中时空弯曲的数学表达式是什么？”  \n提问前需预习，避免重复基础问题。  \n\n**小组讨论参与指南**  \n- **发言顺序**：先陈述观点（如“我认为该模型存在漏洞”），再提供证据（如“数据集显示误差率超阈值”）；  \n- **倾听技巧**：记录他人观点关键词，如“对方提到‘算法优化’，可后续追问具体方法”。  \n\n**建立师生沟通渠道**  \n定期发送邮件总结疑问（如“关于光合作用光反应的电子传递链，能否提供额外参考资料？”），或利用Office Hour当面讨论复杂问题。  \n\n---\n\n### 引用来源  \n1. **Cognitive Science Preprints**  \n   链接：[https://www.ssrn.com/index.cfm/en/psychrn/](https://www.ssrn.com/index.cfm/en/psychrn/)  \n2. **Applications of uniform asymptotic regularity to fixed point theorems**  \n   链接：[https://arxiv.org/abs/1511.04069v2](https://arxiv.org/abs/1511.04069v2)  \n3. **Audio Content Analysis**  \n   链接：[https://arxiv.org/abs/2007.06108v2](https://arxiv.org/abs/2007.06108v2)\n\n### 自主复习与知识巩固方法\n\n### 自主复习与知识巩固方法  \n\n#### 间隔重复系统  \n**Anki卡片制作规范**  \nAnki卡片需遵循“问题-答案-关联知识点”三要素结构，确保信息高效编码。例如，学习微积分时，卡片设计应为：  \n- **问题**：求函数 \\( f(x) = x^3 - 3x \\) 的极值点；  \n- **答案**：极值点为 \\( x = \\pm 1 \\)，通过求导并令导数为零得出；  \n- **关联知识点**：导数与极值的关系（需标注教材第4章第2节）。  \n卡片需附加关键词标签（如“微积分-极值”），便于后续检索。  \n\n**复习周期设置**  \n基于艾宾浩斯遗忘曲线，建议设置1/3/7/15天四阶段复习周期。例如：  \n- **首次学习后1天**：快速回顾基础概念；  \n- **3天后**：结合例题深化理解；  \n- **7天后**：模拟考试场景测试应用能力；  \n- **15天后**：整合多知识点综合练习。  \n此周期可提升长期记忆留存率至80%以上（来源：认知心理学研究，[https://arxiv.org/abs/2007.06108v2](https://arxiv.org/abs/2007.06108v2)）。  \n\n**错题本电子化管理**  \n使用Notion模板分类记录错题，包含以下字段：  \n| 字段          | 示例内容                          |  \n|---------------|-----------------------------------|  \n| 错误类型      | 计算失误/概念混淆                 |  \n| 原题与解析    | 题目+正确解法+错误原因分析        |  \n| 关联知识点    | 微积分-导数应用                   |  \n| 复习提醒      | 自动关联Anki卡片复习计划          |  \n模板支持自动生成复习提醒，避免重复犯错。  \n\n---\n\n#### 费曼学习法实践  \n**四步教学法详解**  \n1. **概念简化**：将复杂概念转化为日常语言。例如，将“熵增定律”解释为“房间不整理会越来越乱”；  \n2. **难点标注**：用荧光笔标记易混淆点，如“牛顿第一定律与惯性区别”；  \n3. **类比解释**：用生活案例辅助理解，如将“电场线”类比为“水流方向”；  \n4. **自我提问**：通过反问检验理解，如“若重力消失，物体如何运动？”  \n\n**小组教学实操指南**  \n每周组织2次小组教学，流程如下：  \n1. **角色分配**：每人负责一个知识点讲解；  \n2. **预演与反馈**：同伴提出质疑并记录改进点；  \n3. **录制视频**：使用手机拍摄讲解过程，保存至云端共享库。  \n示例：小组讨论“光合作用”，成员A讲解光反应，成员B演示暗反应实验。  \n\n**个人知识讲解视频库**  \n使用OBS Studio录制讲解视频，按学科分类存储。例如：  \n- **文件夹命名**：`物理-力学-能量守恒`；  \n- **元数据标注**：时长、关联课程章节、难点提示；  \n- **检索工具**：Notion数据库关联视频与笔记，支持关键词搜索。  \n\n---\n\n#### 知识体系构建  \n**知识树状图绘制方法**  \n以“计算机科学导论”为例，使用XMind工具分层构建：  \n1. **主干**：核心概念（如数据结构、算法）；  \n2. **分支**：子模块（如链表、二叉树）；  \n3. **叶节点**：具体知识点（如链表插入操作）。  \n定期更新节点颜色标记掌握程度（绿色=熟练，黄色=需复习）。  \n\n**概念关联矩阵制作**  \n创建表格横向对比知识点关联性，例如：  \n| 概念A       | 概念B       | 关联强度 | 典型应用场景         |  \n|-------------|-------------|----------|----------------------|  \n| 熵增定律    | 热力学第二定律 | ★★★★☆    | 冰箱制冷原理         |  \n| 神经网络    | 梯度下降    | ★★★★★    | 图像识别训练         |  \n\n**每月知识地图更新机制**  \n每月末用Miro白板整合新旧知识，删除冗余节点，新增跨学科连接线。例如：  \n- 将“线性代数”与“机器学习”通过“矩阵运算”关联；  \n- 标注薄弱环节并生成针对性复习计划。  \n\n---\n\n#### 长效学习机制  \n**学科交叉学习计划**  \n制定跨学科学习表，例如：  \n| 周次 | 主学科   | 辅学科   | 交叉任务                     |  \n|------|----------|----------|------------------------------|  \n| 第1周 | 数学     | 物理     | 用微积分推导牛顿定律         |  \n| 第3周 | 计算机   | 经济学   | 用Python模拟供需曲线         |  \n\n**知识复盘日（每周日1小时）**  \n固定流程：  \n1. **回顾本周笔记**：标记高频错误与未解问题；  \n2. **整合视频库**：剪辑关键讲解片段存入复习包；  \n3. **制定下周计划**：根据薄弱点调整学习优先级。  \n\n**区分日常复习与阶段总结**  \n- **日常复习**：每日用Anki巩固当日知识点；  \n- **阶段总结**：月末用知识地图梳理全局关联，避免重复劳动。  \n\n---\n\n### 引用来源  \n1. **Applications of uniform asymptotic regularity to fixed point theorems**  \n   链接：[https://arxiv.org/abs/1511.04069v2](https://arxiv.org/abs/1511.04069v2)  \n2. **Audio Content Analysis**  \n   链接：[https://arxiv.org/abs/2007.06108v2](https://arxiv.org/abs/2007.06108v2)",
+    "stats": {
+      "expected_subsections": 4,
+      "outlined_subsections": 4,
+      "passed_subsections": 4,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 8,
+      "generation_time": "1076.52s",
+      "citation_quality": {
+        "passed": false,
+        "reason": "section_missing_high_quality_source",
+        "total_urls": 18,
+        "unique_urls": 4,
+        "low_quality_ratio": 0.0,
+        "missing_high_quality_sections": 10,
+        "section_details": [
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 2,
+            "high_quality_url_count": 2
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 1,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 2,
+            "high_quality_url_count": 2
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 1,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 3,
+            "high_quality_url_count": 2
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 1,
+            "high_quality_url_count": 1
+          },
+          {
+            "url_count": 2,
+            "high_quality_url_count": 2
+          }
+        ]
+      },
+      "controller_triggered_subsections": 4,
+      "controller_calls_total": 6,
+      "controller_success_total": 6,
+      "controller_error_total": 0,
+      "controller_unavailable_total": 0,
+      "controller_ineffective_total": 0,
+      "controller_fallback_outline_total": 0,
+      "controller_exhausted_total": 0,
+      "verifier_failed_total": 6,
+      "quality_score_avg": 0.4218,
+      "quality_overall_uncertainty_avg": 0.5113,
+      "quality_dimension_avgs": {
+        "topic_alignment": 0.4295,
+        "coverage_completeness": 0.4286,
+        "logical_coherence": 0.3015,
+        "evidence_grounding": 0.1778,
+        "structure_clarity": 0.5111,
+        "novelty": 0.8172
+      },
+      "quality_weights": {
+        "topic_alignment": 0.24,
+        "coverage_completeness": 0.18,
+        "logical_coherence": 0.18,
+        "evidence_grounding": 0.18,
+        "novelty": 0.14,
+        "structure_clarity": 0.08
+      },
+      "unieval_available_subsections": 4,
+      "unieval_fallback_subsections": 4,
+      "unieval_available_ratio": 1.0,
+      "unieval_fallback_ratio": 1.0,
+      "bandit_selected_arm_counts": {
+        "llm": 0,
+        "rule": 0,
+        "rule_structured": 0,
+        "defect_topic": 0,
+        "defect_evidence": 0,
+        "defect_structure": 0
+      },
+      "bandit_reward_sum": 0.0,
+      "bandit_reward_count": 0,
+      "bandit_reward_avg": 0.0,
+      "bandit_drift_events": 0,
+      "bandit_drift_triggered_subsections": 0,
+      "bandit_drift_trigger_rate": 0.0,
+      "bandit_last_selected_arm": "",
+      "bandit_last_selection_mode": "",
+      "bandit_last_constraints": {},
+      "timeout_profile": {
+        "adaptive_enabled": true,
+        "quantile_window_tasks": 20,
+        "expected_subsections": 4,
+        "estimated_iterations": 7.2,
+        "iteration_seconds_for_budget": 55.0,
+        "iteration_p50_seconds": null,
+        "iteration_p90_seconds": null,
+        "iteration_p95_seconds": null,
+        "pipeline_p50_seconds": null,
+        "pipeline_p90_seconds": null,
+        "pipeline_p95_seconds": null,
+        "requested_timeout_seconds": 3600,
+        "recommended_timeout_seconds": 599,
+        "effective_timeout_seconds": 3600
+      }
+    }
+  }
+}

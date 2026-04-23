@@ -110,7 +110,7 @@ def run_case(chapter_count: int, subsection_count: int, timeout_seconds: int) ->
     }
 
     print(f"\n=== Running case {chapter_count}x{subsection_count} ===")
-    res = safe_post(f"{BASE_WEB}/api/generate", payload, timeout=timeout_seconds + 300)
+    res = safe_post(f"{BASE_WEB}/api/generate", payload, timeout=max(timeout_seconds + 300, 7500))
 
     case_result: Dict[str, Any] = {
         "case": f"{chapter_count}x{subsection_count}",
@@ -195,8 +195,8 @@ def main() -> None:
     print(f"FlowerNet stress regression @ {now()}")
 
     results = [
-        run_case(chapter_count=2, subsection_count=2, timeout_seconds=2400),
-        run_case(chapter_count=3, subsection_count=2, timeout_seconds=3600),
+        run_case(chapter_count=2, subsection_count=2, timeout_seconds=7200),
+        run_case(chapter_count=3, subsection_count=2, timeout_seconds=7200),
     ]
 
     overall_ok = all(

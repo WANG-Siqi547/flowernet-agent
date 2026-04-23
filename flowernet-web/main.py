@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
 GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "600"))
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "7200"))
 DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "1"))
 DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
 DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
@@ -71,7 +71,7 @@ class GenerateDocRequest(BaseModel):
     extra_requirements: str = Field(default="")
     rel_threshold: float = Field(default=WEB_DEFAULT_REL_THRESHOLD, ge=0, le=1)
     red_threshold: float = Field(default=WEB_DEFAULT_RED_THRESHOLD, ge=0, le=1)
-    timeout_seconds: int = Field(default=600, ge=60, le=7200, description="同步模式超时秒数")
+    timeout_seconds: int = Field(default=7200, ge=60, le=7200, description="同步模式超时秒数")
 
 
 class DownloadDocxRequest(BaseModel):
@@ -88,7 +88,7 @@ class PofficesGenerateRequest(BaseModel):
     rel_threshold: float = Field(default=WEB_DEFAULT_REL_THRESHOLD, ge=0, le=1)
     red_threshold: float = Field(default=WEB_DEFAULT_RED_THRESHOLD, ge=0, le=1)
     async_mode: bool = Field(default=True, description="true=异步任务，false=同步等待结果")
-    timeout_seconds: int = Field(default=600, ge=60, le=7200, description="同步模式超时秒数")
+    timeout_seconds: int = Field(default=7200, ge=60, le=7200, description="同步模式超时秒数")
 
 
 class PofficesTaskStatusRequest(BaseModel):

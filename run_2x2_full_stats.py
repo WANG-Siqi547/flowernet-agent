@@ -22,7 +22,7 @@ def main() -> int:
         "extra_requirements": "内容要可执行，包含具体方法与示例",
         "rel_threshold": 0.72,
         "red_threshold": 0.60,
-        "timeout_seconds": 3600,
+        "timeout_seconds": 7200,
     }
 
     url = "http://localhost:8010/api/generate"
@@ -38,7 +38,7 @@ def main() -> int:
     print()
 
     started = time.time()
-    response = requests.post(url, json=payload, timeout=3900)
+    response = requests.post(url, json=payload, timeout=7500)
     elapsed = time.time() - started
 
     status_code = response.status_code

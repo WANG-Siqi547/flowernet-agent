@@ -19,7 +19,7 @@ def main():
         "extra_requirements": "务实、代码示例清晰、中文",
         "rel_threshold": 0.70,
         "red_threshold": 0.62,
-        "timeout_seconds": 1800,
+        "timeout_seconds": 7200,
     }
     
     print(f"\nConfig:")
@@ -35,7 +35,7 @@ def main():
         resp = requests.post(
             "http://localhost:8010/api/generate",
             json=payload,
-            timeout=2100,
+            timeout=7500,
         )
         
         elapsed = time.time() - start

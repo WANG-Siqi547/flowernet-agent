@@ -1,0 +1,681 @@
+{
+  "ok": false,
+  "events": [
+    {
+      "t": 0.01,
+      "type": "start",
+      "stage": "",
+      "message": "开始生成大纲..."
+    },
+    {
+      "t": 10.09,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 20.15,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 30.23,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 40.32,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 50.39,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 60.47,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 70.55,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 80.62,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 90.7,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 100.78,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 110.86,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 120.95,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 131.03,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 141.1,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 151.18,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 161.26,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 171.34,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 181.42,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 191.49,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 201.56,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 211.63,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 221.71,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 231.78,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 241.86,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 251.95,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 262.04,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 272.12,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 282.2,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 292.28,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 302.34,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 312.41,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 322.5,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 332.58,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 342.65,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 352.72,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 362.81,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 372.88,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 382.95,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 393.04,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 399.6,
+      "type": "outline",
+      "stage": "",
+      "message": "✅ 大纲生成完成\n主题: Python Programming Best Practices Guide"
+    },
+    {
+      "t": 399.6,
+      "type": "detail",
+      "stage": "outline_document_ready",
+      "message": "全文大纲已生成并存储到数据库（document_id=web_20260423_221407_da733f22）"
+    },
+    {
+      "t": 399.6,
+      "type": "detail",
+      "stage": "section_outline_ready",
+      "message": "章节大纲已生成并存储: Code Structure and Readability"
+    },
+    {
+      "t": 399.6,
+      "type": "detail",
+      "stage": "subsection_outline_ready",
+      "message": "第1小节大纲已生成并存储: Code Structure and Readability > Modular Design and Organization"
+    },
+    {
+      "t": 399.6,
+      "type": "detail",
+      "stage": "subsection_outline_ready",
+      "message": "第2小节大纲已生成并存储: Code Structure and Readability > Naming Conventions and Documentation"
+    },
+    {
+      "t": 399.6,
+      "type": "detail",
+      "stage": "section_outline_ready",
+      "message": "章节大纲已生成并存储: Testing and Maintenance"
+    },
+    {
+      "t": 399.6,
+      "type": "detail",
+      "stage": "subsection_outline_ready",
+      "message": "第3小节大纲已生成并存储: Testing and Maintenance > Test-Driven Development and Unit Testing"
+    },
+    {
+      "t": 399.6,
+      "type": "detail",
+      "stage": "subsection_outline_ready",
+      "message": "第4小节大纲已生成并存储: Testing and Maintenance > Error Handling and Logging"
+    },
+    {
+      "t": 399.6,
+      "type": "progress",
+      "stage": "",
+      "message": "🚀 开始生成内容（共4个小节）..."
+    },
+    {
+      "t": 399.6,
+      "type": "detail",
+      "stage": "subsection_start",
+      "message": "开始处理小节: Code Structure and Readability > Modular Design and Organization"
+    },
+    {
+      "t": 401.62,
+      "type": "detail",
+      "stage": "document_start",
+      "message": "文档生成已启动，目标小节数: 4"
+    },
+    {
+      "t": 401.63,
+      "type": "detail",
+      "stage": "subsection_start",
+      "message": "开始处理小节: Code Structure and Readability > Modular Design and Organization"
+    },
+    {
+      "t": 415.7,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 427.77,
+      "type": "detail",
+      "stage": "rag_search_success",
+      "message": "RAG 搜索成功，已注入来源上下文"
+    },
+    {
+      "t": 427.77,
+      "type": "detail",
+      "stage": "generator_start",
+      "message": "第 1 轮：进入 Generator 生成"
+    },
+    {
+      "t": 429.78,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 431.79,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 447.87,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 459.94,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 463.96,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 480.04,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 490.08,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 492.09,
+      "type": "detail",
+      "stage": "verifier_start",
+      "message": "第 1 轮：进入 Verifier 检测"
+    },
+    {
+      "t": 492.09,
+      "type": "detail",
+      "stage": "source_citation_relaxed",
+      "message": "第 1 轮：来源引用校验连续失败，后续轮次放宽硬约束"
+    },
+    {
+      "t": 492.09,
+      "type": "detail",
+      "stage": "verifier_failed",
+      "message": "第 1 轮：Verifier 判定不通过，进入 Controller"
+    },
+    {
+      "t": 492.09,
+      "type": "detail",
+      "stage": "controller_start",
+      "message": "第 1 轮：Controller 第 1 次尝试改纲"
+    },
+    {
+      "t": 496.11,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 512.2,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 520.24,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 528.29,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 544.36,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 550.4,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 560.45,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 560.46,
+      "type": "detail",
+      "stage": "controller_success",
+      "message": "第 1 轮：Controller 改纲成功，返回 Generator"
+    },
+    {
+      "t": 560.46,
+      "type": "detail",
+      "stage": "generator_start",
+      "message": "第 2 轮：进入 Generator 生成"
+    },
+    {
+      "t": 576.54,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 580.56,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 592.62,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 608.71,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 610.73,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 624.79,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 640.88,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 640.88,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 656.97,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 671.04,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 673.05,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 689.14,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 701.2,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 705.23,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 721.31,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 729.35,
+      "type": "detail",
+      "stage": "verifier_start",
+      "message": "第 2 轮：进入 Verifier 检测"
+    },
+    {
+      "t": 729.35,
+      "type": "detail",
+      "stage": "verifier_failed",
+      "message": "第 2 轮：Verifier 判定不通过，进入 Controller"
+    },
+    {
+      "t": 729.35,
+      "type": "detail",
+      "stage": "controller_start",
+      "message": "第 2 轮：Controller 第 1 次尝试改纲"
+    },
+    {
+      "t": 731.37,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 737.39,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 753.47,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 761.51,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 769.57,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 785.64,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 791.67,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 793.68,
+      "type": "detail",
+      "stage": "controller_success",
+      "message": "第 2 轮：Controller 改纲成功，返回 Generator"
+    },
+    {
+      "t": 793.68,
+      "type": "detail",
+      "stage": "generator_start",
+      "message": "第 3 轮：进入 Generator 生成"
+    },
+    {
+      "t": 801.72,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 817.82,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 821.84,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 834.02,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 850.1,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 852.11,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 866.19,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 882.32,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 882.32,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 898.4,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    }
+  ],
+  "summary": {
+    "reason": "hard_timeout",
+    "elapsed": 912.48
+  }
+}

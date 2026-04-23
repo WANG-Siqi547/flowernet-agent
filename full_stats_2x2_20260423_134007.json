@@ -1,0 +1,266 @@
+{
+  "timestamp": "2026-04-23T13:40:07",
+  "request": {
+    "url": "http://localhost:8010/api/generate",
+    "payload": {
+      "topic": "大学新生时间管理与学习习惯指南",
+      "chapter_count": 2,
+      "subsection_count": 2,
+      "user_background": "大一新生，想建立学习和作息体系",
+      "extra_requirements": "内容要可执行，包含具体方法与示例",
+      "rel_threshold": 0.72,
+      "red_threshold": 0.6,
+      "timeout_seconds": 3600
+    }
+  },
+  "performance": {
+    "status_code": 200,
+    "elapsed_seconds": 3599.678946018219,
+    "elapsed_minutes": 59.99464910030365,
+    "baseline_seconds": 995.6,
+    "improvement_pct_vs_995_6s": -261.55875311553024,
+    "success": true,
+    "title": "大学新生时间管理与学习习惯指南",
+    "content_len": 2176
+  },
+  "quality_summary": {
+    "passed_subsections": 1,
+    "failed_subsections": 0,
+    "forced_subsections": 0,
+    "controller_calls_total": 0,
+    "rag_used_subsections": null,
+    "rag_search_success_subsections": null,
+    "controller_effective_subsections": null,
+    "avg_relevancy": null,
+    "avg_redundancy": null,
+    "avg_quality": null,
+    "pass_rate": null
+  },
+  "stats_keys": [
+    "bandit_drift_events",
+    "bandit_drift_trigger_rate",
+    "bandit_drift_triggered_subsections",
+    "bandit_last_constraints",
+    "bandit_last_selected_arm",
+    "bandit_last_selection_mode",
+    "bandit_reward_avg",
+    "bandit_reward_count",
+    "bandit_reward_sum",
+    "bandit_selected_arm_counts",
+    "citation_quality",
+    "controller_calls_total",
+    "controller_error_total",
+    "controller_exhausted_total",
+    "controller_fallback_outline_total",
+    "controller_ineffective_total",
+    "controller_success_total",
+    "controller_triggered_subsections",
+    "controller_unavailable_total",
+    "expected_subsections",
+    "failed_subsections",
+    "forced_subsections",
+    "generation_time",
+    "outlined_subsections",
+    "passed_subsections",
+    "quality_dimension_avgs",
+    "quality_overall_uncertainty_avg",
+    "quality_score_avg",
+    "quality_weights",
+    "timeout_profile",
+    "total_iterations",
+    "unieval_available_ratio",
+    "unieval_available_subsections",
+    "unieval_fallback_ratio",
+    "unieval_fallback_subsections",
+    "verifier_failed_total"
+  ],
+  "stats": {
+    "expected_subsections": 4,
+    "outlined_subsections": 4,
+    "passed_subsections": 1,
+    "failed_subsections": 0,
+    "forced_subsections": 0,
+    "total_iterations": 0,
+    "generation_time": "",
+    "citation_quality": {
+      "passed": false,
+      "reason": "section_missing_high_quality_source",
+      "total_urls": 3,
+      "unique_urls": 3,
+      "low_quality_ratio": 0.0,
+      "missing_high_quality_sections": 6,
+      "section_details": [
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 1,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 2,
+          "high_quality_url_count": 2
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        },
+        {
+          "url_count": 0,
+          "high_quality_url_count": 0
+        }
+      ]
+    },
+    "controller_triggered_subsections": 0,
+    "controller_calls_total": 0,
+    "controller_success_total": 0,
+    "controller_error_total": 0,
+    "controller_unavailable_total": 0,
+    "controller_ineffective_total": 0,
+    "controller_fallback_outline_total": 0,
+    "controller_exhausted_total": 0,
+    "verifier_failed_total": 0,
+    "quality_score_avg": 0.0,
+    "quality_overall_uncertainty_avg": 0.0,
+    "quality_dimension_avgs": {},
+    "quality_weights": {},
+    "unieval_available_subsections": 0,
+    "unieval_fallback_subsections": 0,
+    "unieval_available_ratio": 0.0,
+    "unieval_fallback_ratio": 0.0,
+    "bandit_selected_arm_counts": {},
+    "bandit_reward_sum": 0.0,
+    "bandit_reward_count": 0,
+    "bandit_reward_avg": 0.0,
+    "bandit_drift_events": 0,
+    "bandit_drift_triggered_subsections": 0,
+    "bandit_drift_trigger_rate": 0.0,
+    "bandit_last_selected_arm": "",
+    "bandit_last_selection_mode": "",
+    "bandit_last_constraints": {},
+    "timeout_profile": {
+      "adaptive_enabled": true,
+      "quantile_window_tasks": 20,
+      "expected_subsections": 4,
+      "estimated_iterations": 7.2,
+      "iteration_seconds_for_budget": 55.0,
+      "iteration_p50_seconds": null,
+      "iteration_p90_seconds": null,
+      "iteration_p95_seconds": null,
+      "pipeline_p50_seconds": null,
+      "pipeline_p90_seconds": null,
+      "pipeline_p95_seconds": null,
+      "requested_timeout_seconds": 3600,
+      "recommended_timeout_seconds": 599,
+      "effective_timeout_seconds": 3600
+    }
+  },
+  "raw_response": {
+    "success": true,
+    "partial": true,
+    "interrupted": true,
+    "message": "生成中断，已返回通过验证的 1 个小节",
+    "document_id": "web_20260423_124007_e8c775e0",
+    "title": "大学新生时间管理与学习习惯指南",
+    "content": "# 大学新生时间管理与学习习惯指南\n\n## 科学规划时间体系\n\n### 制定可执行的周计划表\n\n### 制定可执行的周计划表  \n\n#### 一、SMART原则详解  \n**核心定义**：SMART原则是制定有效目标的框架，通过具体化、可量化、可实现、相关性和时限性确保计划可执行。  \n1. **S（具体）**：目标需明确具体，避免模糊表述。例如：“每天上午9:00-11:00学习高等数学，完成3个例题解析”而非“多学数学”。  \n2. **M（可衡量）**：设定量化指标，便于追踪进度。例如：“每周完成3次实验报告，每次耗时2小时，提交截止日期为周三前”。  \n3. **A（可实现）**：目标需基于个人能力设计。例如：“每天背诵30个英语单词，使用Anki应用分3组完成，每组10分钟”。  \n4. **R（相关性）**：任务需与课程表或长期目标直接关联。例如：“周三下午的编程课前，需完成Python基础语法练习（与课程内容直接相关）”。  \n5. **T（时限）**：明确截止时间。例如：“周五前完成小组项目分工会议，需提前2天提交分工草案”。  \n**约束**：避免抽象概念，如“提高学习效率”需转化为“每日专注学习时长≥2小时”（来源：无直接相关学术支持，但符合SMART原则通用定义）。  \n\n---\n\n#### 二、课程表整合技巧  \n**核心定义**：将课程表与课外活动整合为可视化时间表，提升规划效率。  \n1. **教务系统导出课程表**：登录学校教务系统，导出PDF或Excel格式课程表，标注每节课的教室和教师信息。  \n2. **标记高难度课程时段**：用红色标注需重点投入的课程（如高等数学、专业核心课），黄色标注需复习的科目。  \n3. **添加实验/社团等固定事务**：在课程表旁用绿色标注实验课、社团活动等固定事务，例如：“周四14:00-16:00 社团会议（绿色）”。  \n4. **颜色编码示例**：  \n   - 红色：考试周或高难度课程时段  \n   - 绿色：自由时间或社团活动  \n   - 蓝色：实验课或实践课  \n**约束**：仅聚焦时间安排，不涉及具体学习方法（如“如何高效复习”）。  \n\n---\n\n#### 三、弹性时间预留方案  \n**核心定义**：通过预留缓冲时间应对突发任务，避免计划崩溃。  \n1. **每日预留2小时缓冲区**：将每日总时间的15%-20%设为弹性时段（如每天预留2小时，总周时间约14小时）。  \n2. **建立应急任务清单**：列出可能占用时间的突发任务（如临时小组会议、作业延期），按优先级排序。  \n3. **设置优先级标记系统**：用A/B/C标记任务紧急程度（A：必须当天完成；B：可延后；C：可舍弃）。  \n**约束**：与碎片时间管理互补，不重复讨论零散时间利用（如“课间10分钟背单词”）。  \n\n---\n\n#### 四、工具实操指南  \n**核心定义**：利用数字工具提升计划执行效率。  \n1. **Google Calendar基础设置**：  \n   - 导入课程表：将导出的课程表CSV文件导入Google Calendar，自动生成日历视图。  \n   - 创建重复事件：点击“新建事件”，选择“每周循环”，设置每周三19:00为“社团会议”固定提醒。  \n2. **提醒功能配置**：  \n   - 设置提前通知：对高难度课程（如红色标记）设置提前1小时提醒，实验课设置提前30分钟提醒。  \n   - 截图描述：在“事件详情”中勾选“重复事件”选项，选择“每周”并设置起始日期（来源：Google Calendar官方帮助文档，链接：https://support.google.com/calendar/answer/37121）。  \n**约束**：仅描述Google Calendar操作，不对比其他工具（如Microsoft Outlook）。  \n\n---\n\n### 总结  \n本小节新增了SMART原则的具体量化示例、课程表颜色编码规则、弹性时间预留比例及工具操作步骤，确保计划既灵活又可执行。通过结合目标设定、可视化整合、缓冲机制和工具实操，帮助新生将抽象目标转化为可操作的周计划，避免与时间区块化章节的弹性时间概念重复，同时强化了可验证性与实操性。  \n\n---\n\n### 引用来源  \n1. **标题**：Applications of uniform asymptotic regularity to fixed point theorems  \n   **链接**：https://arxiv.org/abs/1511.04069v2  \n2. **标题**：An Efficient Algorithm for Mining Frequent Sequence with Constraint Programming  \n   **链接**：https://arxiv.org/abs/1604.01296v1\n\n### 时间区块化管理技巧\n\n（该小节未成功生成）\n\n## 高效学习习惯养成\n\n### 课堂笔记与知识转化系统\n\n（该小节未成功生成）\n\n### 拖延应对与专注力训练\n\n（该小节未成功生成）",
+    "stats": {
+      "expected_subsections": 4,
+      "outlined_subsections": 4,
+      "passed_subsections": 1,
+      "failed_subsections": 0,
+      "forced_subsections": 0,
+      "total_iterations": 0,
+      "generation_time": "",
+      "citation_quality": {
+        "passed": false,
+        "reason": "section_missing_high_quality_source",
+        "total_urls": 3,
+        "unique_urls": 3,
+        "low_quality_ratio": 0.0,
+        "missing_high_quality_sections": 6,
+        "section_details": [
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 1,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 2,
+            "high_quality_url_count": 2
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          },
+          {
+            "url_count": 0,
+            "high_quality_url_count": 0
+          }
+        ]
+      },
+      "controller_triggered_subsections": 0,
+      "controller_calls_total": 0,
+      "controller_success_total": 0,
+      "controller_error_total": 0,
+      "controller_unavailable_total": 0,
+      "controller_ineffective_total": 0,
+      "controller_fallback_outline_total": 0,
+      "controller_exhausted_total": 0,
+      "verifier_failed_total": 0,
+      "quality_score_avg": 0.0,
+      "quality_overall_uncertainty_avg": 0.0,
+      "quality_dimension_avgs": {},
+      "quality_weights": {},
+      "unieval_available_subsections": 0,
+      "unieval_fallback_subsections": 0,
+      "unieval_available_ratio": 0.0,
+      "unieval_fallback_ratio": 0.0,
+      "bandit_selected_arm_counts": {},
+      "bandit_reward_sum": 0.0,
+      "bandit_reward_count": 0,
+      "bandit_reward_avg": 0.0,
+      "bandit_drift_events": 0,
+      "bandit_drift_triggered_subsections": 0,
+      "bandit_drift_trigger_rate": 0.0,
+      "bandit_last_selected_arm": "",
+      "bandit_last_selection_mode": "",
+      "bandit_last_constraints": {},
+      "timeout_profile": {
+        "adaptive_enabled": true,
+        "quantile_window_tasks": 20,
+        "expected_subsections": 4,
+        "estimated_iterations": 7.2,
+        "iteration_seconds_for_budget": 55.0,
+        "iteration_p50_seconds": null,
+        "iteration_p90_seconds": null,
+        "iteration_p95_seconds": null,
+        "pipeline_p50_seconds": null,
+        "pipeline_p90_seconds": null,
+        "pipeline_p95_seconds": null,
+        "requested_timeout_seconds": 3600,
+        "recommended_timeout_seconds": 599,
+        "effective_timeout_seconds": 3600
+      }
+    }
+  }
+}

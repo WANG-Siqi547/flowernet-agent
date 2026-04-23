@@ -282,8 +282,6 @@ services:
         value: FlowerNet
       - key: PROVIDER_RETRIES
         value: "2"
-      - key: GENERATOR_PROVIDER_CHAIN
-        value: "sensenova"
       - key: PROVIDER_BACKOFF
         value: "1.2"
       - key: PROVIDER_MAX_BACKOFF
@@ -361,14 +359,14 @@ services:
     envVars:
       - key: PORT
         value: 10000
+      - key: REQUEST_TIMEOUT
+        value: "7200"
       - key: OUTLINER_URL
         value: https://flowernet-outliner.onrender.com
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
       - key: PUBLIC_BASE_URL
         value: https://flowernet-web.onrender.com
-      - key: REQUEST_TIMEOUT
-        value: "600"
       - key: DOWNSTREAM_BACKOFF
         value: "4.0"
       - key: DOWNSTREAM_MAX_BACKOFF
