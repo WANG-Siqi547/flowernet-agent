@@ -285,6 +285,8 @@
       });
       const [banditSeries, setBanditSeries] = useState({ llm: [], rule: [], defect_topic: [] });
       const sseRef = useRef(null);
+      const streamEndedRef = useRef(false);
+      const documentIdRef = useRef("");
 
       useEffect(() => {
         const timer = setInterval(() => setUptimeSec(Math.floor((Date.now() - uptimeStart) / 1000)), 1000);
@@ -329,6 +331,8 @@
           return;
         }
         closeSse();
+        streamEndedRef.current = false;
+        documentIdRef.current = "";
         setRunning(true);
         setStatusText("Starting generation flow...");
         setActiveNode("outliner");
@@ -361,6 +365,9 @@
           if (data.type === "detail") {
             const stage = data.stage || "";
             const meta = data.metadata || {};
+            if (stage === "outline_document_ready" && meta.document_id) {
+              documentIdRef.current = String(meta.document_id);
+            }
             setActiveNode(parseStage(stage));
             const section = meta.section_title || meta.section_id || "Section";
             const sub = meta.subsection_title || meta.subsection_id || "Subsection";
@@ -421,6 +428,7 @@
           }
 
           if (data.type === "complete") {
+            streamEndedRef.current = true;
             const result = data.result || {};
             const stats = result.stats || {};
             const dims = stats.quality_dimension_avgs || {};
@@ -442,16 +450,46 @@
           }
 
           if (data.type === "error") {
+            streamEndedRef.current = true;
             setStatusText(`Error: ${data.message || "unknown"}`);
             setRunning(false);
             closeSse();
           }
         });
 
-        source.addEventListener("error", () => {
-          setStatusText("Stream disconnected.");
+        source.addEventListener("error", async () => {
+          if (streamEndedRef.current) {
+            return;
+          }
           setRunning(false);
           closeSse();
+
+          const docId = documentIdRef.current;
+          if (docId) {
+            try {
+              const resp = await fetch(`/api/recover-document?document_id=${encodeURIComponent(docId)}`);
+              if (resp.ok) {
+                const recovered = await resp.json();
+                if (recovered && recovered.success) {
+                  const stats = recovered.stats || {};
+                  const expected = Number(stats.expected_subsections || progress.total || 0);
+                  const passed = Number(stats.passed_subsections || 0);
+                  setDoc({ title: recovered.title || "", content: recovered.content || "" });
+                  setProgress({
+                    current: passed,
+                    total: expected,
+                    percent: expected > 0 ? Math.round((passed / expected) * 100) : 0
+                  });
+                  setStatusText("Stream disconnected, but partial content has been recovered.");
+                  return;
+                }
+              }
+            } catch {
+              // fall through to generic status text
+            }
+          }
+
+          setStatusText("Stream disconnected before completion. Possible service restart or upstream timeout.");
         });
       };
 
