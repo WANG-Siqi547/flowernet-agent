@@ -641,7 +641,7 @@ def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
         }
     """
     serialize_tasks = os.getenv("OUTLINER_SERIALIZE_TASKS", "true").lower() == "true"
-    wait_timeout = float(os.getenv("OUTLINER_TASK_WAIT_TIMEOUT", "0"))
+    wait_timeout = float(os.getenv("OUTLINER_TASK_WAIT_TIMEOUT", "90"))
     flow_retries = max(1, int(os.getenv("OUTLINER_FLOW_RETRIES", "3")))
     flow_backoff = max(0.5, float(os.getenv("OUTLINER_FLOW_BACKOFF", "3.0")))
 

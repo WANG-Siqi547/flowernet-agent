@@ -81,7 +81,7 @@ services:
       - key: OUTLINER_SERIALIZE_TASKS
         value: "true"
       - key: OUTLINER_TASK_WAIT_TIMEOUT
-        value: "30"
+        value: "90"
       - key: OUTLINER_FLOW_RETRIES
         value: "6"
       - key: OUTLINER_FLOW_BACKOFF

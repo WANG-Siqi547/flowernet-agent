@@ -23,9 +23,9 @@ services:
       - key: DOWNSTREAM_JITTER
         value: "0.4"
       - key: DOWNSTREAM_OUTLINER_MIN_RETRIES
-        value: "3"
+        value: "5"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_429
-        value: "10.0"
+        value: "20.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
       - key: WEB_DEFAULT_REL_THRESHOLD
