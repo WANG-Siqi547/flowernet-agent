@@ -360,7 +360,9 @@ services:
       - key: DOWNSTREAM_RETRIES
         value: "1"
       - key: DOWNSTREAM_OUTLINER_MIN_RETRIES
-        value: "2"
+        value: "3"
+      - key: DOWNSTREAM_OUTLINER_MIN_DELAY_429
+        value: "10.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
       - key: WEB_DEFAULT_REL_THRESHOLD

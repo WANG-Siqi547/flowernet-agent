@@ -74,6 +74,8 @@ class DocumentGenerationOrchestrator:
         self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
         # 默认轮次收敛到 8，避免长时间卡在单小节。
         self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "8")))
+        # 单个小节最长处理时长（秒），超过后按最佳努力通过，避免长时间卡住。
+        self.subsection_max_seconds = max(120, int(os.getenv("SUBSECTION_MAX_SECONDS", "1800")))
         # 当 Generator 连续失败时，优先按该阈值触发兜底，避免单小节长时间阻塞。
         self.max_generator_failures_per_subsection = max(
             1,
@@ -1037,10 +1039,20 @@ class DocumentGenerationOrchestrator:
             source_citation_required = require_source_citations
 
         effective_attempt_cap = self.max_subsection_attempts if self.max_subsection_attempts > 0 else self.max_iterations
+        subsection_started_at = time.time()
         
         while True:
             iterations += 1
-            if (not self.subsection_retry_forever) and effective_attempt_cap > 0 and iterations > effective_attempt_cap:
+            elapsed_subsection = time.time() - subsection_started_at
+            timed_out = self.subsection_max_seconds > 0 and elapsed_subsection >= self.subsection_max_seconds
+            reached_attempt_cap = (
+                (not self.subsection_retry_forever)
+                and effective_attempt_cap > 0
+                and iterations > effective_attempt_cap
+            )
+
+            if timed_out or reached_attempt_cap:
+                timeout_triggered = timed_out and not reached_attempt_cap
                 if best_candidate and best_candidate.get("draft"):
                     best_verification = best_candidate.get("verification", {})
                     best_rel = float(best_verification.get("relevancy_index", 0) or 0)
@@ -1052,11 +1064,20 @@ class DocumentGenerationOrchestrator:
                     absolute_best_effort_ok = best_rel >= 0.45 and best_red <= 0.90
                     max_pass_ok = max_pass_ok or absolute_best_effort_ok
                     stage_name = "verifier_best_effort_pass" if max_pass_ok else "verifier_forced_pass"
-                    pass_message = (
-                        f"达到最大检测次数 {effective_attempt_cap}，最佳结果满足放宽阈值，按最佳努力通过"
-                        if max_pass_ok
-                        else f"达到最大检测次数 {effective_attempt_cap}，按最佳结果强制通过并继续"
-                    )
+                    if timeout_triggered:
+                        pass_message = (
+                            f"单小节耗时已达 {self.subsection_max_seconds}s，最佳结果满足放宽阈值，按最佳努力通过"
+                            if max_pass_ok
+                            else f"单小节耗时已达 {self.subsection_max_seconds}s，按最佳结果强制通过并继续"
+                        )
+                        pass_reason = "subsection_timeout_best_effort" if max_pass_ok else "subsection_timeout_forced"
+                    else:
+                        pass_message = (
+                            f"达到最大检测次数 {effective_attempt_cap}，最佳结果满足放宽阈值，按最佳努力通过"
+                            if max_pass_ok
+                            else f"达到最大检测次数 {effective_attempt_cap}，按最佳结果强制通过并继续"
+                        )
+                        pass_reason = "best_effort_after_max_attempts" if max_pass_ok else "max_attempts_reached"
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
@@ -1068,6 +1089,7 @@ class DocumentGenerationOrchestrator:
                             "best_iteration": best_candidate.get("iteration", iterations - 1),
                             "relevancy_index": best_verification.get("relevancy_index", 0),
                             "redundancy_index": best_verification.get("redundancy_index", 1),
+                            "elapsed_seconds": round(elapsed_subsection, 2),
                         },
                     )
                     if self.history_manager:
@@ -1123,12 +1145,12 @@ class DocumentGenerationOrchestrator:
                         "verification": {
                             **best_verification,
                             "forced_pass": (not max_pass_ok),
-                            "force_reason": "max_attempts_reached" if not max_pass_ok else "best_effort_after_max_attempts",
+                            "force_reason": pass_reason,
                         },
                         "bandit": best_candidate.get("bandit", {}),
                         "all_drafts": all_drafts,
                         "forced_pass": (not max_pass_ok),
-                        "force_reason": "max_attempts_reached" if not max_pass_ok else "best_effort_after_max_attempts",
+                        "force_reason": pass_reason,
                         "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
                         "controller_retry_count": controller_retry_count,
                         "metrics": metrics,
@@ -1140,9 +1162,17 @@ class DocumentGenerationOrchestrator:
                     section_id=section_id,
                     subsection_id=subsection_id,
                     stage="verifier_forced_pass",
-                    message=f"达到最大检测次数 {effective_attempt_cap} 且无可用草稿，使用兜底内容通过",
-                    metadata={"iteration": iterations - 1},
+                    message=(
+                        f"单小节耗时已达 {self.subsection_max_seconds}s 且无可用草稿，使用兜底内容通过"
+                        if timeout_triggered
+                        else f"达到最大检测次数 {effective_attempt_cap} 且无可用草稿，使用兜底内容通过"
+                    ),
+                    metadata={
+                        "iteration": iterations - 1,
+                        "elapsed_seconds": round(elapsed_subsection, 2),
+                    },
                 )
+                placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
                 return {
                     "success": True,
                     "draft": placeholder,
@@ -1159,12 +1189,12 @@ class DocumentGenerationOrchestrator:
                     "verification": {
                         "relevancy_index": 0.0,
                         "redundancy_index": 1.0,
-                        "feedback": "max_attempts_reached_no_draft",
+                        "feedback": placeholder_reason,
                         "forced_pass": True,
-                        "force_reason": "max_attempts_no_draft",
+                        "force_reason": placeholder_reason,
                     },
                     "forced_pass": True,
-                    "force_reason": "max_attempts_no_draft",
+                    "force_reason": placeholder_reason,
                     "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
                     "controller_retry_count": controller_retry_count,
                     "metrics": metrics,

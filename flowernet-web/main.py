@@ -33,6 +33,7 @@ DOWNSTREAM_OUTLINER_MIN_DELAY_503 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DEL
 DOWNSTREAM_GENERATOR_MIN_RETRIES = int(os.getenv("DOWNSTREAM_GENERATOR_MIN_RETRIES", "1"))
 DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_DELAY_429", "10.0"))
 GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "0"))
+DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "5.0"))
 GENERATOR_RESUME_BACKOFF = float(os.getenv("GENERATOR_RESUME_BACKOFF", "2.0"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
@@ -283,6 +284,7 @@ def _is_transient_downstream_payload(payload: Dict[str, Any]) -> bool:
     transient_tokens = [
         "429", "too many requests", "resource_exhausted", "quota", "rate",
         "timeout", "timed out", "temporarily", "503", "502", "504", "retry",
+        "已有大纲生成任务正在执行",
     ]
     return any(token in message for token in transient_tokens)
 
@@ -337,6 +339,8 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
                     retry_after_seconds = _parse_retry_after_seconds(retry_after)
                     if is_generator_url:
                         retry_delay = max(retry_delay, DOWNSTREAM_GENERATOR_MIN_DELAY_429)
+                    if is_outliner_url:
+                        retry_delay = max(retry_delay, DOWNSTREAM_OUTLINER_MIN_DELAY_429)
                 if is_outliner_url and response.status_code == 503:
                     retry_delay = max(retry_delay, DOWNSTREAM_OUTLINER_MIN_DELAY_503)
             else:
@@ -1206,6 +1210,13 @@ def health() -> Dict[str, str]:
 def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
     """流式生成文档，实时推送进度到前端"""
     try:
+        timeout_profile = _build_timeout_profile(
+            chapter_count=req.chapter_count,
+            subsection_count=req.subsection_count,
+            requested_timeout=req.timeout_seconds or REQUEST_TIMEOUT,
+        )
+        stream_timeout = int(timeout_profile.get("effective_timeout_seconds", REQUEST_TIMEOUT))
+
         # 开始
         msg = json.dumps({'type': 'start', 'message': '开始生成大纲...'})
         yield f"data: {msg}\n\n"
@@ -1231,14 +1242,14 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 outline_resp = post_json_with_retry(
                     f"{OUTLINER_URL}/outline/generate-and-save",
                     outline_payload,
-                    REQUEST_TIMEOUT,
+                    stream_timeout,
                 )
             except Exception as e:
                 outline_error = e
 
         outline_thread = threading.Thread(target=build_outline_async, daemon=True)
         outline_thread.start()
-        outline_deadline = time.time() + REQUEST_TIMEOUT
+        outline_deadline = time.time() + stream_timeout
         last_outline_keepalive = time.time()
 
         while outline_thread.is_alive() and time.time() < outline_deadline:
@@ -1251,7 +1262,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         outline_thread.join(timeout=1)
 
         if outline_thread.is_alive():
-            msg = json.dumps({'type': 'error', 'message': f'大纲生成超时（>{REQUEST_TIMEOUT}s），请稍后重试'})
+            msg = json.dumps({'type': 'error', 'message': f'大纲生成超时（>{stream_timeout}s），请稍后重试'})
             yield f"data: {msg}\n\n"
             return
 
@@ -1400,7 +1411,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 gen_resp = generate_document_with_recovery(
                     document_id=document_id,
                     generate_payload=generate_payload,
-                    timeout_seconds=REQUEST_TIMEOUT,
+                    timeout_seconds=stream_timeout,
                 )
                 if not isinstance(gen_resp, dict) or not gen_resp.get("success"):
                     error_occurred = True
@@ -1416,7 +1427,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         # 定期检查生成进度
         last_count = 0
         last_event_id = 0
-        timeout = time.time() + REQUEST_TIMEOUT
+        timeout = time.time() + stream_timeout
         last_progress_update = time.time()
         last_keepalive = time.time()
         
@@ -1553,7 +1564,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                             "passed_subsections": len(history_items),
                             "failed_subsections": [],
                             "total_iterations": 0,
-                            "generation_time": f"{time.time() - (timeout - REQUEST_TIMEOUT):.2f}s"
+                            "generation_time": f"{time.time() - (timeout - stream_timeout):.2f}s"
                         }
                     else:
                         msg = json.dumps({'type': 'error', 'message': '生成未能开始，请检查生成服务'})
@@ -1718,6 +1729,7 @@ async def generate_stream_endpoint(
     extra_requirements: str = "",
     rel_threshold: float = WEB_DEFAULT_REL_THRESHOLD,
     red_threshold: float = WEB_DEFAULT_RED_THRESHOLD,
+    timeout_seconds: int = 7200,
     x_api_key: str = Header(default="", alias="X-API-Key"),
     authorization: str = Header(default="", alias="Authorization"),
 ):
@@ -1731,6 +1743,7 @@ async def generate_stream_endpoint(
         extra_requirements=extra_requirements,
         rel_threshold=rel_threshold,
         red_threshold=red_threshold,
+        timeout_seconds=timeout_seconds,
     )
     
     return StreamingResponse(

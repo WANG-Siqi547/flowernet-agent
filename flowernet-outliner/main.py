@@ -653,9 +653,11 @@ def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
             outline_generation_lock.acquire()
 
         if not acquired:
+            retry_after_seconds = max(1, int(wait_timeout)) if wait_timeout > 0 else 10
             raise HTTPException(
                 status_code=429,
-                detail=f"已有大纲生成任务正在执行，请稍后重试（等待上限 {wait_timeout:.0f}s）"
+                detail=f"已有大纲生成任务正在执行，请稍后重试（等待上限 {wait_timeout:.0f}s）",
+                headers={"Retry-After": str(retry_after_seconds)},
             )
 
     try:
