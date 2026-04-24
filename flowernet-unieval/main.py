@@ -60,6 +60,7 @@ class UniEvalService:
         pretrained_kwargs = self._from_pretrained_kwargs(local_files_only=local_files_only)
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, **pretrained_kwargs)
         self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name, **pretrained_kwargs)
+        self.model.eval()
         config = getattr(self.model, "config", None)
         if config is not None and isinstance(getattr(config, "id2label", None), dict):
             self.id2label = {int(k): str(v) for k, v in config.id2label.items()}
@@ -163,6 +164,8 @@ class UniEvalService:
         return [v / denom for v in exps]
 
     def _entailment_probability(self, premise: str, hypothesis: str) -> float:
+        import torch
+
         if not self.ready or self.tokenizer is None or self.model is None:
             raise RuntimeError(f"UniEval model unavailable: {self.error or 'model not ready'}")
 
@@ -173,7 +176,9 @@ class UniEvalService:
             truncation=True,
             max_length=512,
         )
-        outputs = self.model(**inputs)
+        # Disable gradient tracking in inference to avoid memory growth/OOM.
+        with torch.no_grad():
+            outputs = self.model(**inputs)
         logits_tensor = outputs.logits[0].detach().cpu().tolist()
         probs = self._softmax([float(x) for x in logits_tensor])
 

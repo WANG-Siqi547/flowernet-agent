@@ -55,6 +55,10 @@ services:
         value: /opt/render/project/hf-cache
       - key: UNIEVAL_LOAD_TIMEOUT_SEC
         value: "300"
+      - key: UNIEVAL_MODEL_LOAD_RETRIES
+        value: "1"
+      - key: UNIEVAL_MAX_INPUT_CHARS
+        value: "2500"
       - key: UNIEVAL_BOOL_THRESHOLD
         value: "0.5"
     healthCheckPath: /health/live
@@ -180,15 +184,25 @@ services:
       - key: OPENROUTER_APP_NAME
         value: FlowerNet
       - key: PROVIDER_RETRIES
-        value: "1"
+        value: "2"
       - key: PROVIDER_BACKOFF
-        value: "1.2"
+        value: "2.0"
       - key: PROVIDER_MAX_BACKOFF
-        value: "20.0"
+        value: "45.0"
       - key: PROVIDER_JITTER
         value: "0.4"
       - key: PROVIDER_MIN_INTERVAL
         value: "0.8"
+      - key: PROVIDER_HTTP_TIMEOUT
+        value: "120"
+      - key: SENSENOVA_CONNECT_TIMEOUT
+        value: "15"
+      - key: SENSENOVA_READ_TIMEOUT
+        value: "120"
+      - key: OUTLINER_SENSENOVA_TRANSPORT_RETRIES
+        value: "4"
+      - key: OUTLINER_SENSENOVA_TRANSPORT_BACKOFF
+        value: "2.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
