@@ -91,11 +91,11 @@ services:
       - key: OUTLINER_SERIALIZE_TASKS
         value: "true"
       - key: OUTLINER_TASK_WAIT_TIMEOUT
-        value: "90"
+        value: "240"
       - key: OUTLINER_FLOW_RETRIES
-        value: "6"
+        value: "8"
       - key: OUTLINER_FLOW_BACKOFF
-        value: "5.0"
+        value: "6.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH

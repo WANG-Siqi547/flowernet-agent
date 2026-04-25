@@ -203,6 +203,14 @@ services:
         value: "4"
       - key: OUTLINER_SENSENOVA_TRANSPORT_BACKOFF
         value: "2.0"
+      - key: OUTLINER_SERIALIZE_TASKS
+        value: "true"
+      - key: OUTLINER_TASK_WAIT_TIMEOUT
+        value: "240"
+      - key: OUTLINER_FLOW_RETRIES
+        value: "8"
+      - key: OUTLINER_FLOW_BACKOFF
+        value: "6.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -392,9 +400,9 @@ services:
       - key: DOWNSTREAM_RETRIES
         value: "1"
       - key: DOWNSTREAM_OUTLINER_MIN_RETRIES
-        value: "5"
+        value: "8"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_429
-        value: "20.0"
+        value: "35.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
       - key: WEB_DEFAULT_REL_THRESHOLD
