@@ -67,19 +67,27 @@ services:
       - key: OPENROUTER_APP_NAME
         value: FlowerNet
       - key: PROVIDER_RETRIES
-        value: "1"
+        value: "3"
       - key: GENERATOR_PROVIDER_CHAIN
         value: "sensenova"
       - key: PROVIDER_BACKOFF
-        value: "1.2"
+        value: "2.0"
       - key: PROVIDER_MAX_BACKOFF
-        value: "20.0"
+        value: "45.0"
       - key: PROVIDER_FAILURE_THRESHOLD
         value: "3"
       - key: PROVIDER_COOLDOWN_SECONDS
         value: "30"
       - key: PROVIDER_HTTP_TIMEOUT
-        value: "30"
+        value: "180"
+      - key: GENERATOR_SENSENOVA_CONNECT_TIMEOUT
+        value: "15"
+      - key: GENERATOR_SENSENOVA_READ_TIMEOUT
+        value: "150"
+      - key: GENERATOR_SENSENOVA_TRANSPORT_RETRIES
+        value: "4"
+      - key: GENERATOR_SENSENOVA_TRANSPORT_BACKOFF
+        value: "2.0"
       - key: DASHSCOPE_HTTP_TIMEOUT
         value: "30"
       - key: PROMPT_OUTLINE_MAX_CHARS
@@ -115,7 +123,11 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "4"
+        value: "12"
+      - key: MAX_PASS_REL_MARGIN
+        value: "0.15"
+      - key: MAX_PASS_RED_MARGIN
+        value: "0.25"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
         value: "4"
       - key: MAX_CONTROLLER_RETRIES

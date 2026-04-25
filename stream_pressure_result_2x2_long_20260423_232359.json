@@ -1,0 +1,475 @@
+{
+  "ok": false,
+  "events": [
+    {
+      "t": 0.02,
+      "type": "start",
+      "stage": "",
+      "message": "开始生成大纲..."
+    },
+    {
+      "t": 10.09,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 20.17,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 30.26,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 40.35,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 50.44,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 60.53,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 70.62,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 80.69,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 90.76,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 正在生成大纲，保持连接中..."
+    },
+    {
+      "t": 97.31,
+      "type": "outline",
+      "stage": "",
+      "message": "✅ 大纲生成完成\n主题: Python Programming Best Practices Guide"
+    },
+    {
+      "t": 97.31,
+      "type": "detail",
+      "stage": "outline_document_ready",
+      "message": "全文大纲已生成并存储到数据库（document_id=web_20260423_232359_b14970ca）"
+    },
+    {
+      "t": 97.31,
+      "type": "detail",
+      "stage": "section_outline_ready",
+      "message": "章节大纲已生成并存储: Foundational Practices for Clean and Maintainable Code"
+    },
+    {
+      "t": 97.31,
+      "type": "detail",
+      "stage": "subsection_outline_ready",
+      "message": "第1小节大纲已生成并存储: Foundational Practices for Clean and Maintainable Code > Code Structure and Readability"
+    },
+    {
+      "t": 97.31,
+      "type": "detail",
+      "stage": "subsection_outline_ready",
+      "message": "第2小节大纲已生成并存储: Foundational Practices for Clean and Maintainable Code > Error Handling and Debugging Techniques"
+    },
+    {
+      "t": 97.31,
+      "type": "detail",
+      "stage": "section_outline_ready",
+      "message": "章节大纲已生成并存储: Advanced Optimization and Sustainable Development"
+    },
+    {
+      "t": 97.31,
+      "type": "detail",
+      "stage": "subsection_outline_ready",
+      "message": "第3小节大纲已生成并存储: Advanced Optimization and Sustainable Development > Performance Optimization Strategies"
+    },
+    {
+      "t": 97.31,
+      "type": "detail",
+      "stage": "subsection_outline_ready",
+      "message": "第4小节大纲已生成并存储: Advanced Optimization and Sustainable Development > Testing and Version Control Integration"
+    },
+    {
+      "t": 97.31,
+      "type": "progress",
+      "stage": "",
+      "message": "🚀 开始生成内容（共4个小节）..."
+    },
+    {
+      "t": 97.31,
+      "type": "detail",
+      "stage": "subsection_start",
+      "message": "开始处理小节: Foundational Practices for Clean and Maintainable Code > Code Structure and Readability"
+    },
+    {
+      "t": 113.41,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 127.48,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 129.5,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 145.58,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 157.65,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 161.67,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 177.75,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 187.81,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 193.84,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 209.91,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 217.95,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 225.99,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 242.08,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 248.11,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 258.17,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 274.25,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 278.27,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 290.33,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 306.41,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 308.43,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 322.5,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 338.6,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 338.6,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 354.69,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 368.76,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 370.77,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 386.85,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 398.94,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 402.96,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 419.05,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 429.11,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 435.15,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 451.25,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 459.29,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 467.34,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 483.43,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 489.47,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 499.52,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 515.61,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 519.64,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 531.73,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 547.82,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 549.83,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 563.91,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 580.0,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 580.0,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 596.09,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 610.18,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 612.2,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 628.28,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 640.37,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 644.39,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 660.47,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 670.52,
+      "type": "progress",
+      "stage": "",
+      "message": "进度: 0/4 小节已完成 (0%)"
+    },
+    {
+      "t": 676.56,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 692.64,
+      "type": "heartbeat",
+      "stage": "",
+      "message": "⏳ 生成中，正在保持连接..."
+    },
+    {
+      "t": 698.67,
+      "type": "error",
+      "stage": "",
+      "message": "生成服务连接失败"
+    }
+  ],
+  "summary": {
+    "reason": "error_event",
+    "payload": {
+      "type": "error",
+      "message": "生成服务连接失败"
+    },
+    "elapsed": 698.67
+  }
+}
