@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, List
 import os
+import re
 import traceback
 import threading
 import time
@@ -27,6 +28,7 @@ class UniEvalService:
         self.max_input_chars = int(os.getenv("UNIEVAL_MAX_INPUT_CHARS", "4000"))
         self.bool_threshold = float(os.getenv("UNIEVAL_BOOL_THRESHOLD", "0.5"))
         self.load_timeout_sec = int(os.getenv("UNIEVAL_LOAD_TIMEOUT_SEC", "180"))
+        self.lightweight_mode = os.getenv("UNIEVAL_LIGHTWEIGHT_MODE", "false").lower() in ("1", "true", "yes", "on")
         self.ready = False
         self.loading = False
         self.error = ""
@@ -43,6 +45,12 @@ class UniEvalService:
         if self.cache_dir:
             os.makedirs(self.cache_dir, exist_ok=True)
             os.environ.setdefault("HF_HOME", self.cache_dir)
+
+        if self.lightweight_mode:
+            self.ready = True
+            self.loading = False
+            self.error = ""
+            print("[UniEval] lightweight mode enabled, skip transformer model load", flush=True)
 
     def _from_pretrained_kwargs(self, *, local_files_only: bool = False) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
@@ -133,6 +141,10 @@ class UniEvalService:
         print(f"[UniEval] warmup timeout: {self.error}", flush=True)
 
     def warmup_async(self) -> None:
+        if self.lightweight_mode:
+            self.ready = True
+            self.loading = False
+            return
         self._refresh_loading_state()
         if self.ready or self.loading:
             return
@@ -203,10 +215,70 @@ class UniEvalService:
             "question": question,
         }
 
+    def _tokenize(self, text: str) -> List[str]:
+        text = (text or "").lower()
+        zh_tokens = re.findall(r"[\u4e00-\u9fff]{1,4}", text)
+        en_tokens = re.findall(r"[a-zA-Z]{3,}", text)
+        return zh_tokens + en_tokens
+
+    def _overlap_ratio(self, a: str, b: str) -> float:
+        a_tokens = set(self._tokenize(a))
+        b_tokens = set(self._tokenize(b))
+        if not a_tokens or not b_tokens:
+            return 0.0
+        inter = len(a_tokens.intersection(b_tokens))
+        union = len(a_tokens.union(b_tokens))
+        if union <= 0:
+            return 0.0
+        return max(0.0, min(1.0, inter / union))
+
+    def _lightweight_scores(self, draft: str, outline: str, history: List[str]) -> Dict[str, Any]:
+        history_text = "\n".join(history[-3:] if history else [])
+        src_text = (outline or "") + "\n" + history_text
+
+        consistency = self._overlap_ratio(draft, outline)
+        factuality = self._overlap_ratio(draft, src_text)
+
+        sentences = [s.strip() for s in re.split(r"[。！？!?；;\n]", draft) if s.strip()]
+        avg_len = (sum(len(s) for s in sentences) / len(sentences)) if sentences else 0.0
+        len_score = 1.0 - min(1.0, abs(avg_len - 28.0) / 28.0) if avg_len > 0 else 0.0
+        connector_hits = len(re.findall(r"因此|所以|然而|此外|首先|其次|最后|because|however|therefore|moreover", draft.lower()))
+        connector_score = min(1.0, connector_hits / max(1, len(sentences))) if sentences else 0.0
+        coherence = max(0.0, min(1.0, 0.7 * len_score + 0.3 * connector_score))
+
+        garbled_penalty = 0.0
+        if "subsection" in draft.lower():
+            garbled_penalty += 0.12
+        if "（兜底内容）" in draft or "（系统兜底）" in draft:
+            garbled_penalty += 0.18
+        punct_runs = len(re.findall(r"([!?.,，。；;])\1{2,}", draft))
+        garbled_penalty += min(0.2, punct_runs * 0.05)
+        fluency = max(0.0, min(1.0, 0.55 * coherence + 0.45 * consistency - garbled_penalty))
+
+        scores = {
+            "consistency": round(consistency, 4),
+            "coherence": round(coherence, 4),
+            "fluency": round(fluency, 4),
+            "factuality": round(factuality, 4),
+        }
+        return {
+            "scores": scores,
+            "boolean": {k: bool(v >= self.bool_threshold) for k, v in scores.items()},
+            "questions": {
+                "consistency": "lightweight heuristic consistency",
+                "coherence": "lightweight heuristic coherence",
+                "fluency": "lightweight heuristic fluency",
+                "factuality": "lightweight heuristic factuality",
+            },
+        }
+
     def score(self, draft: str, outline: str, history: List[str]) -> Dict[str, Any]:
         draft = self._clip(draft)
         outline = self._clip(outline)
         history_text = self._clip("\n".join(history[-3:]) if history else "")
+
+        if self.lightweight_mode:
+            return self._lightweight_scores(draft, outline, history)
 
         bool_questions = {
             "consistency": "The output is fully consistent with the source objective and key points.",
@@ -284,7 +356,12 @@ def health_ready() -> Dict[str, Any]:
     service._refresh_loading_state()
     if not service.ready:
         raise HTTPException(status_code=503, detail=f"not ready: {service.error or 'loading'}")
-    return {"status": "ready", "model": service.model_name, "model_revision": service.model_revision}
+    return {
+        "status": "ready",
+        "model": service.model_name,
+        "model_revision": service.model_revision,
+        "lightweight_mode": service.lightweight_mode,
+    }
 
 
 @app.post("/score")

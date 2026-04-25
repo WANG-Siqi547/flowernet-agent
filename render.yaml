@@ -58,7 +58,9 @@ services:
       - key: UNIEVAL_MODEL_LOAD_RETRIES
         value: "1"
       - key: UNIEVAL_MAX_INPUT_CHARS
-        value: "2500"
+        value: "1800"
+      - key: UNIEVAL_LIGHTWEIGHT_MODE
+        value: "true"
       - key: UNIEVAL_BOOL_THRESHOLD
         value: "0.5"
     healthCheckPath: /health/live
