@@ -860,10 +860,22 @@ def build_requirements_text(req: GenerateDocRequest) -> str:
 
 
 def _build_content_map_from_history(history: List[Dict[str, Any]]) -> Dict[str, str]:
+    """从history中构建content map，优先使用非forced_pass的内容"""
     content_map: Dict[str, str] = {}
+    # 第一遍：记录所有内容
     for item in history:
         key = f"{item.get('section_id', '')}::{item.get('subsection_id', '')}"
-        content_map[key] = item.get("content", "")
+        content = item.get("content", "")
+        metadata = item.get("metadata", {})
+        is_forced_pass = metadata.get("forced_pass", False)
+        
+        # 仅当content非空时才添加；如果已有内容且新内容是forced_pass，则不覆盖
+        if content:
+            if key not in content_map:
+                content_map[key] = content
+            elif not is_forced_pass:
+                # 如果新内容不是forced_pass，优先使用它（更新已存在的content）
+                content_map[key] = content
     return content_map
 
 
