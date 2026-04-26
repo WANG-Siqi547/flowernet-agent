@@ -1516,27 +1516,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 if history_resp.status_code == 200:
                     history = history_resp.json().get("history", [])
                     current_count = len(history)
-
-                    while len(emitted_passed_indices) < current_count and len(emitted_passed_indices) < len(ordered_subsections):
-                        next_idx = len(emitted_passed_indices)
-                        item = ordered_subsections[next_idx]
-                        pass_msg = f"小节通过验证: {item['section_title']} > {item['subsection_title']}"
-                        msg = json.dumps({
-                            'type': 'detail',
-                            'message': pass_msg,
-                            'stage': 'subsection_passed',
-                            'metadata': {
-                                'section_id': item['section_id'],
-                                'subsection_id': item['subsection_id'],
-                                'section_title': item['section_title'],
-                                'subsection_title': item['subsection_title'],
-                                'subsection_order': next_idx + 1,
-                                'section_subsection_total': total_subsections,
-                                'synthetic': True,
-                            },
-                        })
-                        yield f"data: {msg}\n\n"
-                        emitted_passed_indices.add(next_idx)
+                    
+                    # 注意：不要在生成过程中基于 history 的增量来发送 subsection_passed 事件！
+                    # 因为这会导致前端错误地认为所有小节都已完成，即使生成还在进行中。
+                    # 只有当生成器真正返回最终结果后，才发送这些事件。
+                    # （参考下面的"最后一轮小节完成补发"部分）
 
                     next_start_idx = current_count
                     if next_start_idx < len(ordered_subsections) and next_start_idx not in emitted_start_indices:
@@ -1559,10 +1543,17 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         yield f"data: {msg}\n\n"
                         emitted_start_indices.add(next_start_idx)
                     
-                    # 每次进度变化或30秒都推送一次进度
+                    # 每次进度变化或30秒都推送一次进度（但不要做implicit的完成判断）
                     if current_count > last_count or time.time() - last_progress_update > 30:
+                        # 注意：这里只是报告已添加到 history 的项目数，不应该用来判断是否完成
+                        # 因为 forced_pass 的小节也会立即被添加到 history，
+                        # 但可能还没有经过真正的验证（verifier），所以指标可能还是0
                         progress = min(100, int(current_count / total_subsections * 100)) if total_subsections > 0 else 0
-                        msg = json.dumps({'type': 'progress', 'message': f'进度: {current_count}/{total_subsections} 小节已完成 ({progress}%)'})
+                        msg = json.dumps({
+                            'type': 'progress', 
+                            'message': f'进度: {current_count}/{total_subsections} 小节已处理 ({progress}%)',
+                            'note': '进度反映已保存的内容，部分可能是强制通过的临时结果',
+                        })
                         yield f"data: {msg}\n\n"
                         last_count = current_count
                         last_progress_update = time.time()
@@ -1700,26 +1691,57 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             )
             final_history = history_resp.json().get("history", []) if history_resp.status_code == 200 else []
             final_count = len(final_history)
-            while len(emitted_passed_indices) < final_count and len(emitted_passed_indices) < len(ordered_subsections):
-                next_idx = len(emitted_passed_indices)
-                item = ordered_subsections[next_idx]
-                pass_msg = f"小节通过验证: {item['section_title']} > {item['subsection_title']}"
-                msg = json.dumps({
-                    'type': 'detail',
-                    'message': pass_msg,
-                    'stage': 'subsection_passed',
-                    'metadata': {
-                        'section_id': item['section_id'],
-                        'subsection_id': item['subsection_id'],
-                        'section_title': item['section_title'],
-                        'subsection_title': item['subsection_title'],
-                        'subsection_order': next_idx + 1,
-                        'section_subsection_total': total_subsections,
-                        'synthetic': True,
-                    },
-                })
-                yield f"data: {msg}\n\n"
-                emitted_passed_indices.add(next_idx)
+            
+            # 仅在生成器完全返回后，才补发最后的 subsection_passed 事件
+            # 注意：检查每个 history 项的 forced_pass 标记，只发送真正通过验证的小节
+            # （forced_pass 的小节不发送"通过验证"事件，避免前端误导）
+            for idx in range(len(emitted_passed_indices), final_count):
+                if idx >= len(ordered_subsections):
+                    break
+                    
+                item = ordered_subsections[idx]
+                history_item = final_history[idx] if idx < len(final_history) else {}
+                is_forced_pass = history_item.get("metadata", {}).get("forced_pass", False)
+                
+                # 只发送非 forced_pass 的小节为"通过验证"
+                if not is_forced_pass:
+                    pass_msg = f"小节通过验证: {item['section_title']} > {item['subsection_title']}"
+                    msg = json.dumps({
+                        'type': 'detail',
+                        'message': pass_msg,
+                        'stage': 'subsection_passed',
+                        'metadata': {
+                            'section_id': item['section_id'],
+                            'subsection_id': item['subsection_id'],
+                            'section_title': item['section_title'],
+                            'subsection_title': item['subsection_title'],
+                            'subsection_order': idx + 1,
+                            'section_subsection_total': total_subsections,
+                            'verification_passed': True,
+                        },
+                    })
+                    yield f"data: {msg}\n\n"
+                else:
+                    # forced_pass 的小节显示为"内容已生成"而不是"通过验证"
+                    pass_msg = f"小节生成完成（强制通过）: {item['section_title']} > {item['subsection_title']}"
+                    msg = json.dumps({
+                        'type': 'detail',
+                        'message': pass_msg,
+                        'stage': 'subsection_generated',
+                        'metadata': {
+                            'section_id': item['section_id'],
+                            'subsection_id': item['subsection_id'],
+                            'section_title': item['section_title'],
+                            'subsection_title': item['subsection_title'],
+                            'subsection_order': idx + 1,
+                            'section_subsection_total': total_subsections,
+                            'forced_pass': True,
+                            'force_reason': history_item.get("metadata", {}).get("force_reason", "unknown"),
+                        },
+                    })
+                    yield f"data: {msg}\n\n"
+                
+                emitted_passed_indices.add(idx)
         except Exception as e:
             print(f"收尾补发小节事件异常: {e}")
         

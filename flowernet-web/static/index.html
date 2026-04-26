@@ -271,6 +271,7 @@
       const [statusText, setStatusText] = useState("Ready");
       const [activeNode, setActiveNode] = useState("outliner");
       const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 });
+      const completedSubsectionsRef = useRef(new Set()); // 追踪真正完成的小节（passed/generated 事件）
       const [doc, setDoc] = useState({ title: "", content: "" });
       const [uptimeStart] = useState(Date.now());
       const [uptimeSec, setUptimeSec] = useState(0);
@@ -390,11 +391,30 @@
               return next.sort((a, b) => a.name.localeCompare(b.name));
             });
 
-            if (["subsection_passed", "subsection_failed", "subsection_exception", "subsection_forced_pass"].includes(stage)) {
-              setProgress((p) => {
-                const cur = Math.min(p.total, p.current + 1);
-                return { ...p, current: cur, percent: p.total > 0 ? Math.round((cur / p.total) * 100) : 0 };
-              });
+            // 仅计算真正的 subsection_passed 和 subsection_generated 事件
+            // 不要基于 progress 消息中解析的百分比（可能不准确）
+            if (stage === "subsection_passed" || stage === "subsection_generated") {
+              const subsectionKey = `${data.metadata?.section_id}:${data.metadata?.subsection_id}`;
+              if (subsectionKey && !completedSubsectionsRef.current.has(subsectionKey)) {
+                completedSubsectionsRef.current.add(subsectionKey);
+                setProgress((p) => {
+                  const cur = completedSubsectionsRef.current.size;
+                  const pct = p.total > 0 ? Math.round((cur / p.total) * 100) : 0;
+                  return { ...p, current: cur, percent: pct };
+                });
+              }
+            }
+
+            if (["subsection_failed", "subsection_exception", "subsection_forced_pass"].includes(stage)) {
+              const subsectionKey = `${data.metadata?.section_id}:${data.metadata?.subsection_id}`;
+              if (subsectionKey && !completedSubsectionsRef.current.has(subsectionKey)) {
+                completedSubsectionsRef.current.add(subsectionKey);
+                setProgress((p) => {
+                  const cur = completedSubsectionsRef.current.size;
+                  const pct = p.total > 0 ? Math.round((cur / p.total) * 100) : 0;
+                  return { ...p, current: cur, percent: pct };
+                });
+              }
             }
 
             if (stage === "verifier_start" || stage === "verifier_passed" || stage === "verifier_failed") {
@@ -418,12 +438,9 @@
 
           if (data.type === "progress") {
             const msg = String(data.message || "");
-            const m = msg.match(/(\d+)\/(\d+)/);
-            if (m) {
-              const cur = Number(m[1]);
-              const total = Number(m[2]);
-              setProgress({ current: cur, total, percent: total > 0 ? Math.round((cur / total) * 100) : 0 });
-            }
+            // 注意：只更新状态文本，不要从消息中解析百分比
+            // 因为消息中的百分比可能是基于 history 中的项目数，不一定准确
+            // 真正的进度应该基于实际收到的 subsection_passed/generated 事件数量
             setStatusText(msg || "Generating...");
           }
 
@@ -444,6 +461,12 @@
             const result = data.result || {};
             const stats = result.stats || {};
             const dims = stats.quality_dimension_avgs || {};
+            
+            // 不要立即设为 100%，而是基于实际完成的小节数
+            const expected = Number(stats.expected_subsections || progress.total || 0);
+            const actualCompleted = completedSubsectionsRef.current.size;
+            const finalCurrent = Math.max(actualCompleted, Number(stats.passed_subsections || 0));
+            
             setMetrics({
               topic_alignment: Number(dims.topic_alignment || 0),
               logical_coherence: Number(dims.logical_coherence || 0),
@@ -452,8 +475,11 @@
               quality_score: Number(stats.quality_score_avg || 0)
             });
             setDoc({ title: result.title || "", content: result.content || "" });
-            const t = Number(stats.expected_subsections || progress.total || 0);
-            setProgress({ current: t, total: t, percent: 100 });
+            const expected = Number(stats.expected_subsections || progress.total || 0);
+            const actualCompleted = completedSubsectionsRef.current.size;
+            const finalCurrent = Math.max(actualCompleted, Number(stats.passed_subsections || 0));
+            const finalPercent = expected > 0 ? Math.round((finalCurrent / expected) * 100) : 100;
+            setProgress({ current: finalCurrent, total: expected, percent: finalPercent });
             setActiveNode("controller");
             setStatusText("Generation completed successfully.");
             setRunning(false);
