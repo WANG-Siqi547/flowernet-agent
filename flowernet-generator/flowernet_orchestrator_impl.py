@@ -610,6 +610,21 @@ class DocumentGenerationOrchestrator:
                         document_id=document_id,
                         section_id=section_id,
                         subsection_id=subsection_id,
+                        stage="subsection_trace_ready",
+                        message=f"小节上下文已就绪: {section_title} > {subsection_title}",
+                        metadata={
+                            "section_title": section_title,
+                            "subsection_title": subsection_title,
+                            "subsection_order": subsection_index + 1,
+                            "section_subsection_total": len(subsection_list),
+                            "outline_chars": len(subsection_outline),
+                            "content_prompt_chars": len(content_prompt),
+                        },
+                    )
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
                         stage="subsection_start",
                         message=f"开始处理小节: {section_title} > {subsection_title}",
                         metadata={
@@ -1212,7 +1227,16 @@ class DocumentGenerationOrchestrator:
                 subsection_id=subsection_id,
                 stage="generator_start",
                 message=f"第 {iterations} 轮：进入 Generator 生成",
-                metadata={"iteration": iterations},
+                metadata={
+                    "iteration": iterations,
+                    "outline_chars": len(current_outline),
+                    "prompt_chars": len(current_prompt),
+                    "history_chars": len(history_text),
+                    "effective_rel_threshold": round(float(effective_rel_threshold), 4),
+                    "effective_red_threshold": round(float(effective_red_threshold), 4),
+                    "generator_degraded_mode": generator_degraded_mode,
+                    "rag_used": rag_used,
+                },
             )
             
             effective_rel_threshold, effective_red_threshold = self._compute_effective_thresholds(
@@ -1247,6 +1271,8 @@ class DocumentGenerationOrchestrator:
                         "iteration": iterations,
                         "error": gen_result.get("error", "unknown"),
                         "generator_failure_streak": generator_failure_streak,
+                        "provider": str((gen_result.get("metadata") or {}).get("provider", "") or ""),
+                        "prompt_chars": len(enhanced_prompt),
                     },
                 )
 
@@ -1343,6 +1369,19 @@ class DocumentGenerationOrchestrator:
             draft = gen_result.get("draft", "")
             all_drafts.append(draft)
             print(f"         ✅ 生成 {len(draft)} 字符")
+            self._emit_progress_event(
+                document_id=document_id,
+                section_id=section_id,
+                subsection_id=subsection_id,
+                stage="generator_success",
+                message=f"第 {iterations} 轮：Generator 已产出草稿 ({len(draft)} 字符)",
+                metadata={
+                    "iteration": iterations,
+                    "draft_chars": len(draft),
+                    "provider": str((gen_result.get("metadata") or {}).get("provider", "") or ""),
+                    "generator_degraded_mode": generator_degraded_mode,
+                },
+            )
 
             provider_name = str((gen_result.get("metadata") or {}).get("provider", "")).strip().lower()
             if source_citation_required and provider_name == "ollama":
@@ -1404,6 +1443,23 @@ class DocumentGenerationOrchestrator:
                     f"         来源检查: valid={source_check.get('passed', False)} "
                     f"refs={source_check.get('reference_count', 0)}"
                 )
+
+            self._emit_progress_event(
+                document_id=document_id,
+                section_id=section_id,
+                subsection_id=subsection_id,
+                stage="verifier_result",
+                message=f"第 {iterations} 轮：Verifier 完成，结果={'通过' if is_passed else '未通过'}",
+                metadata={
+                    "iteration": iterations,
+                    "is_passed": bool(is_passed),
+                    "relevancy_index": rel_score,
+                    "redundancy_index": red_score,
+                    "feedback": str(feedback or "")[:260],
+                    "source_check_passed": bool(source_check.get("passed", False)),
+                    "source_reference_count": int(source_check.get("reference_count", 0) or 0),
+                },
+            )
 
             if (not is_passed) and source_citation_required:
                 source_reason = str(source_check.get("reason", "") or "").lower()
@@ -1560,7 +1616,13 @@ class DocumentGenerationOrchestrator:
                     subsection_id=subsection_id,
                     stage="controller_start",
                     message=f"第 {iterations} 轮：Controller 第 {controller_retry} 次尝试改纲",
-                    metadata={"iteration": iterations, "controller_retry": controller_retry},
+                    metadata={
+                        "iteration": iterations,
+                        "controller_retry": controller_retry,
+                        "failed_rel_threshold": effective_rel_threshold,
+                        "failed_red_threshold": effective_red_threshold,
+                        "draft_chars": len(draft),
+                    },
                 )
                 controller_triggered = True
                 metrics["controller_calls"] += 1
@@ -1588,6 +1650,25 @@ class DocumentGenerationOrchestrator:
                 improved_outline = str(controller_result.get("improved_outline", "")).strip()
                 controller_effective = bool(controller_result.get("effective", controller_result.get("success", False)))
                 controller_changed = bool(controller_result.get("changed", True))
+
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="controller_result",
+                    message=(
+                        f"第 {iterations} 轮：Controller 返回 {'有效' if (controller_result.get('success') and improved_outline and controller_changed) else '无效'} 改纲"
+                    ),
+                    metadata={
+                        "iteration": iterations,
+                        "controller_retry": controller_retry,
+                        "success": bool(controller_result.get("success", False)),
+                        "effective": controller_effective,
+                        "changed": controller_changed,
+                        "improved_outline_chars": len(improved_outline),
+                        "error": controller_error_text[:260],
+                    },
+                )
 
                 controller_ok_for_next_round = (
                     controller_result.get("success")
@@ -1648,7 +1729,11 @@ class DocumentGenerationOrchestrator:
                             subsection_id=subsection_id,
                             stage="controller_fallback_outline",
                             message=f"第 {iterations} 轮：Controller返回空改纲，已启用本地兜底",
-                            metadata={"iteration": iterations, "controller_retry": controller_retry},
+                            metadata={
+                                "iteration": iterations,
+                                "controller_retry": controller_retry,
+                                "fallback_outline_chars": len(fallback_outline),
+                            },
                         )
                         break
 
@@ -1666,6 +1751,7 @@ class DocumentGenerationOrchestrator:
                             "effective": controller_effective,
                             "changed": controller_changed,
                             "error": controller_error_text[:260],
+                            "improved_outline_chars": len(improved_outline),
                         },
                     )
                     time.sleep(self._compute_retry_delay(controller_retry))

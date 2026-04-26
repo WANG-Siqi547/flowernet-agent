@@ -492,7 +492,7 @@
                     total: expected,
                     percent: expected > 0 ? Math.round((passed / expected) * 100) : 0
                   });
-                  setStatusText("Stream disconnected, but partial content has been recovered.");
+                  setStatusText(`Stream disconnected, recovered ${passed}/${expected || passed} subsections.`);
                   return;
                 }
               }

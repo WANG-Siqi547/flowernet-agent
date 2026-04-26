@@ -376,6 +376,61 @@ def fetch_history_items(document_id: str, timeout_seconds: int = 60) -> List[Dic
     return []
 
 
+def _recover_partial_document(document_id: str, attempts: int = 5, timeout_seconds: int = 30) -> Dict[str, Any]:
+    attempts = max(1, int(attempts))
+    delay_seconds = 1.5
+    last_history_items: List[Dict[str, Any]] = []
+
+    for attempt in range(1, attempts + 1):
+        history_items = fetch_history_items(document_id=document_id, timeout_seconds=timeout_seconds)
+        if history_items:
+            title, structure = _load_document_structure(document_id=document_id, history=history_items)
+            markdown_content = build_markdown_document(
+                title=title,
+                structure=structure,
+                history=history_items,
+                generated_sections=None,
+            )
+
+            expected = 0
+            for sec in (structure.get("sections") or []):
+                subs = sec.get("subsections") if isinstance(sec, dict) else []
+                if isinstance(subs, list):
+                    expected += len(subs)
+
+            passed = len(history_items)
+            return {
+                "success": True,
+                "partial": expected > 0 and passed < expected,
+                "document_id": document_id,
+                "title": title,
+                "content": markdown_content,
+                "stats": {
+                    "expected_subsections": expected,
+                    "passed_subsections": passed,
+                    "failed_subsections": 0,
+                    "forced_subsections": 0,
+                    "total_generated": passed,
+                },
+                "history_items": history_items,
+                "attempts": attempt,
+            }
+
+        last_history_items = history_items
+        if attempt < attempts:
+            time.sleep(min(3.0, delay_seconds))
+            delay_seconds = min(5.0, delay_seconds * 1.6)
+
+    return {
+        "success": False,
+        "document_id": document_id,
+        "error": "history_not_ready",
+        "message": "后台内容尚未可恢复，请稍后重试。",
+        "history_items": last_history_items,
+        "attempts": attempts,
+    }
+
+
 def extract_orchestration_metrics(gen_resp: Dict[str, Any]) -> Dict[str, int]:
     if not isinstance(gen_resp, dict):
         return {
@@ -1758,46 +1813,7 @@ async def generate_stream_endpoint(
 
 @app.get("/api/recover-document")
 def recover_document(document_id: str) -> Dict[str, Any]:
-    history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
-    if not history_items:
-        return {
-            "success": False,
-            "document_id": document_id,
-            "error": "history_not_ready",
-            "message": "后台内容尚未可恢复，请稍后重试。",
-        }
-
-    title, structure = _load_document_structure(document_id=document_id, history=history_items)
-    markdown_content = build_markdown_document(
-        title=title,
-        structure=structure,
-        history=history_items,
-        generated_sections=None,
-    )
-
-    expected = 0
-    for sec in (structure.get("sections") or []):
-        subs = sec.get("subsections") if isinstance(sec, dict) else []
-        if isinstance(subs, list):
-            expected += len(subs)
-
-    passed = len(history_items)
-    partial = expected > 0 and passed < expected
-
-    return {
-        "success": True,
-        "partial": partial,
-        "document_id": document_id,
-        "title": title,
-        "content": markdown_content,
-        "stats": {
-            "expected_subsections": expected,
-            "passed_subsections": passed,
-            "failed_subsections": 0,
-            "forced_subsections": 0,
-            "total_generated": passed,
-        },
-    }
+    return _recover_partial_document(document_id=document_id, attempts=6, timeout_seconds=45)
 
 
 @app.post("/api/generate")
