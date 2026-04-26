@@ -1599,17 +1599,9 @@ class DocumentGenerationOrchestrator:
                 controller_retry += 1
                 controller_retry_count += 1
                 if controller_retry > self.max_controller_retries:
-                    fallback_outline = self._build_local_outline_fallback(
-                        current_outline=current_outline,
-                        original_outline=outline,
-                        feedback=verify_result,
-                        rel_threshold=effective_rel_threshold,
-                        red_threshold=effective_red_threshold,
-                        iteration=iterations,
-                    )
-                    if fallback_outline and fallback_outline.strip() != str(current_outline).strip():
-                        current_outline = fallback_outline
-                        controller_updated = True
+                    # 改进：Controller 完全失败时，不再用 outline fallback，而是继续下一轮
+                    # 系统会在 verifier 失败后继续尝试，最终通过 best_candidate 机制返回最好的 draft
+                    print(f"         ⚠️  Controller 失败 {self.max_controller_retries} 次，不应用改纲而直接继续")
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
@@ -1617,14 +1609,12 @@ class DocumentGenerationOrchestrator:
                         stage="controller_exhausted",
                         message=(
                             f"第 {iterations} 轮：Controller 连续失败 {self.max_controller_retries} 次，"
-                            "已使用本地兜底改纲并继续下一轮"
+                            "跳过改纲继续重试"
                         ),
                         metadata={
                             "iteration": iterations,
                             "controller_retry": self.max_controller_retries,
-                            "fallback_outline_applied": controller_updated,
-                            "continued": True,
-                            "strict_controller_effective": self.strict_controller_effective,
+                            "skipped_outline_fallback": True,
                         },
                     )
                     metrics["controller_exhausted"] += 1
@@ -1731,31 +1721,22 @@ class DocumentGenerationOrchestrator:
                     break
 
                 if controller_result.get("success") and not improved_outline:
-                    fallback_outline = self._build_local_outline_fallback(
-                        current_outline=current_outline,
-                        original_outline=outline,
-                        feedback=verify_result,
-                        rel_threshold=effective_rel_threshold,
-                        red_threshold=effective_red_threshold,
-                        iteration=iterations,
+                    # 改进：Controller 返回空改纲时，不应用 outline fallback
+                    # 而是继续下一轮，让 best_candidate 机制选择最好的 draft
+                    print(f"         ⚠️  Controller 返回空改纲，不应用fallback而直接继续")
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="controller_empty_outline",
+                        message=f"第 {iterations} 轮：Controller 返回空改纲，跳过应用",
+                        metadata={
+                            "iteration": iterations,
+                            "controller_retry": controller_retry,
+                            "skipped_outline_fallback": True,
+                        },
                     )
-                    if fallback_outline and fallback_outline.strip() != str(current_outline).strip():
-                        current_outline = fallback_outline
-                        controller_updated = True
-                        metrics["controller_fallback_outline"] += 1
-                        self._emit_progress_event(
-                            document_id=document_id,
-                            section_id=section_id,
-                            subsection_id=subsection_id,
-                            stage="controller_fallback_outline",
-                            message=f"第 {iterations} 轮：Controller返回空改纲，已启用本地兜底",
-                            metadata={
-                                "iteration": iterations,
-                                "controller_retry": controller_retry,
-                                "fallback_outline_chars": len(fallback_outline),
-                            },
-                        )
-                        break
+                    break
 
                 if controller_result.get("success") and (not controller_changed or (self.strict_controller_effective and not controller_effective)):
                     metrics["controller_ineffective"] += 1
@@ -1787,31 +1768,24 @@ class DocumentGenerationOrchestrator:
                 ])
                 if transient_unavailable:
                     metrics["controller_unavailable"] += 1
+                    # 改进：Controller 暂不可用时，不应用 outline fallback
+                    # 而是继续重试，让系统通过 best_candidate 机制选择最好的 draft
+                    print(f"         ⚠️  Controller 暂不可用，跳过outline fallback直接重试")
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
                         subsection_id=subsection_id,
                         stage="controller_unavailable",
-                        message=f"第 {iterations} 轮：Controller 暂不可用，启用本地兜底改纲",
+                        message=f"第 {iterations} 轮：Controller 暂不可用，继续重试",
                         metadata={
                             "iteration": iterations,
                             "controller_retry": controller_retry,
                             "error": controller_error_text[:260],
+                            "skipped_outline_fallback": True,
                         },
                     )
-                    fallback_outline = self._build_local_outline_fallback(
-                        current_outline=current_outline,
-                        original_outline=outline,
-                        feedback=verify_result,
-                        rel_threshold=effective_rel_threshold,
-                        red_threshold=effective_red_threshold,
-                        iteration=iterations,
-                    )
-                    if fallback_outline and fallback_outline.strip() != str(current_outline).strip():
-                        current_outline = fallback_outline
-                        controller_updated = True
-                        metrics["controller_fallback_outline"] += 1
-                    break
+                    time.sleep(self._compute_retry_delay(controller_retry))
+                    continue
 
                 print(f"         ⚠️  Controller 失败，继续重试（第 {controller_retry} 次）")
                 metrics["controller_error"] += 1
