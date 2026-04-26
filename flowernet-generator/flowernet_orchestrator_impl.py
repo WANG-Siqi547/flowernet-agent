@@ -1171,26 +1171,37 @@ class DocumentGenerationOrchestrator:
                         "metrics": metrics,
                     }
 
-                placeholder = f"（兜底内容）{subsection_id}\n\n{str(current_outline).strip()}"
+                # 改进兜底逻辑：优先使用 all_drafts 中最后一个，而不是 outline
+                if all_drafts and len(all_drafts) > 0:
+                    # 使用最后一个尝试的 draft，即使未通过验证，也比 outline 要好
+                    fallback_draft = all_drafts[-1]
+                    fallback_note = "（未完全验证，最后尝试的内容）"
+                else:
+                    # 完全没有draft时，返回空内容而不是outline
+                    fallback_draft = ""
+                    fallback_note = "（内容生成失败，仍在恢复中）"
+                
                 self._emit_progress_event(
                     document_id=document_id,
                     section_id=section_id,
                     subsection_id=subsection_id,
                     stage="verifier_forced_pass",
                     message=(
-                        f"单小节耗时已达 {self.subsection_max_seconds}s 且无可用草稿，使用兜底内容通过"
+                        f"单小节耗时已达 {self.subsection_max_seconds}s，按最后可用内容通过"
                         if timeout_triggered
-                        else f"达到最大检测次数 {effective_attempt_cap} 且无可用草稿，使用兜底内容通过"
+                        else f"达到最大检测次数 {effective_attempt_cap}，按最后可用内容通过"
                     ),
                     metadata={
                         "iteration": iterations - 1,
                         "elapsed_seconds": round(elapsed_subsection, 2),
+                        "has_fallback_draft": len(all_drafts) > 0,
+                        "fallback_note": fallback_note,
                     },
                 )
                 placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
                 return {
                     "success": True,
-                    "draft": placeholder,
+                    "draft": fallback_draft,
                     "final_outline": current_outline,
                     "iterations": iterations - 1,
                     "all_drafts": all_drafts,
@@ -1306,18 +1317,27 @@ class DocumentGenerationOrchestrator:
                         continue
 
                     fail_outline = str(current_outline).strip()
-                    fallback_text = f"（系统兜底）{subsection_id}\n\n{fail_outline}"
+                    # 改进：即使generator失败，也优先使用任何可用的草稿而不是outline
+                    if all_drafts and len(all_drafts) > 0:
+                        fallback_text = all_drafts[-1]
+                        fallback_note = "（Generator失败，使用最后尝试的内容）"
+                    else:
+                        fallback_text = ""
+                        fallback_note = "（Generator失败，内容仍在恢复中）"
+                    
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
                         subsection_id=subsection_id,
                         stage="subsection_forced_pass",
-                        message=f"Generator 在降级模式下仍连续失败 {generator_failure_streak} 次，触发兜底通过",
+                        message=f"Generator 在降级模式下仍连续失败 {generator_failure_streak} 次，按最后可用内容通过",
                         metadata={
                             "iteration": iterations,
                             "max_generator_failures": max_generator_failures,
                             "error": fail_error,
                             "degraded_mode": True,
+                            "has_fallback_draft": len(all_drafts) > 0,
+                            "fallback_note": fallback_note,
                         },
                     )
                     if self.history_manager:

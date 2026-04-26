@@ -1039,7 +1039,14 @@ def build_markdown_document(
             subsection_title = subsection.get("title", "未命名小节")
             alpha = _to_alpha(subsection_index)
             key = f"{section_id}::{subsection_id}"
-            subsection_text = _clean_subsection_text(content_map.get(key, "（该小节未成功生成）"))
+            
+            # 获取该subsection的内容，如果为空则表示内容仍在恢复或生成失败
+            raw_content = content_map.get(key)
+            if raw_content:
+                subsection_text = _clean_subsection_text(raw_content)
+            else:
+                # 如果内容为空，显示清晰的恢复中标记，而不是试图补充outline
+                subsection_text = "（本小节内容仍在后台生成/恢复中，请稍后刷新或重新下载）"
 
             lines.append(f'<a id="{_anchor_id(section_index, subsection_index)}"></a>')
             lines.append(f"### {alpha}. {_normalize_label(subsection_title)}")
