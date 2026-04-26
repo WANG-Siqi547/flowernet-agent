@@ -475,9 +475,6 @@
               quality_score: Number(stats.quality_score_avg || 0)
             });
             setDoc({ title: result.title || "", content: result.content || "" });
-            const expected = Number(stats.expected_subsections || progress.total || 0);
-            const actualCompleted = completedSubsectionsRef.current.size;
-            const finalCurrent = Math.max(actualCompleted, Number(stats.passed_subsections || 0));
             const finalPercent = expected > 0 ? Math.round((finalCurrent / expected) * 100) : 100;
             setProgress({ current: finalCurrent, total: expected, percent: finalPercent });
             setActiveNode("controller");
