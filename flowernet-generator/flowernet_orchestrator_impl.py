@@ -754,7 +754,11 @@ class DocumentGenerationOrchestrator:
                         else:
                             err = subsection_gen_result.get("error", "Unknown error")
                             print(f"⚠️ 当前小节返回失败结果，降级补全文档: {err}")
-                            fallback_content = f"（系统兜底）{subsection_title}\n\n{str(subsection_outline).strip()}"
+                            failed_draft = str(subsection_gen_result.get("draft", "") or "").strip()
+                            if failed_draft:
+                                fallback_content = failed_draft
+                            else:
+                                fallback_content = f"（系统兜底）{subsection_title}\n\n（内容生成失败，仍在恢复中）"
                             section_result["subsections"].append({
                                 "subsection_id": subsection_id,
                                 "subsection_title": subsection_title,
@@ -790,7 +794,7 @@ class DocumentGenerationOrchestrator:
                     except Exception as e:
                         print(f"⚠️ 小节生成异常，启用兜底继续文档流程: {e}")
                         error_str = str(e)[:200]
-                        fallback_content = f"（系统兜底）{subsection_title}\n\n{str(subsection_outline).strip()}"
+                        fallback_content = f"（系统兜底）{subsection_title}\n\n（内容生成异常，仍在恢复中）"
                         section_result["subsections"].append({
                             "subsection_id": subsection_id,
                             "subsection_title": subsection_title,

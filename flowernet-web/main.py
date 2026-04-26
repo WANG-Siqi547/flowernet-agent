@@ -900,7 +900,7 @@ def build_markdown_document(
     content_map = _build_content_map_from_sections(generated_sections)
     history_map = _build_content_map_from_history(history)
     for key, value in history_map.items():
-        content_map.setdefault(key, value)
+        content_map[key] = value
 
     def _normalize_label(value: str) -> str:
         text = re.sub(r"^第\d+[章节]", "", str(value or "")).strip()
