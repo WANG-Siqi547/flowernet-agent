@@ -859,6 +859,33 @@ def build_requirements_text(req: GenerateDocRequest) -> str:
     return base
 
 
+def _is_outline_like_fallback_content(
+    content: str,
+    outline: str = "",
+    forced_pass: bool = False,
+) -> bool:
+    text = str(content or "").strip()
+    if not text:
+        return False
+    outline_text = str(outline or "").strip()
+    compact_text = " ".join(text.split())
+    compact_outline = " ".join(outline_text.split())
+
+    has_system_fallback_prefix = text.startswith("（系统兜底）")
+    prompt_markers = ["请你作为", "要求：", "段落主题", "系统指示", "content_prompt"]
+    has_prompt_marker = any(marker in text for marker in prompt_markers)
+
+    outline_embedded = False
+    if compact_outline and len(compact_outline) >= 16:
+        outline_embedded = (
+            compact_outline in compact_text
+            or compact_text in compact_outline
+        )
+
+    # 仅在 forced_pass/系统兜底场景下过滤，避免误伤正常正文
+    return bool((forced_pass or has_system_fallback_prefix) and (outline_embedded or has_prompt_marker))
+
+
 def _build_content_map_from_history(history: List[Dict[str, Any]]) -> Dict[str, str]:
     """从history中构建content map，优先使用非forced_pass的内容"""
     content_map: Dict[str, str] = {}
@@ -868,6 +895,10 @@ def _build_content_map_from_history(history: List[Dict[str, Any]]) -> Dict[str, 
         content = item.get("content", "")
         metadata = item.get("metadata", {})
         is_forced_pass = metadata.get("forced_pass", False)
+        outline = metadata.get("outline", "")
+
+        if _is_outline_like_fallback_content(content=content, outline=outline, forced_pass=bool(is_forced_pass)):
+            continue
         
         # 仅当content非空时才添加；如果已有内容且新内容是forced_pass，则不覆盖
         if content:
@@ -886,6 +917,10 @@ def _build_content_map_from_sections(sections: Optional[List[Dict[str, Any]]]) -
         for subsection in section.get("subsections", []) or []:
             subsection_id = str(subsection.get("subsection_id") or subsection.get("id") or "")
             content = subsection.get("content", "")
+            is_forced_pass = bool(subsection.get("forced_pass", False))
+            outline = subsection.get("outline", "")
+            if _is_outline_like_fallback_content(content=content, outline=outline, forced_pass=is_forced_pass):
+                continue
             if section_id and subsection_id and content:
                 content_map[f"{section_id}::{subsection_id}"] = content
     return content_map
