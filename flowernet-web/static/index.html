@@ -427,6 +427,18 @@
             setStatusText(msg || "Generating...");
           }
 
+          if (data.type === "start") {
+            setStatusText(String(data.message || "Starting generation flow..."));
+          }
+
+          if (data.type === "heartbeat") {
+            setStatusText(String(data.message || "Still generating..."));
+          }
+
+          if (data.type === "warning") {
+            setStatusText(String(data.message || "Generation warning"));
+          }
+
           if (data.type === "complete") {
             streamEndedRef.current = true;
             const result = data.result || {};
