@@ -445,6 +445,10 @@
           }
 
           if (data.type === "start") {
+            const startMeta = data.metadata || {};
+            if (startMeta.document_id) {
+              documentIdRef.current = String(startMeta.document_id);
+            }
             setStatusText(String(data.message || "Starting generation flow..."));
           }
 

@@ -1326,11 +1326,18 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         )
         stream_timeout = int(timeout_profile.get("effective_timeout_seconds", REQUEST_TIMEOUT))
 
-        # 开始
-        msg = json.dumps({'type': 'start', 'message': '开始生成大纲...'})
-        yield f"data: {msg}\n\n"
-        
         document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
+
+        # 开始
+        msg = json.dumps({
+            'type': 'start',
+            'message': '开始生成大纲...',
+            'metadata': {
+                'document_id': document_id,
+            },
+        })
+        yield f"data: {msg}\n\n"
+
         user_requirements = build_requirements_text(req)
 
         # 第1步：生成大纲
