@@ -34,6 +34,8 @@ DOWNSTREAM_GENERATOR_MIN_RETRIES = int(os.getenv("DOWNSTREAM_GENERATOR_MIN_RETRI
 DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_DELAY_429", "10.0"))
 GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "0"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
+DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
+DOWNSTREAM_GENERATOR_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_GENERATOR_COOLDOWN_429", "20.0"))
 GENERATOR_RESUME_BACKOFF = float(os.getenv("GENERATOR_RESUME_BACKOFF", "2.0"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
@@ -62,6 +64,8 @@ POFFICES_TASKS_LOCK = threading.Lock()
 RECENT_PIPELINE_SECONDS = deque(maxlen=20)
 RECENT_ITERATION_SECONDS = deque(maxlen=20)
 METRICS_LOCK = threading.Lock()
+RATE_LIMIT_LOCK = threading.Lock()
+RATE_LIMIT_UNTIL: Dict[str, float] = {}
 
 
 class GenerateDocRequest(BaseModel):
@@ -289,10 +293,42 @@ def _is_transient_downstream_payload(payload: Dict[str, Any]) -> bool:
     return any(token in message for token in transient_tokens)
 
 
+def _downstream_rate_limit_key(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").strip().lower()
+        if "outliner" in host or "/outline/" in parsed.path:
+            return "outliner"
+        if "generator" in host or "/generate" in parsed.path:
+            return "generator"
+        return host or "downstream"
+    except Exception:
+        return "downstream"
+
+
+def _set_rate_limit_cooldown(rate_key: str, seconds: float) -> None:
+    delay = max(0.0, float(seconds or 0.0))
+    if delay <= 0:
+        return
+    with RATE_LIMIT_LOCK:
+        now = time.time()
+        next_allowed = now + delay
+        current = float(RATE_LIMIT_UNTIL.get(rate_key, 0.0) or 0.0)
+        RATE_LIMIT_UNTIL[rate_key] = max(current, next_allowed)
+
+
+def _get_rate_limit_sleep_seconds(rate_key: str) -> float:
+    with RATE_LIMIT_LOCK:
+        now = time.time()
+        next_allowed = float(RATE_LIMIT_UNTIL.get(rate_key, 0.0) or 0.0)
+    return max(0.0, next_allowed - now)
+
+
 def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     last_error: str = ""
     is_outliner_url = "outliner" in url or "/outline/" in url
     is_generator_url = "generator" in url or "/generate_document" in url
+    rate_key = _downstream_rate_limit_key(url)
     effective_retries = DOWNSTREAM_RETRIES
     if is_outliner_url:
         effective_retries = max(effective_retries, DOWNSTREAM_OUTLINER_MIN_RETRIES)
@@ -300,6 +336,10 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
         effective_retries = max(effective_retries, DOWNSTREAM_GENERATOR_MIN_RETRIES)
 
     for attempt in range(1, effective_retries + 1):
+        cooldown_sleep = _get_rate_limit_sleep_seconds(rate_key)
+        if cooldown_sleep > 0:
+            time.sleep(cooldown_sleep)
+
         retry_delay = DOWNSTREAM_BACKOFF * (2 ** max(0, attempt - 1))
         retry_delay += random.uniform(0, DOWNSTREAM_JITTER)
         retry_after_seconds = None
@@ -339,8 +379,16 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
                     retry_after_seconds = _parse_retry_after_seconds(retry_after)
                     if is_generator_url:
                         retry_delay = max(retry_delay, DOWNSTREAM_GENERATOR_MIN_DELAY_429)
+                        _set_rate_limit_cooldown(
+                            rate_key,
+                            max(retry_delay, retry_after_seconds or 0.0, DOWNSTREAM_GENERATOR_COOLDOWN_429),
+                        )
                     if is_outliner_url:
                         retry_delay = max(retry_delay, DOWNSTREAM_OUTLINER_MIN_DELAY_429)
+                        _set_rate_limit_cooldown(
+                            rate_key,
+                            max(retry_delay, retry_after_seconds or 0.0, DOWNSTREAM_OUTLINER_COOLDOWN_429),
+                        )
                 if is_outliner_url and response.status_code == 503:
                     retry_delay = max(retry_delay, DOWNSTREAM_OUTLINER_MIN_DELAY_503)
             else:
