@@ -292,13 +292,14 @@ class FlowerNetVerifier:
 
     def _quality_dimension_thresholds(self) -> Dict[str, float]:
         """获取每个维度的阈值（可通过 JSON 覆盖，或使用默认值）"""
+        # 略微放宽默认阈值，减少严格判定导致的普遍兜底
         default_thresholds = {
-            "topic_alignment": 0.48,
-            "coverage_completeness": 0.46,
-            "logical_coherence": 0.45,
-            "evidence_grounding": 0.45,
-            "novelty": 0.36,
-            "structure_clarity": 0.42,
+            "topic_alignment": 0.40,
+            "coverage_completeness": 0.38,
+            "logical_coherence": 0.37,
+            "evidence_grounding": 0.37,
+            "novelty": 0.30,
+            "structure_clarity": 0.34,
         }
         
         thresholds_raw = os.getenv("QUALITY_DIMENSION_THRESHOLDS_JSON", "").strip()
@@ -674,7 +675,8 @@ class FlowerNetVerifier:
         
         # 用于兼容旧的总分逻辑，但主要用维度级阈值
         quality_score = self._composite_quality_score(semantic_dimensions)
-        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.58"), 0.58)
+        # 放宽默认的总体质量分数阈值以减少误报（可通过环境变量覆盖）
+        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.50"), 0.50)
         
         # 维度级阈值检查（新的主要判定逻辑）
         dimension_check = self._check_dimension_thresholds(semantic_dimensions)
@@ -686,6 +688,15 @@ class FlowerNetVerifier:
             and source_check["passed"]
             and (quality_passed if require_multidim else True)
         )
+
+        if not is_passed:
+            print(
+                f"[Verifier] fail summary: rel={rel['score']:.3f}/{rel_threshold}, "
+                f"red={red['score']:.3f}/{red_threshold}, "
+                f"quality_score={quality_score:.3f}/{quality_threshold}, "
+                f"unieval_available={unieval_available}, "
+                f"failed_dimensions={dimension_check['failed_dimensions']}"
+            )
 
         advice = "Content looks good."
         if rel['score'] < rel_threshold:

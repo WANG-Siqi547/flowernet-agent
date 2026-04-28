@@ -324,6 +324,39 @@ def _get_rate_limit_sleep_seconds(rate_key: str) -> float:
     return max(0.0, next_allowed - now)
 
 
+def _probe_service_health(base_url: str, timeout: float = 5.0) -> bool:
+    root_url = base_url.rstrip("/") + "/"
+    health_url = base_url.rstrip("/") + "/health"
+
+    for url in (health_url, root_url):
+        try:
+            response = DOWNSTREAM_SESSION.get(url, timeout=timeout)
+            if 200 <= response.status_code < 500:
+                return True
+        except requests.RequestException:
+            continue
+    return False
+
+
+def _wait_for_service_ready(base_url: str, label: str, max_wait_seconds: float = 45.0) -> bool:
+    deadline = time.time() + max(0.0, float(max_wait_seconds or 0.0))
+    attempt = 0
+    while True:
+        attempt += 1
+        if _probe_service_health(base_url, timeout=5.0):
+            print(f"[Web] ✅ {label} 健康检查通过")
+            return True
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            print(f"[Web] ⚠️ {label} 健康检查超时，继续尝试主请求")
+            return False
+
+        sleep_seconds = min(5.0 + min(attempt * 1.5, 10.0), remaining)
+        print(f"[Web] ⏳ 等待 {label} 就绪（第 {attempt} 次，{sleep_seconds:.1f}s 后重试）")
+        time.sleep(max(1.0, sleep_seconds))
+
+
 def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     last_error: str = ""
     is_outliner_url = "outliner" in url or "/outline/" in url
@@ -612,6 +645,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "max_sections": req.chapter_count,
         "max_subsections_per_section": req.subsection_count,
     }
+    _wait_for_service_ready(OUTLINER_URL, "outliner", max_wait_seconds=min(60.0, max(20.0, timeout_seconds / 10.0)))
     outline_resp = post_json_with_retry(
         f"{OUTLINER_URL}/outline/generate-and-save",
         outline_payload,
@@ -931,7 +965,14 @@ def _is_outline_like_fallback_content(
         )
 
     # 仅在 forced_pass/系统兜底场景下过滤，避免误伤正常正文
-    return bool((forced_pass or has_system_fallback_prefix) and (outline_embedded or has_prompt_marker))
+    should_filter = bool((forced_pass or has_system_fallback_prefix) and (outline_embedded or has_prompt_marker))
+    if should_filter:
+        print(
+            f"[Web] filtering outline-like content: forced_pass={forced_pass}, "
+            f"system_prefix={has_system_fallback_prefix}, outline_embedded={outline_embedded}, "
+            f"has_prompt_marker={has_prompt_marker}, len={len(compact_text)}"
+        )
+    return should_filter
 
 
 def _build_content_map_from_history(history: List[Dict[str, Any]]) -> Dict[str, str]:

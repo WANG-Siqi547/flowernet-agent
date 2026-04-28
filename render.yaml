@@ -217,7 +217,7 @@ services:
         value: "true"
       - key: DATABASE_PATH
         value: flowernet_history.db
-    healthCheckPath: /
+    healthCheckPath: /health
     
   # ==========================================
   # Service 4: Generator (文档生成服务)

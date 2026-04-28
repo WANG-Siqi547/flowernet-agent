@@ -99,7 +99,5 @@ services:
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
-        value: /tmp/flowernet_history.db
-      - key: OUTLINER_URL
-        value: https://flowernet-outliner.onrender.com
-    healthCheckPath: /
+        value: flowernet_history.db
+    healthCheckPath: /health

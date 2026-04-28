@@ -228,6 +228,35 @@ class DocumentGenerationOrchestrator:
         summary["bandit_last_selected_arm"] = selected_arm or summary.get("bandit_last_selected_arm", "")
         summary["bandit_last_selection_mode"] = str(bandit.get("selection", {}).get("mode", "") or summary.get("bandit_last_selection_mode", ""))
 
+    def _is_outline_like(self, content: str, outline: str = "") -> bool:
+        """简单判断 content 是否更像大纲/提示而非正文，供兜底选择时排除大纲型草稿。
+
+        规则：空内容 / 以系统兜底前缀开头 / 包含明显的提示标记 / 与 outline 文本高度相似或互为子串
+        """
+        text = str(content or "").strip()
+        if not text:
+            return False
+        outline_text = str(outline or "").strip()
+        compact_text = " ".join(text.split())
+        compact_outline = " ".join(outline_text.split())
+
+        # 系统兜底前缀或兜底标记
+        if text.startswith("（系统兜底）") or "（兜底内容）" in text:
+            return True
+
+        # 明显的提示/模板痕迹
+        prompt_markers = ["请你作为", "要求：", "段落主题", "系统指示", "content_prompt", "subsection"]
+        if any(m in text for m in prompt_markers):
+            return True
+
+        # 如果 outline 非空且两者互为子串或包含关系，认为可能是大纲
+        if compact_outline and len(compact_outline) >= 12:
+            if compact_outline in compact_text or compact_text in compact_outline:
+                return True
+
+        # 否则认为不是大纲型内容
+        return False
+
         reward = bandit.get("reward")
         if isinstance(reward, (int, float)):
             summary["bandit_reward_sum"] += float(reward)
@@ -1177,9 +1206,18 @@ class DocumentGenerationOrchestrator:
 
                 # 改进兜底逻辑：优先使用 all_drafts 中最后一个，而不是 outline
                 if all_drafts and len(all_drafts) > 0:
-                    # 使用最后一个尝试的 draft，即使未通过验证，也比 outline 要好
-                    fallback_draft = all_drafts[-1]
-                    fallback_note = "（未完全验证，最后尝试的内容）"
+                    # 优先选择最近一次非大纲型的草稿作为兜底；若都像大纲，则退回最后一次草稿
+                    chosen = None
+                    for d in reversed(all_drafts):
+                        if not self._is_outline_like(d, current_outline):
+                            chosen = d
+                            break
+                    if chosen is None:
+                        chosen = all_drafts[-1]
+                        fallback_note = "（未完全验证，最后尝试的内容）"
+                    else:
+                        fallback_note = "（未完全验证，最后尝试的非大纲内容）"
+                    fallback_draft = chosen
                 else:
                     # 完全没有draft时，返回空内容而不是outline
                     fallback_draft = ""
@@ -1202,6 +1240,16 @@ class DocumentGenerationOrchestrator:
                         "fallback_note": fallback_note,
                     },
                 )
+                # 诊断日志：记录究竟选中了哪个兜底草稿，便于排查 web 侧为何仍展示 outline
+                try:
+                    print(
+                        f"[Orch] verifier_forced_pass for {section_id}::{subsection_id} - "
+                        f"chosen_len={len(fallback_draft or '')}, is_outline_like={self._is_outline_like(fallback_draft, current_outline)}, "
+                        f"best_candidate_present={bool(best_candidate)}, total_drafts={len(all_drafts)}"
+                    )
+                except Exception:
+                    pass
+
                 placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
                 return {
                     "success": True,
@@ -1323,11 +1371,29 @@ class DocumentGenerationOrchestrator:
                     fail_outline = str(current_outline).strip()
                     # 改进：即使generator失败，也优先使用任何可用的草稿而不是outline
                     if all_drafts and len(all_drafts) > 0:
-                        fallback_text = all_drafts[-1]
-                        fallback_note = "（Generator失败，使用最后尝试的内容）"
+                        chosen = None
+                        for d in reversed(all_drafts):
+                            if not self._is_outline_like(d, current_outline):
+                                chosen = d
+                                break
+                        if chosen is None:
+                            chosen = all_drafts[-1]
+                            fallback_note = "（Generator失败，使用最后尝试的内容）"
+                        else:
+                            fallback_note = "（Generator失败，使用最后尝试的非大纲内容）"
+                        fallback_text = chosen
                     else:
                         fallback_text = ""
                         fallback_note = "（Generator失败，内容仍在恢复中）"
+
+                    try:
+                        print(
+                            f"[Orch] generator_degraded_forced_pass for {section_id}::{subsection_id} - "
+                            f"chosen_len={len(fallback_text or '')}, is_outline_like={self._is_outline_like(fallback_text, fail_outline)}, "
+                            f"total_drafts={len(all_drafts)}"
+                        )
+                    except Exception:
+                        pass
                     
                     self._emit_progress_event(
                         document_id=document_id,

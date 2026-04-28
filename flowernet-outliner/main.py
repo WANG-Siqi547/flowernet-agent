@@ -213,6 +213,17 @@ async def root():
     }
 
 
+@app.get("/health")
+async def health():
+    """Render 健康检查与外部预热探测。"""
+    return {
+        "success": True,
+        "service": "FlowerNet Outliner",
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
 @app.post("/generate-outline")
 def generate_outline(request: OutlineRequest):
     """
@@ -677,20 +688,11 @@ def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
     if serialize_tasks:
         print(f"🔒 尝试获取大纲生成锁...")
         if wait_timeout > 0:
-            print(f"   等待超时: {wait_timeout}s")
-            acquired = outline_generation_lock.acquire(timeout=wait_timeout)
+            print(f"   配置了等待上限 {wait_timeout}s，但当前采用阻塞等待避免远端 429")
         else:
             print(f"   无限等待（blocking mode）")
-            outline_generation_lock.acquire()
-
-        if not acquired:
-            retry_after_seconds = max(1, int(wait_timeout)) if wait_timeout > 0 else 10
-            print(f"❌ 无法获取锁，返回 429")
-            raise HTTPException(
-                status_code=429,
-                detail=f"已有大纲生成任务正在执行，请稍后重试（等待上限 {wait_timeout:.0f}s）",
-                headers={"Retry-After": str(retry_after_seconds)},
-            )
+        outline_generation_lock.acquire()
+        acquired = True
         print(f"✅ 锁获取成功，开始生成")
 
     try:
