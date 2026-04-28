@@ -1403,22 +1403,30 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         def build_outline_async():
             nonlocal outline_resp, outline_error
             try:
+                print(f"[Web] 🌐 发起异步 Outliner 请求: {OUTLINER_URL}/outline/generate-and-save")
+                print(f"[Web]    document_id: {outline_payload['document_id']}")
+                print(f"[Web]    user_requirements: {outline_payload['user_requirements'][:80]}...")
                 outline_resp = post_json_with_retry(
                     f"{OUTLINER_URL}/outline/generate-and-save",
                     outline_payload,
                     stream_timeout,
                 )
+                print(f"[Web] ✅ Outliner 请求成功: {outline_resp.get('success')}")
             except Exception as e:
+                print(f"[Web] ❌ Outliner 请求失败: {str(e)}")
                 outline_error = e
 
         outline_thread = threading.Thread(target=build_outline_async, daemon=True)
         outline_thread.start()
+        print(f"[Web] 🚀 启动异步 Outliner 线程（timeout={stream_timeout}s）")
         outline_deadline = time.time() + stream_timeout
         last_outline_keepalive = time.time()
 
         while outline_thread.is_alive() and time.time() < outline_deadline:
             if time.time() - last_outline_keepalive > 10:
-                heartbeat = json.dumps({'type': 'heartbeat', 'message': '⏳ 正在生成大纲，保持连接中...'})
+                elapsed = int(time.time() - (outline_deadline - stream_timeout))
+                heartbeat = json.dumps({'type': 'heartbeat', 'message': f'⏳ 正在生成大纲（{elapsed}s）...'})
+                print(f"[Web] 💓 发送心跳 (已等待{elapsed}s)")
                 yield f"data: {heartbeat}\n\n"
                 last_outline_keepalive = time.time()
             time.sleep(0.5)
@@ -1426,11 +1434,13 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         outline_thread.join(timeout=1)
 
         if outline_thread.is_alive():
+            print(f"[Web] ⏱️ Outliner 生成超时（>{stream_timeout}s）")
             msg = json.dumps({'type': 'error', 'message': f'大纲生成超时（>{stream_timeout}s），请稍后重试'})
             yield f"data: {msg}\n\n"
             return
 
         if outline_error is not None:
+            print(f"[Web] ❌ Outliner 返回错误: {str(outline_error)}")
             if isinstance(outline_error, HTTPException):
                 detail = outline_error.detail if isinstance(outline_error.detail, str) else json.dumps(outline_error.detail, ensure_ascii=False)
                 msg = json.dumps({'type': 'error', 'message': f'大纲生成失败: {detail}'})
@@ -1441,6 +1451,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             return
 
         if not isinstance(outline_resp, dict):
+            print(f"[Web] ❌ Outliner 返回格式异常: {type(outline_resp)}")
             msg = json.dumps({'type': 'error', 'message': '大纲生成失败: 返回结果格式异常'})
             yield f"data: {msg}\n\n"
             return

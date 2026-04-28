@@ -162,30 +162,42 @@ async def startup_event():
     """启动时初始化"""
     global outliner, history_manager
     
-    # 初始化 Outliner
-    provider = (
-        os.getenv('OUTLINER_PROVIDER_CHAIN', '').strip()
-        or os.getenv('OUTLINER_PROVIDER', '').strip()
-        or 'sensenova,azure,gemini,dashscope,openrouter,ollama'
-    )
-    model = os.getenv('OUTLINER_MODEL', 'gpt-4o-mini')
+    try:
+        # 初始化 Outliner
+        provider = (
+            os.getenv('OUTLINER_PROVIDER_CHAIN', '').strip()
+            or os.getenv('OUTLINER_PROVIDER', '').strip()
+            or 'sensenova,azure,gemini,dashscope,openrouter,ollama'
+        )
+        model = os.getenv('OUTLINER_MODEL', 'gpt-4o-mini')
 
-    api_key = os.getenv('GOOGLE_API_KEY', '')
-    outliner = FlowerNetOutliner(api_key=api_key, model=model, provider=provider)
-    
-    # 初始化 History Manager（默认使用数据库模式）
-    use_db = os.getenv('USE_DATABASE', 'true').lower() == 'true'
-    raw_db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
-    if os.path.isabs(raw_db_path):
-        db_path = raw_db_path
-    else:
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        db_path = os.path.join(project_root, raw_db_path)
-    history_manager = HistoryManager(use_database=use_db, db_path=db_path)
-    
-    print("=" * 50)
-    print("🚀 FlowerNet Outliner 启动成功")
-    print("=" * 50)
+        print(f"🔧 初始化 Outliner（provider={provider}, model={model}）...")
+        api_key = os.getenv('GOOGLE_API_KEY', '')
+        outliner = FlowerNetOutliner(api_key=api_key, model=model, provider=provider)
+        print(f"✅ Outliner 初始化成功")
+        
+        # 初始化 History Manager（默认使用数据库模式）
+        use_db = os.getenv('USE_DATABASE', 'true').lower() == 'true'
+        raw_db_path = os.getenv('DATABASE_PATH', 'flowernet_history.db')
+        if os.path.isabs(raw_db_path):
+            db_path = raw_db_path
+        else:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            db_path = os.path.join(project_root, raw_db_path)
+        
+        print(f"🔧 初始化 History Manager（use_db={use_db}, db_path={db_path}）...")
+        history_manager = HistoryManager(use_database=use_db, db_path=db_path)
+        print(f"✅ History Manager 初始化成功")
+        
+        print("=" * 50)
+        print("🚀 FlowerNet Outliner 启动成功")
+        print("=" * 50)
+    except Exception as e:
+        print(f"❌ 启动初始化失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # 不要让初始化错误导致整个应用崩溃
+        # 应用仍然会启动，但某些功能可能不可用
 
 
 # ============ API Endpoints ============
@@ -640,25 +652,46 @@ def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
             "structure": {...}
         }
     """
+    print(f"\n{'='*60}")
+    print(f"📨 收到 /outline/generate-and-save 请求")
+    print(f"   document_id: {request.document_id}")
+    print(f"   topic: {request.user_requirements[:50]}...")
+    print(f"{'='*60}\n")
+    
     serialize_tasks = os.getenv("OUTLINER_SERIALIZE_TASKS", "true").lower() == "true"
     wait_timeout = float(os.getenv("OUTLINER_TASK_WAIT_TIMEOUT", "0"))
     flow_retries = max(1, int(os.getenv("OUTLINER_FLOW_RETRIES", "8")))
     flow_backoff = max(0.5, float(os.getenv("OUTLINER_FLOW_BACKOFF", "6.0")))
+    
+    print(f"🔧 配置: serialize_tasks={serialize_tasks}, wait_timeout={wait_timeout}, flow_retries={flow_retries}")
+    
+    # 安全检查：确保初始化成功
+    if outliner is None:
+        print(f"❌ 错误：Outliner 未初始化")
+        raise HTTPException(status_code=500, detail="Outliner 服务未正确初始化")
+    if history_manager is None:
+        print(f"❌ 错误：History Manager 未初始化")
+        raise HTTPException(status_code=500, detail="History Manager 服务未正确初始化")
 
     acquired = True
     if serialize_tasks:
+        print(f"🔒 尝试获取大纲生成锁...")
         if wait_timeout > 0:
+            print(f"   等待超时: {wait_timeout}s")
             acquired = outline_generation_lock.acquire(timeout=wait_timeout)
         else:
+            print(f"   无限等待（blocking mode）")
             outline_generation_lock.acquire()
 
         if not acquired:
             retry_after_seconds = max(1, int(wait_timeout)) if wait_timeout > 0 else 10
+            print(f"❌ 无法获取锁，返回 429")
             raise HTTPException(
                 status_code=429,
                 detail=f"已有大纲生成任务正在执行，请稍后重试（等待上限 {wait_timeout:.0f}s）",
                 headers={"Retry-After": str(retry_after_seconds)},
             )
+        print(f"✅ 锁获取成功，开始生成")
 
     try:
         result = None
