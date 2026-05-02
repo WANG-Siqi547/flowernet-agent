@@ -23,6 +23,8 @@ class FlowerNetVerifier:
         # 轻量级组件立即初始化
         self.scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
         self.vectorizer = CountVectorizer(stop_words='english')
+        # persona 检查默认阈值，可通过环境变量覆盖
+        self.persona_sim_threshold = float(os.getenv('PERSONA_SIM_THRESHOLD', '0.65'))
         print("✅ 验证层就绪（模型将按需加载）")
     
     @property
@@ -164,9 +166,20 @@ class FlowerNetVerifier:
         """
         rel = self.calculate_relevancy(draft, outline)
         red = self.calculate_redundancy(draft, history_list)
+        # Persona 检查（如果环境中提供 PERSONA_PROMPT）
+        persona_prompt = os.getenv('PERSONA_PROMPT', '').strip()
+        persona_result = None
+        persona_ok = True
+        if persona_prompt:
+            try:
+                persona_result = self.calculate_persona_alignment(draft, persona_prompt)
+                persona_ok = persona_result.get('similarity', 1.0) >= self.persona_sim_threshold
+            except Exception as e:
+                persona_result = {"error": str(e)}
+                persona_ok = True
         
-        # 判定逻辑：相关性要高，冗余度要低
-        is_passed = (rel['score'] >= rel_threshold) and (red['score'] <= red_threshold)
+        # 判定逻辑：相关性要高，冗余度要低，且满足 persona（如果存在）
+        is_passed = (rel['score'] >= rel_threshold) and (red['score'] <= red_threshold) and persona_ok
         
         advice = "Content looks good."
         if rel['score'] < rel_threshold:
@@ -174,12 +187,47 @@ class FlowerNetVerifier:
         if red['score'] > red_threshold:
             advice = "Content is redundant with previous sections. Provide new information."
 
+        if persona_prompt and not persona_ok:
+            advice = "Content does not match required persona/style. Consider adjusting tone and terminology."
+
         return {
             "is_passed": is_passed,
             "relevancy_index": rel['score'],
             "redundancy_index": red['score'],
             "feedback": advice,
-            "raw_data": {"relevancy": rel['details'], "redundancy": red['details']}
+            "raw_data": {"relevancy": rel['details'], "redundancy": red['details'], "persona": persona_result}
+        }
+
+    def calculate_persona_alignment(self, draft: str, persona_prompt: str) -> dict:
+        """
+        计算生成文本与期望 persona 的对齐度：
+        - 使用 SBERT 计算语义相似度
+        - 简单统计形式化/口语化指标（缩写/缩略词、代词比例）作为启发式参考
+        返回结构化结果供调用者决策
+        """
+        # embeddings
+        emb_draft = self.sbert_model.encode(draft, convert_to_tensor=True)
+        emb_persona = self.sbert_model.encode(persona_prompt, convert_to_tensor=True)
+        sim = util.pytorch_cos_sim(emb_draft, emb_persona).item()
+
+        # 形式化启发式指标
+        lower = draft.lower()
+        contractions = sum(lower.count(c) for c in ["n't", "'re", "'ve", "'ll", "'m", "'s"])  # 英文口语缩写
+        pronouns = sum(lower.count(p) for p in [" i ", " we ", " you ", " my ", " our ", " your "])
+        words = draft.split()
+        avg_word_len = sum(len(w) for w in words) / max(len(words), 1)
+
+        # 技术术语密度（长词和大写词作为粗略代理）
+        long_word_frac = sum(1 for w in words if len(w) > 10) / max(len(words), 1)
+
+        return {
+            "similarity": float(round(sim, 4)),
+            "heuristics": {
+                "contractions": int(contractions),
+                "pronoun_approx": int(pronouns),
+                "avg_word_len": float(round(avg_word_len, 2)),
+                "long_word_frac": float(round(long_word_frac, 4))
+            }
         }
 
 # --- 本地测试代码 ---

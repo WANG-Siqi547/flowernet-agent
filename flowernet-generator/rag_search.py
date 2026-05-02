@@ -6,6 +6,7 @@ import os
 from urllib.parse import unquote, urlparse, parse_qs
 
 import requests
+import os as _os
 
 
 class RAGSearchEngine:
@@ -177,8 +178,22 @@ class RAGSearchEngine:
         results: List[Dict[str, Any]] = []
         seen: set[str] = set()
         query_text = " ".join(str(query or "").split())[:180]
+        semantic_query = self._semantic_query(query_text)
 
-        for item in self._search_arxiv(query_text):
+        arxiv_candidates = [query_text]
+        if semantic_query and semantic_query not in arxiv_candidates:
+            arxiv_candidates.append(semantic_query)
+
+        for arxiv_query in arxiv_candidates:
+            for item in self._search_arxiv(arxiv_query):
+                href = str(item.get("href", ""))
+                if href and href not in seen:
+                    seen.add(href)
+                    results.append(item)
+                    if len(results) >= self.max_results:
+                        return results
+
+        for item in self._search_crossref(semantic_query or query_text):
             href = str(item.get("href", ""))
             if href and href not in seen:
                 seen.add(href)
@@ -203,6 +218,75 @@ class RAGSearchEngine:
                     return results
 
         return results
+
+    def _search_crossref(self, query: str) -> List[Dict[str, Any]]:
+        if not query:
+            return []
+        try:
+            response = self.session.get(
+                "https://api.crossref.org/works",
+                params={
+                    "query": query,
+                    "rows": max(2, self.max_results),
+                    "sort": "relevance",
+                    "order": "desc",
+                },
+                timeout=self.timeout,
+                headers={"User-Agent": self._user_agent},
+            )
+            if response.status_code != 200:
+                return []
+
+            payload = response.json() if response.content else {}
+            items = ((payload or {}).get("message") or {}).get("items") or []
+            results: List[Dict[str, Any]] = []
+            for item in items:
+                title_list = item.get("title") or []
+                title = self._strip_html(str(title_list[0] if title_list else "")).strip()
+                if not title:
+                    continue
+
+                doi = str(item.get("DOI") or "").strip()
+                url = str(item.get("URL") or "").strip()
+                href = url or (f"https://doi.org/{doi}" if doi else "")
+                if not href:
+                    continue
+
+                authors = item.get("author") or []
+                author_names: List[str] = []
+                for author in authors[:3]:
+                    given = str((author or {}).get("given") or "").strip()
+                    family = str((author or {}).get("family") or "").strip()
+                    full_name = " ".join(x for x in [given, family] if x).strip()
+                    if full_name:
+                        author_names.append(full_name)
+                year_parts = ((item.get("issued") or {}).get("date-parts") or [])
+                year = ""
+                if year_parts and isinstance(year_parts[0], list) and year_parts[0]:
+                    year = str(year_parts[0][0])
+
+                source = str(item.get("container-title", [""])[0] if item.get("container-title") else "").strip()
+                summary_bits = []
+                if author_names:
+                    summary_bits.append(", ".join(author_names))
+                if year:
+                    summary_bits.append(year)
+                if source:
+                    summary_bits.append(source)
+
+                results.append(
+                    {
+                        "title": title,
+                        "body": " | ".join(summary_bits)[:400],
+                        "href": href,
+                        "source": "crossref.org",
+                    }
+                )
+                if len(results) >= self.max_results:
+                    break
+            return results
+        except Exception:
+            return []
 
     def _search_arxiv(self, query: str) -> List[Dict[str, Any]]:
         if not query:
@@ -350,7 +434,51 @@ class RAGSearchEngine:
             key=lambda x: (float(x.get("quality_score", 0.0)), float(x.get("semantic_score", 0.0))),
             reverse=True,
         )
+        # Apply optional semantic re-ranking using SBERT if enabled
+        try:
+            use_rerank = _os.getenv("RAG_USE_SEMANTIC_RERANKER", "false").lower() == "true"
+        except Exception:
+            use_rerank = False
+
+        if use_rerank and ranked:
+            try:
+                ranked = self._semantic_rerank(query, ranked, top_k=self.max_results)
+            except Exception:
+                # Fall back to existing ranking on any reranker error
+                pass
+
         return ranked[: self.max_results]
+
+    def _semantic_rerank(self, query: str, items: List[Dict[str, Any]], top_k: int | None = None) -> List[Dict[str, Any]]:
+        """Lightweight SBERT reranker. Uses SentenceTransformer if available; falls back silently.
+
+        Returns a re-ordered list of items (descending by similarity), enriched with `sbert_score`.
+        Controlled by env `RAG_USE_SEMANTIC_RERANKER=true` and optional `RERANKER_MODEL`.
+        """
+        if not items:
+            return items
+        try:
+            from sentence_transformers import SentenceTransformer, util
+        except Exception:
+            return items
+
+        try:
+            model_name = _os.getenv("RERANKER_MODEL", "sentence-transformers/paraphrase-MiniLM-L6-v2")
+            model = getattr(self, "_sbert_model", None)
+            if model is None:
+                model = SentenceTransformer(model_name)
+                setattr(self, "_sbert_model", model)
+
+            texts = [f"{it.get('title','')} {it.get('body','')}" for it in items]
+            q_emb = model.encode(str(query or ""), convert_to_tensor=True)
+            docs_emb = model.encode(texts, convert_to_tensor=True)
+            sims = util.cos_sim(q_emb, docs_emb)[0].cpu().numpy().tolist()
+            for it, sim in zip(items, sims):
+                it["sbert_score"] = float(sim)
+            items.sort(key=lambda x: (float(x.get("sbert_score", 0.0)), float(x.get("quality_score", 0.0))), reverse=True)
+            return items[:top_k] if top_k else items
+        except Exception:
+            return items
 
     def _compact_query(self, query: str) -> str:
         tokens = re.findall(r"[A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{0,30}", query)

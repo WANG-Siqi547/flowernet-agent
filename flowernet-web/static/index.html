@@ -104,8 +104,28 @@
       "Evaluating via UniEval": "bg-sky-100 text-sky-800",
       Repairing: "bg-orange-100 text-orange-800",
       Passed: "bg-emerald-100 text-emerald-800",
+      Failed: "bg-rose-100 text-rose-800",
       Waiting: "bg-slate-100 text-slate-700"
     };
+
+    const createEmptyVerifierDetail = () => ({
+      is_passed: false,
+      relevancy_index: 0,
+      redundancy_index: 0,
+      rel_threshold: 0,
+      red_threshold: 0,
+      quality_score: 0,
+      quality_score_threshold: 0,
+      quality_score_passed: false,
+      quality_dimensions: {},
+      quality_dimensions_check: {},
+      quality_dimensions_failed: [],
+      quality_dimensions_passed: false,
+      dimension_thresholds: {},
+      source_check: { passed: false, reference_count: 0, reason: "" },
+      source_check_passed: false,
+      source_reference_count: 0,
+    });
 
     function CountUp({ value, digits = 0 }) {
       const [display, setDisplay] = useState(0);
@@ -161,78 +181,283 @@
       );
     }
 
-    function RadarMetrics({ metrics }) {
-      const labels = ["topic_alignment", "logical_coherence", "evidence_grounding", "relevancy_index"];
-      const cx = 120;
-      const cy = 120;
-      const radius = 88;
-      const points = labels.map((key, i) => {
-        const angle = -Math.PI / 2 + (i * Math.PI * 2) / labels.length;
+    function RadarMetrics({ metrics, summary, verifierDetail }) {
+      const dimensionItems = [
+        { key: "topic_alignment", label: "topic_alignment", color: "#fb923c", meaning: "主题对齐度" },
+        { key: "coverage_completeness", label: "coverage_completeness", color: "#14b8a6", meaning: "覆盖完整度" },
+        { key: "logical_coherence", label: "logical_coherence", color: "#ec4899", meaning: "逻辑连贯性" },
+        { key: "evidence_grounding", label: "evidence_grounding", color: "#84cc16", meaning: "证据支撑度" },
+        { key: "novelty", label: "novelty", color: "#ef4444", meaning: "创新性" },
+        { key: "structure_clarity", label: "structure_clarity", color: "#6366f1", meaning: "结构清晰度" },
+      ];
+      const radarKeys = dimensionItems.map((item) => item.key);
+      const cx = 160;
+      const cy = 122;
+      const radius = 82;
+      const hexagonPoints = (scale = 1) => radarKeys.map((_, i) => {
+        const angle = -Math.PI / 2 + (i * Math.PI * 2) / radarKeys.length;
+        return [cx + Math.cos(angle) * radius * scale, cy + Math.sin(angle) * radius * scale];
+      }).map((p) => p.join(",")).join(" ");
+      const valuePoints = radarKeys.map((key, i) => {
+        const angle = -Math.PI / 2 + (i * Math.PI * 2) / radarKeys.length;
         const v = Math.max(0, Math.min(1, metrics[key] || 0));
         return [cx + Math.cos(angle) * radius * v, cy + Math.sin(angle) * radius * v];
-      });
-      const pointsText = points.map((p) => p.join(",")).join(" ");
+      }).map((p) => p.join(",")).join(" ");
+      const currentSourceCheck = verifierDetail?.source_check || {};
+      const qualityPassed = Boolean(verifierDetail?.quality_dimensions_passed);
+      const sourcePassed = Boolean(verifierDetail?.source_check_passed);
       return (
         <div className="rounded-xl3 border border-slate-200 bg-white p-5 shadow-neumorph">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-display text-lg">UniEval Quality Control</h3>
-            <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold">UniEval Connected</span>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-display text-lg">Verifier Quality Control</h3>
+            <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold">Current Subsection Snapshot</span>
           </div>
-          <div className="grid md:grid-cols-[260px_1fr] gap-4 items-center">
-            <svg viewBox="0 0 240 240" className="w-56 h-56 mx-auto">
-              <polygon className="radar-grid" points="120,32 208,120 120,208 32,120"></polygon>
-              <polygon className="radar-grid" points="120,52 188,120 120,188 52,120"></polygon>
-              <polygon className="radar-grid" points="120,72 168,120 120,168 72,120"></polygon>
-              <polygon className="radar-shape" points={pointsText}></polygon>
-            </svg>
-            <div className="space-y-3">
-              {labels.map((label) => {
-                const val = Math.max(0, Math.min(1, metrics[label] || 0));
-                return (
-                  <div key={label}>
-                    <div className="flex justify-between text-xs mb-1"><span className="font-semibold text-slate-700">{label}</span><span>{val.toFixed(3)}</span></div>
-                    <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
-                      <motion.div initial={{ width: 0 }} animate={{ width: `${Math.round(val * 100)}%` }} className="h-full bg-gradient-to-r from-coral to-peach rounded-full" />
-                    </div>
-                  </div>
-                );
-              })}
+          <div className="flex flex-col md:flex-row gap-4 mb-4">
+            <div className="shrink-0 mx-auto md:mx-0">
+              <svg viewBox="0 0 320 260" className="w-48 h-40">
+                <polygon className="radar-grid" points={hexagonPoints(1)}></polygon>
+                <polygon className="radar-grid" points={hexagonPoints(0.78)}></polygon>
+                <polygon className="radar-grid" points={hexagonPoints(0.56)}></polygon>
+                <polygon className="radar-grid" points={hexagonPoints(0.34)}></polygon>
+                <polygon className="radar-shape" points={valuePoints}></polygon>
+              </svg>
             </div>
+            <div className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                <div><span className="font-semibold text-slate-700">当前小节判定:</span> {verifierDetail?.is_passed ? "通过" : "未通过"}</div>
+                <div><span className="font-semibold text-slate-700">UniEval 维度判定:</span> {qualityPassed ? "通过" : "未通过"}</div>
+                <div><span className="font-semibold text-slate-700">引用判定:</span> {sourcePassed ? "通过" : "未通过"}</div>
+                <div><span className="font-semibold text-slate-700">Relevancy:</span> {Number(verifierDetail?.relevancy_index || 0).toFixed(3)} / {Number(verifierDetail?.rel_threshold || 0).toFixed(2)}</div>
+                <div><span className="font-semibold text-slate-700">Redundancy:</span> {Number(verifierDetail?.redundancy_index || 0).toFixed(3)} / {Number(verifierDetail?.red_threshold || 0).toFixed(2)}</div>
+                <div><span className="font-semibold text-slate-700">Source refs:</span> {Number(verifierDetail?.source_reference_count || 0)}</div>
+                <div><span className="font-semibold text-slate-700">UniEval samples:</span> {summary?.unieval_available_subsections ?? 0}</div>
+                <div><span className="font-semibold text-slate-700">UniEval fallback:</span> {summary?.unieval_fallback_subsections ?? 0}</div>
+                <div><span className="font-semibold text-slate-700">Quality avg:</span> {(summary?.quality_score_avg ?? 0).toFixed(3)}</div>
+                <div><span className="font-semibold text-slate-700">Quality score:</span> {Number(verifierDetail?.quality_score || 0).toFixed(3)} / {Number(verifierDetail?.quality_score_threshold || 0).toFixed(2)} {verifierDetail?.quality_score_passed ? "PASS" : "FAIL"}</div>
+              </div>
+              <div className="pt-1 text-[11px] text-slate-500 leading-5">
+                这里展示的是"当前小节"的 verifier 快照，不是累计平均值。
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {dimensionItems.map((item) => {
+              const val = Math.max(0, Math.min(1, metrics[item.key] || 0));
+              const detail = verifierDetail?.quality_dimensions_check?.[item.key] || {};
+              const threshold = Number(verifierDetail?.dimension_thresholds?.[item.key] ?? 0);
+              const passed = Boolean(detail.passed);
+              return (
+                <div key={item.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="text-sm font-semibold text-slate-800">{item.meaning}</div>
+                    <span className={`shrink-0 text-[10px] font-semibold rounded-full px-2 py-0.5 ${passed ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{passed ? "PASS" : "FAIL"}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 mb-1">{item.label}</div>
+                  <div className="text-[11px] text-slate-500 mb-2">threshold: {threshold.toFixed(2)}</div>
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
+                    <span>value</span>
+                    <span className="font-medium text-slate-700">{val.toFixed(3)}</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                    <motion.div initial={{ width: 0 }} animate={{ width: `${Math.round(val * 100)}%` }} className="h-full rounded-full" style={{ backgroundColor: item.color }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-3 text-[11px] text-slate-500 leading-5">
+            UniEval + 启发式双通道融合评估：覆盖主题对齐、覆盖完整度、逻辑连贯、证据支撑、创新性、结构清晰度；同时检查 relevancy、redundancy 和引用。PASS/FAIL 基于各维度 value 与 threshold 对比得出。
           </div>
         </div>
       );
     }
 
-    function BanditChart({ data }) {
-      const keys = ["llm", "rule", "defect_topic"];
+    function BanditChart({ data, summary }) {
+      const keys = ["llm", "rule", "rule_structured", "defect_topic", "defect_evidence", "defect_structure"];
       const maxLen = Math.max(...keys.map((k) => (data[k] || []).length), 1);
-      const toPath = (arr) => {
+      const chartWidth = 440;
+      const chartHeight = 128;
+      const legendItems = [
+        { key: "llm", label: "llm", note: "LLM 直接改写", color: "bg-red-500" },
+        { key: "rule", label: "rule", note: "规则修正", color: "bg-cyan-500" },
+        { key: "rule_structured", label: "rule_structured", note: "结构化规则修正", color: "bg-violet-500" },
+        { key: "defect_topic", label: "defect_topic", note: "主题定向修复", color: "bg-green-500" },
+        { key: "defect_evidence", label: "defect_evidence", note: "证据定向修复", color: "bg-orange-500" },
+        { key: "defect_structure", label: "defect_structure", note: "结构定向修复", color: "bg-blue-500" },
+      ];
+      const modeGuideItems = [
+        { key: "epsilon_explore", title: "epsilon_explore", desc: "以 ε 概率随机探索备选策略臂，抑制早期过拟合，适用于模型尚处收敛初期的场景。" },
+        { key: "epsilon_greedy", title: "epsilon_greedy", desc: "以贪心方式优先利用当前最优臂，同时保留小概率随机探索，兼顾收敛速度与策略稳健性。" },
+        { key: "exploit", title: "exploit", desc: "纯利用模式，持续选取历史累积收益最高的策略臂，适用于奖励分布已趋于稳定的阶段。" },
+        { key: "softmax", title: "softmax", desc: "依据各臂累积分数进行 softmax 概率采样，收益越高的臂被选中的概率越大。" },
+        { key: "drift_recover", title: "drift_recover", desc: "检测到奖励分布发生漂移时自动提升探索率，触发策略重评估以适应新的数据分布。" },
+        { key: "score_exploit", title: "score_exploit", desc: "按当前累积分数对策略臂降序排列，优先调度高分策略执行。" },
+        { key: "ucb", title: "ucb", desc: "置信上界策略，优先选择高均值且不确定性大的臂。" },
+      ];
+      const toPath = (arr, plotMin, plotMax) => {
         if (!arr || arr.length === 0) {
           return "";
         }
+        const min = typeof plotMin === 'number' ? plotMin : 0.0;
+        const max = typeof plotMax === 'number' && plotMax > min ? plotMax : Math.max(min + 0.0001, 0.1);
+        const yTop = 20; // within group coordinates
+        const yBottom = 104;
+        const range = yBottom - yTop;
         return arr.map((v, i) => {
-          const x = (i / Math.max(maxLen - 1, 1)) * 320;
-          const y = 128 - Math.max(0, Math.min(1, v)) * 104;
+          const x = 28 + (i / Math.max(maxLen - 1, 1)) * chartWidth;
+          const val = Number(v);
+          const norm = isFinite(val) ? Math.max(0, Math.min(1, (val - min) / (max - min))) : 0;
+          const y = yBottom - norm * range;
           return `${i === 0 ? "M" : "L"}${x} ${y}`;
         }).join(" ");
       };
+      const currentMode = String(summary?.bandit_last_selection_mode || "n/a");
+      const currentModeItem = modeGuideItems.find((item) => item.key === currentMode);
       return (
         <div className="rounded-xl3 bg-slatepanel p-5 text-slate-100 shadow-darkcard border border-slate-700/70">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-display text-lg">Controller Strategies (Contextual Bandit)</h3>
             <span className="text-xs px-2 py-1 rounded-full bg-slate-700 text-slate-200">Adaptive Timeout Active</span>
           </div>
-          <svg viewBox="0 0 340 140" className="w-full h-40 bg-slate-900/60 rounded-2xl p-2">
-            <path d={toPath(data.llm)} stroke="#f59e0b" fill="none" strokeWidth="2.5" />
-            <path d={toPath(data.rule)} stroke="#60a5fa" fill="none" strokeWidth="2.5" />
-            <path d={toPath(data.defect_topic)} stroke="#34d399" fill="none" strokeWidth="2.5" />
+          <svg viewBox="0 0 500 190" className="w-full h-56 bg-slate-900/60 rounded-2xl p-2">
+            {/* Y-axis */}
+            <line x1="55" y1="4" x2="55" y2="168" stroke="#64748b" strokeWidth="1" />
+            {/* X-axis */}
+            <line x1="55" y1="168" x2="490" y2="168" stroke="#64748b" strokeWidth="1" />
+            {/* Dynamic Y-axis label */}
+            {
+              (() => {
+                const pmin = Number(summary?.bandit_plot_y_min ?? 0.0);
+                const pmax = Number(summary?.bandit_plot_y_max ?? 0.1);
+                const label = `Reward scale (${pmin.toFixed(3)} - ${pmax.toFixed(3)})`;
+                return <text x="10" y="86" fontSize="9" fill="#94a3b8" textAnchor="middle" transform="rotate(-90 10 86)">{label}</text>;
+              })()
+            }
+            {/* X-axis label */}
+            <text x="490" y="180" fontSize="9" fill="#94a3b8" textAnchor="end">Controller events over time</text>
+            {/* Y-axis tick marks and labels (dynamic) */}
+            {
+              (() => {
+                const pmin = Number(summary?.bandit_plot_y_min ?? 0.0);
+                const pmax = Number(summary?.bandit_plot_y_max ?? 0.1);
+                const min = pmin;
+                const max = pmax > min ? pmax : min + 0.0001;
+                const yTop = 20;
+                const yBottom = 104;
+                const range = yBottom - yTop;
+                const ticks = 4;
+                const nodes = [];
+                for (let t = 0; t <= ticks; t += 1) {
+                  const frac = t / ticks;
+                  const y = yBottom - frac * range;
+                  const val = (min + (1 - frac) * (max - min)).toFixed(3);
+                  nodes.push(<line key={`tick-${t}`} x1="51" y1={y} x2="55" y2={y} stroke="#64748b" strokeWidth="1" />);
+                  nodes.push(<text key={`tick-label-${t}`} x="49" y={y + 4} fontSize="9" fill="#64748b" textAnchor="end">{val}</text>);
+                  nodes.push(<line key={`grid-${t}`} x1="55" y1={y} x2="490" y2={y} stroke="#475569" strokeWidth="0.5" strokeDasharray="2,2" />);
+                }
+                return nodes;
+              })()
+            }
+            {/* Paths with new color scheme */}
+            <g transform="translate(55, 4)">
+              <path d={toPath(data.llm, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#ef4444" fill="none" strokeWidth="2.5" />
+              <path d={toPath(data.rule, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#06b6d4" fill="none" strokeWidth="2.5" />
+              <path d={toPath(data.rule_structured, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#8b5cf6" fill="none" strokeWidth="2.5" />
+              <path d={toPath(data.defect_topic, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#10b981" fill="none" strokeWidth="2.5" />
+              <path d={toPath(data.defect_evidence, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#f97316" fill="none" strokeWidth="2.5" />
+              <path d={toPath(data.defect_structure, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#3b82f6" fill="none" strokeWidth="2.5" />
+            </g>
           </svg>
-          <div className="mt-3 text-xs grid md:grid-cols-3 gap-2">
-            <div><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-2"></span>llm reward trend</div>
-            <div><span className="inline-block w-2 h-2 rounded-full bg-sky-400 mr-2"></span>rule reward trend</div>
-            <div><span className="inline-block w-2 h-2 rounded-full bg-emerald-400 mr-2"></span>defect_topic reward trend</div>
+          <div className="mt-3 rounded-2xl border border-slate-700/60 bg-slate-950/35 p-3 text-xs text-slate-200">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="font-semibold text-slate-100">Legend</div>
+              <div className="text-[11px] text-slate-400">Y = 单次 arm 修复收益（reward, 0-1），X = controller 事件时间序列</div>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {legendItems.map((item) => (
+                <div key={item.key} className="flex items-start gap-2 rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2">
+                  <span className={`mt-1 inline-block h-2.5 w-2.5 rounded-full ${item.color}`} />
+                  <div className="min-w-0">
+                    <div className="font-semibold text-slate-100">{item.label}</div>
+                    <div className="text-[11px] text-slate-400">{item.note} reward trend</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4 rounded-2xl border border-slate-600/70 bg-slate-950/55 p-3 text-xs text-slate-200 space-y-1">
+            <div className="grid md:grid-cols-2 gap-2">
+              <div><span className="font-semibold text-white">Last arm:</span> {summary?.bandit_last_selected_arm || 'n/a'}</div>
+              <div><span className="font-semibold text-white">Mode:</span> {currentMode}</div>
+              <div className="md:col-span-2">
+                <div><span className="font-semibold text-white">Counts</span> <span className="text-[11px] text-slate-400">（各策略臂累计被选次数；差异显著属正常表现，高收益臂被调用频次自然更高）</span><span className="font-semibold text-white">：</span> llm {summary?.bandit_selected_arm_counts?.llm || 0} · rule {summary?.bandit_selected_arm_counts?.rule || 0} · rule_structured {summary?.bandit_selected_arm_counts?.rule_structured || 0} · defect_topic {summary?.bandit_selected_arm_counts?.defect_topic || 0} · defect_evidence {summary?.bandit_selected_arm_counts?.defect_evidence || 0} · defect_structure {summary?.bandit_selected_arm_counts?.defect_structure || 0}</div>
+              </div>
+              <div className="md:col-span-2"><span className="font-semibold text-white">Reward avg:</span> {(summary?.bandit_reward_avg ?? 0).toFixed(3)} <span className="text-[11px] text-slate-400">（正常区间：0.02–0.05；综合质量提升幅度、风险控制系数与约束惩罚项计算所得，单次增量典型幅度 0.01–0.1）</span></div>
+            </div>
+            <div className="pt-1 text-[11px] text-slate-300 leading-5">
+              折线轨迹反映各策略臂的 reward 随 Controller 事件序列的动态变化；count 为该臂的累计选中次数，与 reward 为独立统计维度。
+            </div>
+            <div className="pt-2">
+              <div className="text-[11px] font-semibold text-slate-200 mb-2">Mode Guide</div>
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {modeGuideItems.map((item) => (
+                  <div key={item.key} className={`rounded-xl border px-3 py-2 ${item.key === currentMode ? "border-cyan-400/70 bg-cyan-500/10" : "border-slate-700/60 bg-slate-900/35"}`}>
+                    <div className="text-[11px] font-semibold text-slate-100">{item.title}</div>
+                    <div className="text-[11px] text-slate-300 leading-5">{item.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
+      );
+    }
+
+    function MethodologyPanel() {
+      const references = [
+        { label: "[1] Auer et al. (2002)", text: "Finite-time Analysis of the Multiarmed Bandit Problem (UCB)." },
+        { label: "[2] Li et al. (2010)", text: "A Contextual-Bandit Approach to Personalized News Article Recommendation." },
+        { label: "[3] Zhong et al. (2022)", text: "UniEval: A Unified Evaluation Metric for Text Generation." },
+        { label: "[4] Lewis et al. (2020)", text: "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks." },
+      ];
+
+      const sections = [
+        {
+          title: "Outliner",
+          desc: "先生成章节/小节结构，再把每个 subsection 拆成可验证的内容目标，降低长文档写作时的全局漂移。",
+        },
+        {
+          title: "Generator",
+          desc: "按小节逐个生成正文，结合历史内容与检索结果做上下文续写，形成可追踪的增量写作过程。",
+        },
+        {
+          title: "Verifier",
+          desc: "将 relevancy、redundancy、UniEval 六维质量、引用质量和来源检查合并判定，输出当前小节快照。",
+        },
+        {
+          title: "Controller",
+          desc: "使用 Contextual Bandit 在多种修复策略中做在线选择，根据 reward 迭代优化下一次改纲与重写路径。",
+        },
+      ];
+
+      return (
+        <section className="rounded-xl3 border border-white/70 bg-white/60 backdrop-blur-lg p-5 md:p-6 shadow-glass">
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
+            <div>
+              <h3 className="font-display text-xl text-slate-900">How FlowerNet Works</h3>
+              <p className="text-sm text-slate-600 mt-1">把长文档生成拆成结构规划、内容生成、验证和修复四个可解释阶段，并用在线 bandit 控制修复策略。</p>
+            </div>
+            <div className="text-xs rounded-full bg-slate-900 text-slate-100 px-3 py-1 inline-flex w-fit">Algorithms • Components • Evidence</div>
+          </div>
+          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {sections.map((item) => (
+              <div key={item.title} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="font-semibold text-slate-900">{item.title}</div>
+                <div className="text-sm text-slate-600 mt-1 leading-6">{item.desc}</div>
+              </div>
+            ))}
+          </div>
+        </section>
       );
     }
 
@@ -261,7 +486,148 @@
       );
     }
 
+    function FullMetricsBoard({ loading, error, summary, metrics, currentMetrics, verifierDetail }) {
+      const categoryMap = summary?.categories || {};
+      const categoryEntries = Object.entries(categoryMap);
+
+      const getMetricKeysForCategory = (categoryName, info) => {
+        const direct = Array.isArray(info?.metrics) ? info.metrics : [];
+        if (direct.length > 0) return direct;
+        return Object.entries(metrics || {})
+          .filter(([, metric]) => String(metric?.category || "") === String(categoryName))
+          .map(([key]) => key);
+      };
+
+      const getRuntimeMetric = (metricKey) => {
+        const q = currentMetrics || {};
+        const v = verifierDetail || {};
+        const sourceCheck = v.source_check || {};
+        switch (metricKey) {
+          case "relevancy_index":
+            return Number(v.relevancy_index ?? 0);
+          case "redundancy_index":
+            return Number(v.redundancy_index ?? 0);
+          case "topic_alignment":
+            return Number(q.topic_alignment ?? 0);
+          case "coverage_completeness":
+            return Number(q.coverage_completeness ?? 0);
+          case "logical_coherence":
+            return Number(q.logical_coherence ?? 0);
+          case "evidence_grounding":
+            return Number(q.evidence_grounding ?? 0);
+          case "novelty":
+            return Number(q.novelty ?? 0);
+          case "structure_clarity":
+            return Number(q.structure_clarity ?? 0);
+          case "quality_score_avg":
+            return Number(v.quality_score ?? q.quality_score ?? 0);
+          case "source_refs_coverage":
+          case "unique_citations":
+          case "high_quality_per_section":
+            return Number(v.source_reference_count ?? sourceCheck.reference_count ?? 0);
+          case "domain_similarity": {
+            const sem = sourceCheck.matched_semantic_scores || {};
+            const values = Object.values(sem).map((x) => Number(x || 0)).filter((x) => Number.isFinite(x));
+            return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+          }
+          default:
+            return null;
+        }
+      };
+
+      const formatRuntimeMetric = (metricKey) => {
+        const value = getRuntimeMetric(metricKey);
+        if (value === null || Number.isNaN(value)) return "N/A";
+        if (["unique_citations", "high_quality_per_section", "source_refs_coverage"].includes(metricKey)) {
+          return String(Math.round(value));
+        }
+        return Number(value).toFixed(3);
+      };
+
+      return (
+        <section className="rounded-xl3 border border-slate-200 bg-white p-5 shadow-neumorph">
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
+            <div>
+              <h3 className="font-display text-xl text-slate-900">FlowerNet Full Metrics Board</h3>
+              <p className="text-sm text-slate-600 mt-1">展示所有必须检测的质量指标、阈值和通过标准，并解释 FlowerNet 的核心优势。</p>
+            </div>
+            <div className="text-xs rounded-full bg-slate-900 text-slate-100 px-3 py-1 inline-flex w-fit">
+              {summary ? `${summary.total_metrics || 0} metrics · ${summary.total_categories || 0} categories` : "Metrics catalog"}
+            </div>
+          </div>
+
+          {loading && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              正在加载指标定义...
+            </div>
+          )}
+
+          {!loading && error && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+              指标加载失败：{error}
+            </div>
+          )}
+
+          {!loading && !error && (
+            <div className="space-y-4">
+              <div className="grid md:grid-cols-3 gap-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs text-slate-500">Total Metrics</div>
+                  <div className="text-2xl font-display text-slate-900">{summary?.total_metrics || Object.keys(metrics || {}).length}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs text-slate-500">Categories</div>
+                  <div className="text-2xl font-display text-slate-900">{summary?.total_categories || categoryEntries.length}</div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs text-slate-500">Core Features</div>
+                  <div className="text-2xl font-display text-slate-900">{summary?.total_features || 0}</div>
+                </div>
+              </div>
+
+              {categoryEntries.map(([categoryName, info]) => {
+                const metricKeys = getMetricKeysForCategory(categoryName, info);
+                return (
+                  <div key={categoryName} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="font-semibold text-slate-800">{categoryName}</div>
+                      <span className="text-[11px] rounded-full px-2 py-0.5 bg-slate-200 text-slate-700">{metricKeys.length} metrics</span>
+                    </div>
+                    <div className="text-xs text-slate-600 mb-3">{info?.description || ""}</div>
+                    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                      {metricKeys.map((metricKey) => {
+                        const metric = metrics?.[metricKey] || {};
+                        return (
+                          <div key={metricKey} className="rounded-xl border border-slate-200 bg-white p-3">
+                            <div className="text-sm font-semibold text-slate-800">{metric.name || metricKey}</div>
+                            <div className="text-[11px] text-slate-500 mt-1">{metric.description || ""}</div>
+                            <div className="mt-2 text-[11px] text-slate-700">
+                              <span className="font-semibold">Threshold:</span> {String(metric.threshold ?? "N/A")}
+                            </div>
+                            <div className="text-[11px] text-slate-700">
+                              <span className="font-semibold">Current:</span> {formatRuntimeMetric(metricKey)}
+                            </div>
+                            <div className="text-[11px] text-slate-700">
+                              <span className="font-semibold">Pass:</span> {metric.pass_criteria || "N/A"}
+                            </div>
+                            <div className="text-[11px] text-slate-500 mt-1">
+                              {metric.feature || ""}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      );
+    }
+
     function App() {
+      const banditSeriesKeys = ["llm", "rule", "rule_structured", "defect_topic", "defect_evidence", "defect_structure"];
       const [topic, setTopic] = useState("");
       const [background, setBackground] = useState("Research student in AI systems");
       const [extra, setExtra] = useState("");
@@ -273,35 +639,103 @@
       const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 });
       const completedSubsectionsRef = useRef(new Set()); // 追踪真正完成的小节（passed/generated 事件）
       const [doc, setDoc] = useState({ title: "", content: "" });
-      const [uptimeStart] = useState(Date.now());
-      const [uptimeSec, setUptimeSec] = useState(0);
-      const [totalGenerations, setTotalGenerations] = useState(132);
+      const [generationStartTime, setGenerationStartTime] = useState(null);
+      const [generationElapsedSec, setGenerationElapsedSec] = useState(0);
+      const [totalGenerations, setTotalGenerations] = useState(() => {
+        const saved = Number(localStorage.getItem("flowernet_total_generations") || "132");
+        return Number.isFinite(saved) ? saved : 132;
+      });
       const [subsections, setSubsections] = useState([]);
       const [metrics, setMetrics] = useState({
         topic_alignment: 0,
+        coverage_completeness: 0,
         logical_coherence: 0,
         evidence_grounding: 0,
-        relevancy_index: 0,
+        novelty: 0,
+        structure_clarity: 0,
         quality_score: 0
       });
-      const [banditSeries, setBanditSeries] = useState({ llm: [], rule: [], defect_topic: [] });
+      const [verifierDetail, setVerifierDetail] = useState(() => createEmptyVerifierDetail());
+      const [qualitySummary, setQualitySummary] = useState({
+        quality_score_avg: 0,
+        quality_score_count: 0,
+        unieval_available_subsections: 0,
+        unieval_fallback_subsections: 0,
+      });
+      const [banditSeries, setBanditSeries] = useState({ llm: [], rule: [], rule_structured: [], defect_topic: [], defect_evidence: [], defect_structure: [] });
+      const [banditSummary, setBanditSummary] = useState({
+        bandit_selected_arm_counts: {},
+        bandit_reward_avg: 0,
+        bandit_last_selected_arm: "",
+        bandit_last_selection_mode: "",
+        bandit_event_count: 0,
+        bandit_plot_y_min: 0.0,
+        bandit_plot_y_max: 0.1,
+      });
+      const [metricsCatalogSummary, setMetricsCatalogSummary] = useState(null);
+      const [metricsCatalogAll, setMetricsCatalogAll] = useState({});
+      const [metricsCatalogLoading, setMetricsCatalogLoading] = useState(true);
+      const [metricsCatalogError, setMetricsCatalogError] = useState("");
       const sseRef = useRef(null);
       const streamEndedRef = useRef(false);
       const documentIdRef = useRef("");
 
       useEffect(() => {
-        const timer = setInterval(() => setUptimeSec(Math.floor((Date.now() - uptimeStart) / 1000)), 1000);
+        localStorage.setItem("flowernet_total_generations", String(totalGenerations));
+      }, [totalGenerations]);
+
+      useEffect(() => {
+        const timer = setInterval(() => {
+          if (generationStartTime && running) {
+            setGenerationElapsedSec(Math.floor((Date.now() - generationStartTime) / 1000));
+          }
+        }, 1000);
         return () => clearInterval(timer);
-      }, [uptimeStart]);
+      }, [generationStartTime, running]);
+
+      useEffect(() => {
+        let cancelled = false;
+        const loadMetricsCatalog = async () => {
+          setMetricsCatalogLoading(true);
+          setMetricsCatalogError("");
+          try {
+            const [summaryResp, allResp] = await Promise.all([
+              fetch("/api/metrics/dashboard-summary"),
+              fetch("/api/metrics/all"),
+            ]);
+            if (!summaryResp.ok || !allResp.ok) {
+              throw new Error(`HTTP ${summaryResp.status}/${allResp.status}`);
+            }
+            const summaryJson = await summaryResp.json();
+            const allJson = await allResp.json();
+            if (!cancelled) {
+              setMetricsCatalogSummary(summaryJson?.summary || null);
+              setMetricsCatalogAll(allJson?.metrics || {});
+            }
+          } catch (err) {
+            if (!cancelled) {
+              setMetricsCatalogError(String(err?.message || err || "unknown error"));
+            }
+          } finally {
+            if (!cancelled) {
+              setMetricsCatalogLoading(false);
+            }
+          }
+        };
+        loadMetricsCatalog();
+        return () => {
+          cancelled = true;
+        };
+      }, []);
+
+      const generationTimeText = useMemo(() => {
+        const h = Math.floor(generationElapsedSec / 3600);
+        const m = Math.floor((generationElapsedSec % 3600) / 60);
+        const s = generationElapsedSec % 60;
+        return `${h}h ${m}m ${s}s`;
+      }, [generationElapsedSec]);
 
       const badges = ["Deployed on Render", "UniEval Connected", "Adaptive Timeout Active"];
-
-      const uptimeText = useMemo(() => {
-        const h = Math.floor(uptimeSec / 3600);
-        const m = Math.floor((uptimeSec % 3600) / 60);
-        const s = uptimeSec % 60;
-        return `${h}h ${m}m ${s}s`;
-      }, [uptimeSec]);
 
       const closeSse = () => {
         if (sseRef.current) {
@@ -323,6 +757,7 @@
         if (stage === "verifier_start") return "Evaluating via UniEval";
         if (stage === "verifier_failed" || stage === "controller_start") return "Repairing";
         if (stage === "subsection_passed" || stage === "verifier_passed") return "Passed";
+        if (stage === "subsection_failed" || stage === "subsection_forced_pass") return "Failed";
         return "Waiting";
       };
 
@@ -335,14 +770,20 @@
         streamEndedRef.current = false;
         documentIdRef.current = "";
         setRunning(true);
+        setGenerationStartTime(Date.now());
+        setGenerationElapsedSec(0);
         setStatusText("Starting generation flow...");
         setActiveNode("outliner");
+        completedSubsectionsRef.current = new Set();
         const total = Math.max(1, Number(chapterCount) * Number(subCount));
         setProgress({ current: 0, total, percent: 0 });
         setSubsections([]);
         setDoc({ title: "", content: "" });
-        setMetrics({ topic_alignment: 0, logical_coherence: 0, evidence_grounding: 0, relevancy_index: 0, quality_score: 0 });
-        setBanditSeries({ llm: [0.3], rule: [0.2], defect_topic: [0.15] });
+        setMetrics({ topic_alignment: 0, coverage_completeness: 0, logical_coherence: 0, evidence_grounding: 0, novelty: 0, structure_clarity: 0, quality_score: 0 });
+        setVerifierDetail(createEmptyVerifierDetail());
+        setQualitySummary({ quality_score_avg: 0, quality_score_count: 0, unieval_available_subsections: 0, unieval_fallback_subsections: 0 });
+        setBanditSeries({ llm: [], rule: [], rule_structured: [], defect_topic: [], defect_evidence: [], defect_structure: [] });
+        setBanditSummary({ bandit_selected_arm_counts: {}, bandit_reward_avg: 0, bandit_last_selected_arm: "", bandit_last_selection_mode: "", bandit_event_count: 0 });
 
         const params = new URLSearchParams({
           topic,
@@ -378,7 +819,7 @@
             setSubsections((prev) => {
               const next = [...prev];
               const idx = next.findIndex((x) => x.key === key);
-              const stepMap = { "Drafting": 34, "Evaluating via UniEval": 62, "Repairing": 81, "Passed": 100, "Waiting": 0 };
+              const stepMap = { "Drafting": 34, "Evaluating via UniEval": 62, "Repairing": 81, "Passed": 100, "Failed": 100, "Waiting": 0 };
               if (idx === -1) {
                 next.push({ key, name: `${section} / ${sub}`, stage: stageLabel, progress: stepMap[stageLabel] || 0 });
               } else {
@@ -391,49 +832,108 @@
               return next.sort((a, b) => a.name.localeCompare(b.name));
             });
 
-            // 仅计算真正的 subsection_passed 和 subsection_generated 事件
-            // 不要基于 progress 消息中解析的百分比（可能不准确）
-            if (stage === "subsection_passed" || stage === "subsection_generated") {
-              const subsectionKey = `${data.metadata?.section_id}:${data.metadata?.subsection_id}`;
-              if (subsectionKey && !completedSubsectionsRef.current.has(subsectionKey)) {
+            if (stage === "verifier_result") {
+              const q = meta.quality_dimensions || {};
+              setMetrics({
+                topic_alignment: Number(q.topic_alignment ?? 0),
+                coverage_completeness: Number(q.coverage_completeness ?? 0),
+                logical_coherence: Number(q.logical_coherence ?? 0),
+                evidence_grounding: Number(q.evidence_grounding ?? 0),
+                novelty: Number(q.novelty ?? 0),
+                structure_clarity: Number(q.structure_clarity ?? 0),
+                quality_score: Number(meta.quality_score ?? 0),
+              });
+              setVerifierDetail({
+                is_passed: Boolean(meta.is_passed),
+                relevancy_index: Number(meta.relevancy_index ?? 0),
+                redundancy_index: Number(meta.redundancy_index ?? 0),
+                rel_threshold: Number(meta.rel_threshold ?? 0),
+                red_threshold: Number(meta.red_threshold ?? 0),
+                quality_score: Number(meta.quality_score ?? 0),
+                quality_score_threshold: Number(meta.quality_score_threshold ?? 0),
+                quality_score_passed: Boolean(meta.quality_score_passed),
+                quality_dimensions: q,
+                quality_dimensions_check: meta.quality_dimensions_check || {},
+                quality_dimensions_failed: meta.quality_dimensions_failed || [],
+                quality_dimensions_passed: Boolean(meta.quality_dimensions_passed),
+                dimension_thresholds: meta.dimension_thresholds || {},
+                source_check: meta.source_check || { passed: Boolean(meta.source_check_passed), reference_count: Number(meta.source_reference_count || 0) },
+                source_check_passed: Boolean(meta.source_check_passed),
+                source_reference_count: Number(meta.source_reference_count ?? 0),
+              });
+            }
+
+            if (stage === "controller_result") {
+              const arm = String(meta.selected_arm || "");
+              const reward = Math.max(0, Math.min(1, Number(meta.reward ?? 0)));
+              const selectionMode = String(meta.selection_mode || "");
+              console.log(`🎯 [Frontend Handler] controller_result: arm="${arm}", reward=${reward}, mode="${selectionMode}", meta=`, meta);
+              setBanditSummary((prev) => ({
+                ...prev,
+                bandit_last_selected_arm: arm || prev.bandit_last_selected_arm,
+                bandit_last_selection_mode: selectionMode || prev.bandit_last_selection_mode,
+                bandit_selected_arm_counts: {
+                  ...(prev.bandit_selected_arm_counts || {}),
+                  ...(arm ? { [arm]: Number(prev?.bandit_selected_arm_counts?.[arm] || 0) + 1 } : {}),
+                },
+                bandit_event_count: Number(prev.bandit_event_count || 0) + (arm ? 1 : 0),
+                bandit_reward_avg: (() => {
+                  const prevN = Number(prev.bandit_event_count || 0);
+                  const nextN = prevN + (arm ? 1 : 0);
+                  if (nextN <= 0) return Number(prev.bandit_reward_avg || 0);
+                  return ((Number(prev.bandit_reward_avg || 0) * prevN) + (arm ? reward : 0)) / nextN;
+                })(),
+                bandit_plot_y_min: Number(meta.plot_y_min ?? prev.bandit_plot_y_min ?? 0.0),
+                bandit_plot_y_max: Number(meta.plot_y_max ?? prev.bandit_plot_y_max ?? 0.1),
+              }));
+              if (arm) {
+                setBanditSeries((s) => {
+                  const next = {
+                    llm: [...(s.llm || [])],
+                    rule: [...(s.rule || [])],
+                    rule_structured: [...(s.rule_structured || [])],
+                    defect_topic: [...(s.defect_topic || [])],
+                    defect_evidence: [...(s.defect_evidence || [])],
+                    defect_structure: [...(s.defect_structure || [])],
+                  };
+                  for (const k of banditSeriesKeys) {
+                    const arr = next[k];
+                    const last = arr.length ? arr[arr.length - 1] : 0;
+                    if (k === arm) {
+                      arr.push(reward);
+                    } else {
+                      arr.push(last);
+                    }
+                  }
+                  next.llm = next.llm.slice(-24);
+                  next.rule = next.rule.slice(-24);
+                  next.rule_structured = next.rule_structured.slice(-24);
+                  next.defect_topic = next.defect_topic.slice(-24);
+                  next.defect_evidence = next.defect_evidence.slice(-24);
+                  next.defect_structure = next.defect_structure.slice(-24);
+                  console.log(`🎯 [Updated Bandit Series]`, next);
+                  return next;
+                });
+              } else {
+                console.log(`⚠️ [Empty Arm] Skipping bandit update - arm is empty, reward=${reward}`);
+              }
+            }
+
+            // 只在最终完成事件时计入进度，避免把 verifier/controller 中间事件也算进去
+            const subsectionKey = `${data.metadata?.section_id}:${data.metadata?.subsection_id}`;
+            const isFinalSubsectionStage = stage === "subsection_passed" || stage === "subsection_forced_pass" || stage === "subsection_failed";
+            if (subsectionKey && isFinalSubsectionStage) {
+              if (!completedSubsectionsRef.current.has(subsectionKey)) {
                 completedSubsectionsRef.current.add(subsectionKey);
                 setProgress((p) => {
-                  const cur = completedSubsectionsRef.current.size;
-                  const pct = p.total > 0 ? Math.round((cur / p.total) * 100) : 0;
+                  const cur = Math.min(p.total || 0, completedSubsectionsRef.current.size);
+                  const pct = p.total > 0 ? Math.min(100, Math.round((cur / p.total) * 100)) : 0;
                   return { ...p, current: cur, percent: pct };
                 });
               }
             }
 
-            if (["subsection_failed", "subsection_exception", "subsection_forced_pass"].includes(stage)) {
-              const subsectionKey = `${data.metadata?.section_id}:${data.metadata?.subsection_id}`;
-              if (subsectionKey && !completedSubsectionsRef.current.has(subsectionKey)) {
-                completedSubsectionsRef.current.add(subsectionKey);
-                setProgress((p) => {
-                  const cur = completedSubsectionsRef.current.size;
-                  const pct = p.total > 0 ? Math.round((cur / p.total) * 100) : 0;
-                  return { ...p, current: cur, percent: pct };
-                });
-              }
-            }
-
-            if (stage === "verifier_start" || stage === "verifier_passed" || stage === "verifier_failed") {
-              setMetrics((m) => ({
-                ...m,
-                topic_alignment: Math.min(1, m.topic_alignment + 0.03),
-                logical_coherence: Math.min(1, m.logical_coherence + 0.026),
-                evidence_grounding: Math.min(1, m.evidence_grounding + 0.018),
-                relevancy_index: Math.min(1, m.relevancy_index + 0.024)
-              }));
-            }
-
-            if (stage.startsWith("controller")) {
-              setBanditSeries((s) => ({
-                llm: [...s.llm, Math.min(1, (s.llm.at(-1) || 0.4) + (Math.random() * 0.16 - 0.05))].slice(-16),
-                rule: [...s.rule, Math.min(1, (s.rule.at(-1) || 0.3) + (Math.random() * 0.14 - 0.04))].slice(-16),
-                defect_topic: [...s.defect_topic, Math.min(1, (s.defect_topic.at(-1) || 0.3) + (Math.random() * 0.13 - 0.03))].slice(-16)
-              }));
-            }
+            // 不再使用随机曲线，Verifier 面板仅展示当前小节的真实 verifier_result 快照。
           }
 
           if (data.type === "progress") {
@@ -467,20 +967,59 @@
             const dims = stats.quality_dimension_avgs || {};
             
             // 不要立即设为 100%，而是基于实际完成的小节数
-            const expected = Number(stats.expected_subsections || progress.total || 0);
+            const expected = Math.max(1, Number(stats.expected_subsections || progress.total || 0));
             const actualCompleted = completedSubsectionsRef.current.size;
-            const finalCurrent = Math.max(actualCompleted, Number(stats.passed_subsections || 0));
+            const finalCurrent = Math.min(expected, Math.max(actualCompleted, Number(stats.passed_subsections || 0)));
+            const finalPercent = expected > 0 ? Math.min(100, Math.round((finalCurrent / expected) * 100)) : 100;
             
-            setMetrics({
-              topic_alignment: Number(dims.topic_alignment || 0),
-              logical_coherence: Number(dims.logical_coherence || 0),
-              evidence_grounding: Number(dims.evidence_grounding || 0),
-              relevancy_index: Number(dims.coverage_completeness || 0),
-              quality_score: Number(stats.quality_score_avg || 0)
+            setQualitySummary({
+              quality_score_avg: Number(stats.quality_score_avg || 0),
+              quality_score_count: Number(stats.quality_score_count || 0),
+              unieval_available_subsections: Number(stats.unieval_available_subsections || 0),
+              unieval_fallback_subsections: Number(stats.unieval_fallback_subsections || 0),
+            });
+            setBanditSummary((prev) => ({
+              ...prev,
+              bandit_selected_arm_counts: stats.bandit_selected_arm_counts || prev.bandit_selected_arm_counts || {},
+              bandit_reward_avg: Number(stats.bandit_reward_avg || prev.bandit_reward_avg || 0),
+              bandit_last_selected_arm: String(stats.bandit_last_selected_arm || prev.bandit_last_selected_arm || ""),
+              bandit_last_selection_mode: String(stats.bandit_last_selection_mode || prev.bandit_last_selection_mode || ""),
+              bandit_event_count: Object.values(stats.bandit_selected_arm_counts || {}).reduce((acc, n) => acc + Number(n || 0), 0) || Number(prev.bandit_event_count || 0),
+              bandit_plot_y_min: Number(stats.plot_y_min ?? prev.bandit_plot_y_min ?? 0.0),
+              bandit_plot_y_max: Number(stats.plot_y_max ?? prev.bandit_plot_y_max ?? 0.1),
+            }));
+            setBanditSeries((prev) => {
+              const hasRealData = banditSeriesKeys.reduce((sum, k) => sum + ((prev[k]?.length || 0)), 0) > 0;
+              if (hasRealData) {
+                return prev;
+              }
+              const reward = Number(stats.bandit_reward_avg || 0);
+              const arm = String(stats.bandit_last_selected_arm || "");
+              const s = { llm: [], rule: [], rule_structured: [], defect_topic: [], defect_evidence: [], defect_structure: [] };
+              if (arm && s[arm]) {
+                s[arm].push(reward);
+              }
+              return s;
             });
             setDoc({ title: result.title || "", content: result.content || "" });
-            const finalPercent = expected > 0 ? Math.round((finalCurrent / expected) * 100) : 100;
             setProgress({ current: finalCurrent, total: expected, percent: finalPercent });
+            setSubsections((prev) => {
+              const completed = prev.map((item) => ({
+                ...item,
+                progress: 100,
+                stage: item.stage === "Waiting" ? "Failed" : item.stage,
+              }));
+              const need = Math.max(0, expected - completed.length);
+              for (let i = 0; i < need; i += 1) {
+                completed.push({
+                  key: `final-${i}`,
+                  name: `Section / Subsection ${completed.length + 1}`,
+                  stage: "Failed",
+                  progress: 100,
+                });
+              }
+              return completed;
+            });
             setActiveNode("controller");
             setStatusText("Generation completed successfully.");
             setRunning(false);
@@ -511,13 +1050,13 @@
                 const recovered = await resp.json();
                 if (recovered && recovered.success) {
                   const stats = recovered.stats || {};
-                  const expected = Number(stats.expected_subsections || progress.total || 0);
-                  const passed = Number(stats.passed_subsections || 0);
+                  const expected = Math.max(1, Number(stats.expected_subsections || progress.total || 0));
+                  const passed = Math.min(expected, Number(stats.passed_subsections || 0));
                   setDoc({ title: recovered.title || "", content: recovered.content || "" });
                   setProgress({
                     current: passed,
                     total: expected,
-                    percent: expected > 0 ? Math.round((passed / expected) * 100) : 0
+                    percent: expected > 0 ? Math.min(100, Math.round((passed / expected) * 100)) : 0
                   });
                   setStatusText(`Stream disconnected, recovered ${passed}/${expected || passed} subsections.`);
                   return;
@@ -532,13 +1071,14 @@
         });
       };
 
-      const handleDownload = async () => {
+      const downloadDocument = async (format) => {
         if (!doc.title || !doc.content) {
           return;
         }
-        setStatusText("Preparing DOCX download...");
+        const isPdf = format === "pdf";
+        setStatusText(isPdf ? "Preparing PDF download..." : "Preparing DOCX download...");
         try {
-          const resp = await fetch("/api/download-docx", {
+          const resp = await fetch(isPdf ? "/api/download-pdf" : "/api/download-docx", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ title: doc.title, content: doc.content })
@@ -550,20 +1090,26 @@
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = `${doc.title}.docx`;
+          a.download = `${doc.title}.${isPdf ? "pdf" : "docx"}`;
           document.body.appendChild(a);
           a.click();
           a.remove();
           URL.revokeObjectURL(url);
-          setStatusText("DOCX downloaded.");
+          setStatusText(isPdf ? "PDF downloaded." : "DOCX downloaded.");
         } catch (err) {
           setStatusText(`Download failed: ${err.message}`);
         }
       };
 
+      const handleDownload = () => downloadDocument("docx");
+      const handleDownloadPdf = () => downloadDocument("pdf");
+
       useEffect(() => () => closeSse(), []);
 
-      const qualityMean = (metrics.topic_alignment + metrics.logical_coherence + metrics.evidence_grounding + metrics.relevancy_index) / 4;
+      const qualityMean = (metrics.topic_alignment + metrics.coverage_completeness + metrics.logical_coherence + metrics.evidence_grounding + metrics.novelty + metrics.structure_clarity) / 6;
+      const normalizedStatusText = running
+        ? `进度: ${progress.current}/${progress.total || 0} 小节已处理 (${progress.percent}%)`
+        : statusText;
 
       return (
         <div className="min-h-screen relative">
@@ -603,8 +1149,8 @@
                       <div className="text-2xl font-display text-slate-900"><CountUp value={totalGenerations} /></div>
                     </div>
                     <div className="rounded-2xl bg-white border border-slate-200 p-3">
-                      <div className="text-xs text-slate-500">System Uptime</div>
-                      <div className="text-2xl font-display text-slate-900">{uptimeText}</div>
+                      <div className="text-xs text-slate-500">Generation Duration</div>
+                      <div className="text-2xl font-display text-slate-900">{running ? generationTimeText : (generationElapsedSec > 0 ? generationTimeText : "待开始")}</div>
                     </div>
                     <div className="rounded-2xl bg-white border border-slate-200 p-3">
                       <div className="text-xs text-slate-500">Global Quality Index</div>
@@ -614,12 +1160,13 @@
                 </motion.section>
 
                 <section className="grid xl:grid-cols-12 gap-4 md:gap-6">
-                  <div className="xl:col-span-8">
+                  <div className="xl:col-span-8 flex flex-col gap-4 md:gap-6">
                     <FlowWidget activeNode={activeNode} />
+                    <MethodologyPanel />
                   </div>
                   <div className="xl:col-span-4 rounded-xl3 bg-white p-5 border border-slate-200 shadow-neumorph">
                     <h3 className="font-display text-lg mb-4">Run Generation</h3>
-                    <div className="space-y-3">
+                      <div className="space-y-3">
                       <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Document topic" />
                       <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={background} onChange={(e) => setBackground(e.target.value)} placeholder="User background" />
                       <textarea className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm h-24" value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Extra requirements" />
@@ -634,19 +1181,29 @@
                       <div className="flex gap-2">
                         <button onClick={handleStart} disabled={running} className="flex-1 rounded-xl bg-slate-900 text-white text-sm font-semibold py-2 disabled:opacity-50">{running ? "Running..." : "Start"}</button>
                         <button onClick={handleDownload} disabled={!doc.content} className="flex-1 rounded-xl bg-emerald-600 text-white text-sm font-semibold py-2 disabled:opacity-50">Download DOCX</button>
+                        <button onClick={handleDownloadPdf} disabled={!doc.content} className="flex-1 rounded-xl bg-cyan-700 text-white text-sm font-semibold py-2 disabled:opacity-50">Download PDF</button>
                       </div>
-                      <div className="text-xs rounded-xl px-3 py-2 bg-slate-100 text-slate-700">{statusText}</div>
+                      <div className="text-xs rounded-xl px-3 py-2 bg-slate-100 text-slate-700">{normalizedStatusText}</div>
                     </div>
                   </div>
                 </section>
 
                 <section className="grid xl:grid-cols-12 gap-4 md:gap-6">
                   <div className="xl:col-span-5"><SubsectionTracker items={subsections} /></div>
-                  <div className="xl:col-span-7"><RadarMetrics metrics={metrics} /></div>
+                  <div className="xl:col-span-7"><RadarMetrics metrics={metrics} summary={qualitySummary} verifierDetail={verifierDetail} /></div>
                 </section>
 
+                <FullMetricsBoard
+                  loading={metricsCatalogLoading}
+                  error={metricsCatalogError}
+                  summary={metricsCatalogSummary}
+                  metrics={metricsCatalogAll}
+                  currentMetrics={metrics}
+                  verifierDetail={verifierDetail}
+                />
+
                 <section>
-                  <BanditChart data={banditSeries} />
+                  <BanditChart data={banditSeries} summary={banditSummary} />
                 </section>
               </main>
             </div>
@@ -656,6 +1213,32 @@
     }
 
     ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+  <script>
+    (function(){
+      if (window.__FLOWERNET_FALLBACK_DONE) return; window.__FLOWERNET_FALLBACK_DONE = true;
+      function showFallback(msg){
+        try{
+          var root = document.getElementById('root');
+          if(root){
+            root.innerHTML = '<div style="padding:40px;font-family:Plus Jakarta Sans, sans-serif;color:#334155">Front-end failed to initialize.<br/>' + (msg?('<small style="color:#7b8794">'+msg+'</small>'):'') + '</div>';
+          }
+          console.error('[WebFallback]', msg);
+        }catch(e){ console.error(e); }
+      }
+      setTimeout(function(){
+        if(typeof React === 'undefined' || typeof ReactDOM === 'undefined'){
+          showFallback('Missing React or ReactDOM. Check network / DevTools for failed script loads.');
+          return;
+        }
+        setTimeout(function(){
+          var root = document.getElementById('root');
+          if(root && root.children.length === 0){
+            showFallback('No UI rendered — possible runtime error. Open DevTools Console for details.');
+          }
+        }, 1200);
+      }, 1200);
+    })();
   </script>
 </body>
 </html>

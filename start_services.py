@@ -66,6 +66,24 @@ def main():
         **env_from_file,
         "UNIEVAL_ENDPOINT": env_from_file.get("UNIEVAL_ENDPOINT", "http://localhost:8004/score"),
         "REQUIRE_MULTIDIM_QUALITY": env_from_file.get("REQUIRE_MULTIDIM_QUALITY", "true"),
+        # ===== 优化配置：快速失败 (fail-fast) =====
+        "UNIEVAL_TIMEOUT": env_from_file.get("UNIEVAL_TIMEOUT", "20"),
+        "UNIEVAL_LOAD_TIMEOUT_SEC": env_from_file.get("UNIEVAL_LOAD_TIMEOUT_SEC", "180"),
+        "CONTROLLER_LLM_TIMEOUT": env_from_file.get("CONTROLLER_LLM_TIMEOUT", "20"),
+        "PROVIDER_RETRIES": env_from_file.get("PROVIDER_RETRIES", "0"),
+        "PROVIDER_BACKOFF": env_from_file.get("PROVIDER_BACKOFF", "1.2"),
+        "PROVIDER_MAX_BACKOFF": env_from_file.get("PROVIDER_MAX_BACKOFF", "20.0"),
+        "PROVIDER_JITTER": env_from_file.get("PROVIDER_JITTER", "0.15"),
+        "PROVIDER_HTTP_TIMEOUT": env_from_file.get("PROVIDER_HTTP_TIMEOUT", "15"),
+        "MAX_SUBSECTION_ATTEMPTS": env_from_file.get("MAX_SUBSECTION_ATTEMPTS", "3"),
+        "MAX_GENERATOR_FAILURES_PER_SUBSECTION": env_from_file.get("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "2"),
+        "DOC_RETRY_BASE_DELAY": env_from_file.get("DOC_RETRY_BASE_DELAY", "1.0"),
+        "DOC_RETRY_MAX_DELAY": env_from_file.get("DOC_RETRY_MAX_DELAY", "10.0"),
+        "DOC_RETRY_JITTER": env_from_file.get("DOC_RETRY_JITTER", "0.2"),
+        "GENERATOR_HTTP_TIMEOUT": env_from_file.get("GENERATOR_HTTP_TIMEOUT", "60"),
+        "VERIFIER_HTTP_TIMEOUT": env_from_file.get("VERIFIER_HTTP_TIMEOUT", "60"),
+        "VERIFIER_MAX_RETRIES": env_from_file.get("VERIFIER_MAX_RETRIES", "3"),
+        "REQUEST_TIMEOUT": env_from_file.get("REQUEST_TIMEOUT", "120"),
     }
     
     # 启动服务
@@ -93,7 +111,10 @@ def main():
         web_env.update({
             "OUTLINER_URL": "http://localhost:8003",
             "GENERATOR_URL": "http://localhost:8002",
-            "REQUEST_TIMEOUT": web_env.get("REQUEST_TIMEOUT", "7200"),
+            "REQUEST_TIMEOUT": web_env.get("REQUEST_TIMEOUT", "120"),
+            "DOWNSTREAM_BACKOFF": web_env.get("DOWNSTREAM_BACKOFF", "2.0"),
+            "DOWNSTREAM_MAX_BACKOFF": web_env.get("DOWNSTREAM_MAX_BACKOFF", "60.0"),
+            "DOWNSTREAM_JITTER": web_env.get("DOWNSTREAM_JITTER", "0.15"),
             "NO_PROXY": "localhost,127.0.0.1",
             "no_proxy": "localhost,127.0.0.1",
         })

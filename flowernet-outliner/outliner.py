@@ -1082,6 +1082,8 @@ class FlowerNetOutliner:
         user_requirements: str
     ) -> str:
         """构建单个 subsection 的 Content Prompt"""
+        lock_terms = self._build_domain_lock_terms(document_title, section_title, subsection_title, user_requirements)
+        lock_suffix = " / ".join(lock_terms[:4]) if lock_terms else ""
         prompt = f"""
 你正在撰写一篇关于"{document_title}"的文档。
 
@@ -1094,6 +1096,8 @@ class FlowerNetOutliner:
 **当前章节**: {section_title}
 **当前小节**: {subsection_title}
 
+**领域锁定关键词（用于检索）**: {lock_suffix or "请从当前小节标题提取核心术语"}
+
 **该小节详细大纲**:
 {subsection_description}
 
@@ -1104,10 +1108,37 @@ class FlowerNetOutliner:
 4. 语言专业、准确，避免空洞内容
 5. 如果涉及技术概念，需要提供具体例子或解释
 6. 该内容将作为历史记录，下一小节生成时会参考它进行去重检测，请尽量避免冗余表达
+7. 若需要检索外部资料：每个查询词都必须追加领域锁定后缀，格式示例：
+   - "原始查询 + 领域:{lock_suffix or subsection_title}"
+   - 禁止只用通用关键词裸搜（会导致跨领域引用漂移）
 
 请直接输出该小节的正文内容，不要添加"该小节内容如下"等引导语。
 """
         return prompt.strip()
+
+    def _build_domain_lock_terms(self, document_title: str, section_title: str, subsection_title: str, user_requirements: str) -> List[str]:
+        text = " ".join([
+            str(document_title or ""),
+            str(section_title or ""),
+            str(subsection_title or ""),
+            str(user_requirements or ""),
+        ])
+        tokens = re.findall(r"[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{1,30}", text)
+        stopwords = {
+            "section", "subsection", "outline", "content", "prompt", "chapter", "part",
+            "写作", "内容", "小节", "章节", "大纲", "文档", "生成", "要求",
+            "the", "and", "for", "with", "from", "that", "this",
+        }
+        terms: List[str] = []
+        for token in tokens:
+            t = token.strip().lower()
+            if not t or t in stopwords or t.isdigit() or len(t) <= 1:
+                continue
+            if t not in terms:
+                terms.append(t)
+            if len(terms) >= 6:
+                break
+        return terms
     
     def generate_full_outline(
         self,

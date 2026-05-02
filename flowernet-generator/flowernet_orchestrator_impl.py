@@ -68,33 +68,34 @@ class DocumentGenerationOrchestrator:
         self.history_manager = history_manager
         self.history_window_size = history_window_size
         self.max_forced_iterations = max_forced_iterations
-        self.retry_base_delay = float(os.getenv("DOC_RETRY_BASE_DELAY", "2.0"))
-        self.retry_max_delay = float(os.getenv("DOC_RETRY_MAX_DELAY", "90.0"))
-        self.retry_jitter = float(os.getenv("DOC_RETRY_JITTER", "0.5"))
+        self.retry_base_delay = float(os.getenv("DOC_RETRY_BASE_DELAY", "1.0"))
+        self.retry_max_delay = float(os.getenv("DOC_RETRY_MAX_DELAY", "10.0"))
+        self.retry_jitter = float(os.getenv("DOC_RETRY_JITTER", "0.2"))
         self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
-        # 默认轮次收敛到 8，避免长时间卡在单小节。
-        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "8")))
+        # 默认轮次收敛到 3，快速失败避免长时间卡住。
+        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "3")))
         # 单个小节最长处理时长（秒），超过后按最佳努力通过，避免长时间卡住。
-        self.subsection_max_seconds = max(120, int(os.getenv("SUBSECTION_MAX_SECONDS", "1800")))
+        self.subsection_max_seconds = max(120, int(os.getenv("SUBSECTION_MAX_SECONDS", "600")))
         # 当 Generator 连续失败时，优先按该阈值触发兜底，避免单小节长时间阻塞。
         self.max_generator_failures_per_subsection = max(
             1,
-            int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "3")),
+            int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "2")),
         )
-        self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "3")))
-        configured_min_retries = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "8")))
+        self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "2")))
+        self.allow_forced_pass = os.getenv("ALLOW_FORCED_PASS", "false").lower() == "true"
+        configured_min_retries = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "1")))
         self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)
         # 默认采用宽松模式：只要 Controller 给出有效改纲且发生变更，就允许继续下一轮。
         self.strict_controller_effective = os.getenv("STRICT_CONTROLLER_EFFECTIVE", "false").lower() == "true"
-        self.max_pass_rel_margin = max(0.0, float(os.getenv("MAX_PASS_REL_MARGIN", "0.35")))
-        self.max_pass_red_margin = max(0.0, float(os.getenv("MAX_PASS_RED_MARGIN", "0.45")))
-        self.orch_generator_retries = max(1, int(os.getenv("ORCH_GENERATOR_RETRIES", "2")))
-        self.orch_generator_backoff = max(0.2, float(os.getenv("ORCH_GENERATOR_BACKOFF", "1.5")))
-        self.orch_generator_max_backoff = max(1.0, float(os.getenv("ORCH_GENERATOR_MAX_BACKOFF", "20.0")))
-        self.generator_http_timeout = max(30, int(os.getenv("GENERATOR_HTTP_TIMEOUT", "120")))
-        self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "180")))
-        self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "8")))
-        self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "8.0")))
+        self.max_pass_rel_margin = max(0.0, float(os.getenv("MAX_PASS_REL_MARGIN", "0.25")))
+        self.max_pass_red_margin = max(0.0, float(os.getenv("MAX_PASS_RED_MARGIN", "0.30")))
+        self.orch_generator_retries = max(1, int(os.getenv("ORCH_GENERATOR_RETRIES", "1")))
+        self.orch_generator_backoff = max(0.2, float(os.getenv("ORCH_GENERATOR_BACKOFF", "1.0")))
+        self.orch_generator_max_backoff = max(1.0, float(os.getenv("ORCH_GENERATOR_MAX_BACKOFF", "10.0")))
+        self.generator_http_timeout = max(30, int(os.getenv("GENERATOR_HTTP_TIMEOUT", "60")))
+        self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "60")))
+        self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "3")))
+        self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "3.0")))
         self.generator_max_tokens = max(400, int(os.getenv("ORCH_GENERATOR_MAX_TOKENS", "600")))
         self.session = requests.Session()
         self.session.trust_env = False
@@ -205,14 +206,15 @@ class DocumentGenerationOrchestrator:
 
         dimensions = verification.get("quality_dimensions")
         if isinstance(dimensions, dict):
-            summary["unieval_available_subsections"] += 1
             for key in self._quality_dimension_keys():
                 value = dimensions.get(key)
                 if isinstance(value, (int, float)):
                     summary["quality_dimension_sums"][key] = summary["quality_dimension_sums"].get(key, 0.0) + float(value)
                     summary["quality_dimension_counts"][key] = summary["quality_dimension_counts"].get(key, 0) + 1
 
-        if verification.get("quality_dimensions_uncertainty"):
+        if bool(verification.get("unieval_available", False)):
+            summary["unieval_available_subsections"] += 1
+        elif isinstance(dimensions, dict) and dimensions:
             summary["unieval_fallback_subsections"] += 1
 
     def _accumulate_bandit_summary(self, summary: Dict[str, Any], subsection_result: Dict[str, Any]) -> None:
@@ -227,6 +229,112 @@ class DocumentGenerationOrchestrator:
             summary["bandit_selected_arm_counts"][selected_arm] += 1
         summary["bandit_last_selected_arm"] = selected_arm or summary.get("bandit_last_selected_arm", "")
         summary["bandit_last_selection_mode"] = str(bandit.get("selection", {}).get("mode", "") or summary.get("bandit_last_selection_mode", ""))
+
+        reward = bandit.get("reward")
+        if isinstance(reward, (int, float)):
+            summary["bandit_reward_sum"] += float(reward)
+            summary["bandit_reward_count"] += 1
+            if summary["bandit_reward_count"] > 0:
+                summary["bandit_reward_avg"] = summary["bandit_reward_sum"] / summary["bandit_reward_count"]
+
+        drift = bandit.get("drift") if isinstance(bandit.get("drift"), dict) else {}
+        if drift:
+            drift_events = int(drift.get("drift_events", 0) or 0)
+            summary["bandit_drift_events"] = max(summary.get("bandit_drift_events", 0), drift_events)
+            if drift.get("triggered"):
+                summary["bandit_drift_triggered_subsections"] += 1
+
+        constraints = bandit.get("constraints") if isinstance(bandit.get("constraints"), dict) else {}
+        if constraints:
+            summary["bandit_last_constraints"] = dict(constraints)
+        # constraints handled above
+
+    def _load_recent_bandit_stats(self, max_events: int = 200) -> Dict[str, Any]:
+        """从文件 `controller_bandit_events.jsonl` 读取最近若干条 bandit 事件并聚合为统计信息。
+        返回字典包含与前端契合的字段（counts, sum, count, avg, last_arm, drift_events）。
+        """
+        stats = {
+            "bandit_selected_arm_counts": {},
+            "bandit_reward_sum": 0.0,
+            "bandit_reward_count": 0,
+            "bandit_reward_avg": 0.0,
+            "bandit_last_selected_arm": "",
+            "bandit_last_selection_mode": "",
+            "bandit_drift_events": 0,
+        }
+        try:
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            events_path = os.path.join(project_root, "controller_bandit_events.jsonl")
+            if not os.path.exists(events_path):
+                return stats
+            with open(events_path, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+            if not lines:
+                return stats
+            recent = lines[-max_events:]
+            rewards: List[float] = []
+            for line in recent:
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                arm = str(ev.get("chosen_arm") or "")
+                reward = float(ev.get("reward", 0.0) or 0.0)
+                if arm:
+                    stats["bandit_selected_arm_counts"][arm] = stats["bandit_selected_arm_counts"].get(arm, 0) + 1
+                    stats["bandit_last_selected_arm"] = arm
+                stats["bandit_reward_sum"] += reward
+                rewards.append(reward)
+                if reward != 0.0:
+                    stats["bandit_reward_count"] += 1
+                if ev.get("drift") is not None:
+                    stats["bandit_drift_events"] += 1
+            if stats["bandit_reward_count"] > 0:
+                stats["bandit_reward_avg"] = stats["bandit_reward_sum"] / stats["bandit_reward_count"]
+
+            # Compute plot bounds for frontend visualization (with padding)
+            if rewards:
+                rmin = min(rewards)
+                rmax = max(rewards)
+                if abs(rmax - rmin) < 1e-8:
+                    pad = max(0.01, abs(rmax) * 0.05)
+                    rmin_plot = rmin - pad
+                    rmax_plot = rmax + pad
+                else:
+                    span = rmax - rmin
+                    rmin_plot = rmin - 0.12 * span
+                    rmax_plot = rmax + 0.12 * span
+                stats["plot_y_min"] = float(round(rmin_plot, 6))
+                stats["plot_y_max"] = float(round(rmax_plot, 6))
+            else:
+                stats["plot_y_min"] = 0.0
+                stats["plot_y_max"] = 0.1
+
+            return stats
+        except Exception:
+            return stats
+
+    def _read_last_bandit_event(self) -> Dict[str, Any]:
+        """返回 controller_bandit_events.jsonl 中最后一条事件的原始解析结果（或空字典）。"""
+        try:
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            events_path = os.path.join(project_root, "controller_bandit_events.jsonl")
+            if not os.path.exists(events_path):
+                return {}
+            with open(events_path, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+            if not lines:
+                return {}
+            for line in reversed(lines):
+                try:
+                    ev = json.loads(line)
+                    if isinstance(ev, dict):
+                        return ev
+                except Exception:
+                    continue
+            return {}
+        except Exception:
+            return {}
 
     def _is_outline_like(self, content: str, outline: str = "") -> bool:
         """简单判断 content 是否更像大纲/提示而非正文，供兜底选择时排除大纲型草稿。
@@ -256,23 +364,6 @@ class DocumentGenerationOrchestrator:
 
         # 否则认为不是大纲型内容
         return False
-
-        reward = bandit.get("reward")
-        if isinstance(reward, (int, float)):
-            summary["bandit_reward_sum"] += float(reward)
-            summary["bandit_reward_count"] += 1
-            summary["bandit_reward_avg"] = summary["bandit_reward_sum"] / max(1, summary["bandit_reward_count"])
-
-        drift = bandit.get("drift") if isinstance(bandit.get("drift"), dict) else {}
-        if drift:
-            drift_events = int(drift.get("drift_events", 0) or 0)
-            summary["bandit_drift_events"] = max(summary.get("bandit_drift_events", 0), drift_events)
-            if drift.get("triggered"):
-                summary["bandit_drift_triggered_subsections"] += 1
-
-        constraints = bandit.get("constraints") if isinstance(bandit.get("constraints"), dict) else {}
-        if constraints:
-            summary["bandit_last_constraints"] = dict(constraints)
 
     def set_local_generator(self, generator):
         """设置本地Generator实例，避免HTTP自调用"""
@@ -347,6 +438,56 @@ class DocumentGenerationOrchestrator:
             print(f"⚠️  读取 passed history 失败: {e}")
         return []
 
+    def _extract_topic_context(self, outline: str, prompt: str) -> str:
+        """
+        【优化1.0 - Domain Anchoring】
+        从小节大纲和提示中提取核心领域关键词（topic_context）
+        用于强制锁定RAG搜索的领域范围，避免跨学科幻觉
+        
+        规则：
+        1. 提取标题中的主要名词（保留领域特定词汇）
+        2. 过滤通用停词（避免"请、写作、内容"等污染）
+        3. 提取提示中的动作+对象组合
+        4. 返回最相关的3-5个核心词
+        """
+        outline_text = " ".join(str(outline or "").split()).strip()
+        prompt_text = " ".join(str(prompt or "").split()).strip()
+        combined = (outline_text + " " + prompt_text)[:400]
+        
+        # 提取候选词汇
+        tokens = re.findall(r"[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{1,30}", combined)
+        
+        # 更严格的停词集合（针对生成/大纲特定词汇）
+        generic_stop_tokens = {
+            # 通用指令词
+            "section", "subsection", "outline", "prompt", "chapter", "part",
+            "write", "writing", "draft", "content", "article", "essay",
+            "要求", "生成", "内容", "小节", "章节", "大纲", "写作", "草稿",
+            # 连接词
+            "的", "和", "与", "或", "的", "在", "是", "有", "了", "将",
+            "please", "write", "about", "regarding", "concerning",
+            # 语言学术词
+            "includes", "includes", "describe", "discuss", "explain", "detail"
+        }
+        
+        domain_terms: List[str] = []
+        for token in tokens:
+            normalized = token.strip().lower()
+            
+            # 过滤规则
+            if not normalized or len(normalized) <= 1 or normalized.isdigit():
+                continue
+            if normalized in generic_stop_tokens or len(normalized) > 30:
+                continue
+            if re.fullmatch(r"[\d\.\-:]+", normalized):
+                continue
+            if normalized not in domain_terms:
+                domain_terms.append(normalized)
+        
+        # 返回最相关的领域词
+        result = " ".join(domain_terms[:5])[:80]
+        return result
+
     def _build_rag_query_candidates(self, outline: str, initial_prompt: str) -> List[str]:
         outline_text = " ".join(str(outline or "").split()).strip()
         prompt_text = " ".join(str(initial_prompt or "").split()).strip()
@@ -374,6 +515,10 @@ class DocumentGenerationOrchestrator:
                 break
         semantic_query = " ".join(semantic_terms)[:140]
 
+        # 【优化1.1】强制领域锚定：在每个候选查询前后都加入 topic_context
+        topic_context = self._extract_topic_context(outline_text, prompt_text)
+        domain_suffix = f"领域:{topic_context}" if topic_context else ""
+        
         candidates_raw = [merged, title_like, semantic_query, prompt_text[:180]]
         candidates: List[str] = []
         seen = set()
@@ -381,11 +526,22 @@ class DocumentGenerationOrchestrator:
             cleaned = " ".join(str(candidate or "").split()).strip()
             if not cleaned:
                 continue
-            key = cleaned.lower()
+            
+            # 【优化1.2】将topic_context前置到查询，强制领域范围
+            if topic_context:
+                domain_anchored = f"[{topic_context}] {cleaned}"[:300]
+            else:
+                domain_anchored = cleaned
+
+            # 【优化1.3】追加领域后缀，避免检索器仅匹配到跨域高频词
+            if domain_suffix and domain_suffix.lower() not in domain_anchored.lower():
+                domain_anchored = f"{domain_anchored} {domain_suffix}"[:300]
+            
+            key = domain_anchored.lower()
             if key in seen:
                 continue
             seen.add(key)
-            candidates.append(cleaned)
+            candidates.append(domain_anchored)
 
         return candidates[:4]
 
@@ -422,6 +578,11 @@ class DocumentGenerationOrchestrator:
         failed_dimensions = feedback.get("quality_dimensions_failed") if isinstance(feedback.get("quality_dimensions_failed"), list) else []
         dimension_check = feedback.get("quality_dimensions_check") if isinstance(feedback.get("quality_dimensions_check"), dict) else {}
         dimension_thresholds = feedback.get("dimension_thresholds") if isinstance(feedback.get("dimension_thresholds"), dict) else {}
+        # When verifier does not provide per-dimension thresholds, enforce stricter defaults
+        if not isinstance(dimension_thresholds, dict):
+            dimension_thresholds = {}
+        dimension_thresholds.setdefault("evidence_grounding", 0.30)
+        dimension_thresholds.setdefault("logical_coherence", 0.25)
         dimension_messages = {
             "topic_alignment": "主题对齐不足：要更聚焦小节核心主题，补充关键定义、目标或必须回答的问题。",
             "coverage_completeness": "覆盖不完整：补齐小节应覆盖的关键子点、步骤、约束或对比维度。",
@@ -489,8 +650,8 @@ class DocumentGenerationOrchestrator:
         content_prompts: List[Dict[str, Any]],  # 从 Outliner 返回的 content_prompts
         user_background: str,
         user_requirements: str,
-        rel_threshold: float = 0.55,
-        red_threshold: float = 0.70
+        rel_threshold: float = 0.50,
+        red_threshold: float = 0.75
     ) -> Dict[str, Any]:
         """
         完整文档生成流程
@@ -688,6 +849,7 @@ class DocumentGenerationOrchestrator:
                             history_order = len(passed_history)
                             forced_pass = bool(subsection_gen_result.get("forced_pass", False))
                             force_reason = str(subsection_gen_result.get("force_reason", "") or "")
+                            forced_should_fail = forced_pass and (not self.allow_forced_pass)
                             controller_triggered = bool(subsection_gen_result.get("controller_triggered", False))
                             controller_retry_count = int(subsection_gen_result.get("controller_retry_count", 0) or 0)
                             rag_used = bool(subsection_gen_result.get("rag_used", False))
@@ -713,7 +875,7 @@ class DocumentGenerationOrchestrator:
                             document_result["controller_fallback_outline_total"] += int(metrics.get("controller_fallback_outline", 0) or 0)
                             document_result["controller_exhausted_total"] += int(metrics.get("controller_exhausted", 0) or 0)
                             
-                            if self.history_manager:
+                            if self.history_manager and (not forced_should_fail):
                                 self.history_manager.add_entry(
                                     document_id=document_id,
                                     section_id=section_id,
@@ -727,6 +889,7 @@ class DocumentGenerationOrchestrator:
                                         "force_reason": force_reason,
                                         "controller_triggered": controller_triggered,
                                         "controller_retry_count": controller_retry_count,
+                                        "source_results": subsection_gen_result.get("source_results", []),
                                     }
                                 )
                                 self.history_manager.add_passed_history(
@@ -736,8 +899,29 @@ class DocumentGenerationOrchestrator:
                                     content=generated_content,
                                     order_index=history_order
                                 )
-                            
-                            document_result["passed_subsections"] += 1
+
+                            if forced_should_fail:
+                                document_result["failed_subsections"].append({
+                                    "section_id": section_id,
+                                    "subsection_id": subsection_id,
+                                    "reason": force_reason or "forced_pass_disallowed",
+                                    "iterations": subsection_gen_result.get("iterations", 0),
+                                })
+                                self._emit_progress_event(
+                                    document_id=document_id,
+                                    section_id=section_id,
+                                    subsection_id=subsection_id,
+                                    stage="subsection_failed",
+                                    message=f"小节未通过（禁止强制通过）: {section_title} > {subsection_title}",
+                                    metadata={
+                                        "iterations": subsection_gen_result.get("iterations", 0),
+                                        "verification": verification,
+                                        "forced_pass": forced_pass,
+                                        "force_reason": force_reason,
+                                    },
+                                )
+                            else:
+                                document_result["passed_subsections"] += 1
                             if forced_pass:
                                 document_result["forced_subsections"].append({
                                     "section_id": section_id,
@@ -745,28 +929,29 @@ class DocumentGenerationOrchestrator:
                                     "reason": force_reason,
                                     "iterations": subsection_gen_result.get("iterations", 0),
                                 })
-                            self._emit_progress_event(
-                                document_id=document_id,
-                                section_id=section_id,
-                                subsection_id=subsection_id,
-                                stage="subsection_passed",
-                                message=f"小节通过验证: {section_title} > {subsection_title}",
-                                metadata={
-                                    "iterations": subsection_gen_result.get("iterations", 0),
-                                    "verification": verification,
-                                    "forced_pass": forced_pass,
-                                    "force_reason": force_reason,
-                                    "controller_triggered": controller_triggered,
-                                    "controller_retry_count": controller_retry_count,
-                                },
-                            )
+                            if not forced_should_fail:
+                                self._emit_progress_event(
+                                    document_id=document_id,
+                                    section_id=section_id,
+                                    subsection_id=subsection_id,
+                                    stage="subsection_passed",
+                                    message=f"小节通过验证: {section_title} > {subsection_title}",
+                                    metadata={
+                                        "iterations": subsection_gen_result.get("iterations", 0),
+                                        "verification": verification,
+                                        "forced_pass": forced_pass,
+                                        "force_reason": force_reason,
+                                        "controller_triggered": controller_triggered,
+                                        "controller_retry_count": controller_retry_count,
+                                    },
+                                )
                             
                             section_result["subsections"].append({
                                 "subsection_id": subsection_id,
                                 "subsection_title": subsection_title,
                                 "content": generated_content,
                                 "outline": subsection_gen_result.get("final_outline", subsection_outline),
-                                "success": True,
+                                "success": not forced_should_fail,
                                 "iterations": subsection_gen_result.get("iterations", 0),
                                 "verification": verification,
                                 "bandit": subsection_gen_result.get("bandit", {}),
@@ -777,12 +962,13 @@ class DocumentGenerationOrchestrator:
                                 "rag_used": rag_used,
                                 "rag_search_success": rag_search_success,
                                 "controller_effective": controller_effective,
+                                "source_results": subsection_gen_result.get("source_results", []),
                                 "length": len(generated_content)
                             })
                             
                         else:
                             err = subsection_gen_result.get("error", "Unknown error")
-                            print(f"⚠️ 当前小节返回失败结果，降级补全文档: {err}")
+                            print(f"⚠️ 当前小节返回失败结果: {err}")
                             failed_draft = str(subsection_gen_result.get("draft", "") or "").strip()
                             if failed_draft:
                                 fallback_content = failed_draft
@@ -793,7 +979,7 @@ class DocumentGenerationOrchestrator:
                                 "subsection_title": subsection_title,
                                 "content": fallback_content,
                                 "outline": subsection_outline,
-                                "success": True,
+                                "success": False,
                                 "iterations": subsection_gen_result.get("iterations", 0),
                                 "verification": subsection_gen_result.get("verification", {}),
                                 "bandit": subsection_gen_result.get("bandit", {}),
@@ -802,9 +988,15 @@ class DocumentGenerationOrchestrator:
                                 "rag_used": bool(subsection_gen_result.get("rag_used", False)),
                                 "rag_search_success": bool(subsection_gen_result.get("rag_search_success", False)),
                                 "controller_effective": bool(subsection_gen_result.get("controller_effective", False)),
+                                "source_results": subsection_gen_result.get("source_results", []),
                                 "length": len(fallback_content),
                             })
-                            document_result["passed_subsections"] += 1
+                            document_result["failed_subsections"].append({
+                                "section_id": section_id,
+                                "subsection_id": subsection_id,
+                                "reason": str(err),
+                                "iterations": subsection_gen_result.get("iterations", 0),
+                            })
                             document_result["forced_subsections"].append({
                                 "section_id": section_id,
                                 "subsection_id": subsection_id,
@@ -815,8 +1007,8 @@ class DocumentGenerationOrchestrator:
                                 document_id=document_id,
                                 section_id=section_id,
                                 subsection_id=subsection_id,
-                                stage="subsection_forced_pass",
-                                message=f"小节触发兜底强制通过: {section_title} > {subsection_title}",
+                                stage="subsection_failed",
+                                message=f"小节生成失败: {section_title} > {subsection_title}",
                                 metadata={"error": err},
                             )
                     
@@ -829,7 +1021,7 @@ class DocumentGenerationOrchestrator:
                             "subsection_title": subsection_title,
                             "content": fallback_content,
                             "outline": subsection_outline,
-                            "success": True,
+                            "success": False,
                             "iterations": 0,
                             "verification": {},
                             "bandit": {},
@@ -837,7 +1029,12 @@ class DocumentGenerationOrchestrator:
                             "force_reason": "subsection_exception_fallback",
                             "length": len(fallback_content),
                         })
-                        document_result["passed_subsections"] += 1
+                        document_result["failed_subsections"].append({
+                            "section_id": section_id,
+                            "subsection_id": subsection_id,
+                            "reason": "subsection_exception_fallback",
+                            "iterations": 0,
+                        })
                         document_result["forced_subsections"].append({
                             "section_id": section_id,
                             "subsection_id": subsection_id,
@@ -848,8 +1045,8 @@ class DocumentGenerationOrchestrator:
                             document_id=document_id,
                             section_id=section_id,
                             subsection_id=subsection_id,
-                            stage="subsection_forced_pass",
-                            message=f"小节异常后兜底强制通过: {section_title} > {subsection_title}",
+                            stage="subsection_failed",
+                            message=f"小节异常失败: {section_title} > {subsection_title}",
                             metadata={"error": error_str},
                         )
                         continue
@@ -895,14 +1092,30 @@ class DocumentGenerationOrchestrator:
                 float(document_result.get("unieval_fallback_subsections", 0) or 0) / max(1, total_subsections_generated),
                 4,
             )
+            # 如果运行时没有产生 bandit 汇总（常见于本地调试或 Controller 没有直连），
+            # 试图从 controller_bandit_events.jsonl 读取最近的 events 进行聚合补齐，供前端展示。
+            try:
+                recent_stats = self._load_recent_bandit_stats(max_events=300)
+                # 仅在当前结果没有真实计数时采用补齐值
+                if int(document_result.get("bandit_reward_count", 0) or 0) == 0 and int(recent_stats.get("bandit_reward_count", 0) or 0) > 0:
+                    document_result["bandit_selected_arm_counts"] = recent_stats.get("bandit_selected_arm_counts", {})
+                    document_result["bandit_reward_sum"] = float(recent_stats.get("bandit_reward_sum", 0.0) or 0.0)
+                    document_result["bandit_reward_count"] = int(recent_stats.get("bandit_reward_count", 0) or 0)
+                    document_result["bandit_reward_avg"] = float(recent_stats.get("bandit_reward_avg", 0.0) or 0.0)
+                    document_result["bandit_last_selected_arm"] = str(recent_stats.get("bandit_last_selected_arm", "") or "")
+                    document_result["bandit_last_selection_mode"] = str(recent_stats.get("bandit_last_selection_mode", "") or "")
+                    document_result["bandit_drift_events"] = int(recent_stats.get("bandit_drift_events", 0) or 0)
+            except Exception:
+                pass
+
             document_result["bandit_reward_avg"] = round(float(document_result.get("bandit_reward_avg", 0.0) or 0.0), 4)
             document_result["bandit_drift_trigger_rate"] = round(
                 float(document_result.get("bandit_drift_triggered_subsections", 0) or 0) / max(1, total_subsections_generated),
                 4,
             )
 
-            # 文档级永不失败：只要流程走完就返回完整文档，失败小节全部转为兜底通过
-            document_result["success"] = True
+            # 文档级成功判定：存在失败小节则返回 partial/failed，避免掩盖真实质量问题
+            document_result["success"] = len(document_result["failed_subsections"]) == 0
             
             print(f"\n{'='*70}")
             print(f"{'✅' if document_result['success'] else '❌'} 文档生成完成！")
@@ -981,8 +1194,8 @@ class DocumentGenerationOrchestrator:
         outline: str,
         initial_prompt: str,
         passed_history: List[Dict[str, str]],
-        rel_threshold: float = 0.75,
-        red_threshold: float = 0.50,
+        rel_threshold: float = 0.50,
+        red_threshold: float = 0.75,
     ) -> Dict[str, Any]:
         """
         生成单个 subsection 的完整循环（第二步和第三步）
@@ -1036,6 +1249,7 @@ class DocumentGenerationOrchestrator:
         source_citation_required = False
         rag_used = False
         rag_selected_query = ""
+        last_negative_constraints: Optional[Dict[str, Any]] = None
 
         if self.rag_enabled and self.search_engine is not None:
             rag_query_candidates = self._build_rag_query_candidates(
@@ -1160,6 +1374,10 @@ class DocumentGenerationOrchestrator:
                         "draft": best_candidate.get("draft", ""),
                         "final_outline": best_candidate.get("outline", current_outline),
                         "iterations": iterations - 1,
+                        "source_results": best_candidate.get(
+                            "source_results",
+                            rag_search_result.get("results", []),
+                        ),
                         "rag_used": bool(best_candidate.get("rag_used", rag_used)),
                         "rag_search_success": bool(
                             best_candidate.get(
@@ -1257,6 +1475,7 @@ class DocumentGenerationOrchestrator:
                     "final_outline": current_outline,
                     "iterations": iterations - 1,
                     "all_drafts": all_drafts,
+                    "source_results": rag_search_result.get("results", []),
                     "rag_used": rag_used,
                     "rag_search_success": bool(rag_search_result.get("success", False)),
                     "rag_result_count": len(rag_search_result.get("results", [])),
@@ -1283,6 +1502,12 @@ class DocumentGenerationOrchestrator:
             else:
                 print(f"\n      尝试 {iterations}（超过配置迭代上限，继续严格闭环直到通过）")
             
+            effective_rel_threshold, effective_red_threshold = self._compute_effective_thresholds(
+                iteration=iterations,
+                rel_threshold=rel_threshold,
+                red_threshold=red_threshold,
+            )
+
             print(f"         🎯 调用 Generator...")
             self._emit_progress_event(
                 document_id=document_id,
@@ -1301,12 +1526,6 @@ class DocumentGenerationOrchestrator:
                     "rag_used": rag_used,
                 },
             )
-            
-            effective_rel_threshold, effective_red_threshold = self._compute_effective_thresholds(
-                iteration=iterations,
-                rel_threshold=rel_threshold,
-                red_threshold=red_threshold,
-            )
 
             enhanced_prompt = self._build_enhanced_prompt(
                 original_prompt=current_prompt,
@@ -1316,6 +1535,7 @@ class DocumentGenerationOrchestrator:
                 red_threshold=effective_red_threshold,
                 rag_context=rag_context,
                 require_source_citations=require_source_citations,
+                negative_constraints=last_negative_constraints,
             )
             
             gen_result = self._call_generator(enhanced_prompt)
@@ -1494,6 +1714,7 @@ class DocumentGenerationOrchestrator:
                 message=f"第 {iterations} 轮：进入 Verifier 检测",
                 metadata={"iteration": iterations},
             )
+            print(f"🎯 [DEBUG] Calling verifier with thresholds: rel={effective_rel_threshold:.2f}, red={effective_red_threshold:.2f}")
             verify_result = self._call_verifier(
                 draft=draft,
                 outline=current_outline,
@@ -1526,7 +1747,8 @@ class DocumentGenerationOrchestrator:
             
             print(
                 f"         相关性: {rel_score:.4f} (阈值: {effective_rel_threshold:.2f}), "
-                f"冗余度: {red_score:.4f} (阈值: {effective_red_threshold:.2f})"
+                f"冗余度: {red_score:.4f} (阈值: {effective_red_threshold:.2f}), "
+                f"is_passed={is_passed}"
             )
             if source_citation_required:
                 print(
@@ -1534,6 +1756,13 @@ class DocumentGenerationOrchestrator:
                     f"refs={source_check.get('reference_count', 0)}"
                 )
 
+            quality_score = float(verify_result.get("quality_score", 0.0) or 0.0)
+            quality_threshold = float(verify_result.get("quality_threshold", 0.0) or 0.0)
+            quality_passed = bool(verify_result.get("quality_score_passed", False))
+            semantic_dimensions = verify_result.get("quality_dimensions", {}) if isinstance(verify_result.get("quality_dimensions"), dict) else {}
+            dimension_check = verify_result.get("quality_dimensions_check", {}) if isinstance(verify_result.get("quality_dimensions_check"), dict) else {}
+            failed_dimensions = verify_result.get("quality_dimensions_failed", []) if isinstance(verify_result.get("quality_dimensions_failed"), list) else []
+            source_check_full = source_check if isinstance(source_check, dict) else {}
             self._emit_progress_event(
                 document_id=document_id,
                 section_id=section_id,
@@ -1545,9 +1774,20 @@ class DocumentGenerationOrchestrator:
                     "is_passed": bool(is_passed),
                     "relevancy_index": rel_score,
                     "redundancy_index": red_score,
+                    "rel_threshold": effective_rel_threshold,
+                    "red_threshold": effective_red_threshold,
                     "feedback": str(feedback or "")[:260],
-                    "source_check_passed": bool(source_check.get("passed", False)),
-                    "source_reference_count": int(source_check.get("reference_count", 0) or 0),
+                    "quality_score": quality_score,
+                    "quality_score_threshold": quality_threshold,
+                    "quality_score_passed": quality_passed,
+                    "quality_dimensions": semantic_dimensions,
+                    "quality_dimensions_check": dimension_check,
+                    "quality_dimensions_failed": failed_dimensions,
+                    "quality_dimensions_passed": bool(verify_result.get("quality_dimensions_passed", False)),
+                    "dimension_thresholds": verify_result.get("dimension_thresholds", {}),
+                    "source_check": source_check_full,
+                    "source_check_passed": bool(source_check_full.get("passed", False)),
+                    "source_reference_count": int(source_check_full.get("reference_count", 0) or 0),
                 },
             )
 
@@ -1577,6 +1817,7 @@ class DocumentGenerationOrchestrator:
                     )
             
             if is_passed:
+                last_negative_constraints = None
                 print(f"         ✨ 验证通过!")
                 self._emit_progress_event(
                     document_id=document_id,
@@ -1609,6 +1850,7 @@ class DocumentGenerationOrchestrator:
                     "draft": draft,
                     "final_outline": current_outline,
                     "iterations": iterations,
+                    "source_results": rag_search_result.get("results", []),
                     "rag_used": rag_used,
                     "rag_search_success": bool(rag_search_result.get("success", False)),
                     "rag_result_count": len(rag_search_result.get("results", [])),
@@ -1633,11 +1875,13 @@ class DocumentGenerationOrchestrator:
                     "controller_effective": bool(controller_last_result.get("effective", False)),
                     "controller_source": controller_last_result.get("source", ""),
                     "bandit": bandit_debug,
+                    "source_results": rag_search_result.get("results", []),
                 "draft": draft,
                 "outline": current_outline,
                 "iteration": iterations,
                 "verification": verify_result,
             }
+            last_negative_constraints = verify_result
             if best_candidate is None:
                 best_candidate = current_candidate
             else:
@@ -1661,6 +1905,7 @@ class DocumentGenerationOrchestrator:
                     "redundancy_index": red_score,
                 },
             )
+            print(f"🎯 [DEBUG] About to call controller (iteration={iterations}, is_passed={is_passed})")
             metrics["verifier_failed"] += 1
 
             controller_retry = 0
@@ -1730,7 +1975,36 @@ class DocumentGenerationOrchestrator:
                 improved_outline = str(controller_result.get("improved_outline", "")).strip()
                 controller_effective = bool(controller_result.get("effective", controller_result.get("success", False)))
                 controller_changed = bool(controller_result.get("changed", True))
+                # Guard against false-positive changed flags from controller fallback responses.
+                def _norm_outline(text: str) -> str:
+                    return " ".join(str(text or "").strip().split()).lower()
+                real_outline_changed = bool(improved_outline) and (_norm_outline(improved_outline) != _norm_outline(current_outline))
+                if controller_changed and not real_outline_changed:
+                    controller_changed = False
 
+                # 提取 bandit 信息：优先从 Controller 响应，否则从最新 bandit 事件读取
+                _selected_arm = str(controller_result.get("selected_arm", "") or "")
+                _reward_val = float(controller_result.get("reward", 0.0) or 0.0)
+                _selection_mode = ""
+                
+                # 尝试从 controller 响应的 bandit.selection.mode 提取 mode
+                bandit_obj = controller_result.get("bandit") if isinstance(controller_result.get("bandit"), dict) else {}
+                selection_obj = bandit_obj.get("selection") if isinstance(bandit_obj.get("selection"), dict) else {}
+                _selection_mode = str(selection_obj.get("mode", "") or "")
+                
+                # 关键：如果 controller 响应中没有 arm/reward，主动从最近 bandit 事件读取
+                # 这确保即使 controller 服务不返回这些字段，我们也能获取真实的 bandit 数据
+                if not _selected_arm or _reward_val == 0.0:
+                    last_ev = self._read_last_bandit_event()
+                    if isinstance(last_ev, dict):
+                        _selected_arm = _selected_arm or str(last_ev.get("chosen_arm") or "")
+                        if _reward_val == 0.0:  # 如果响应中没有 reward，则用文件中的
+                            try:
+                                _reward_val = float(last_ev.get("reward", 0.0) or 0.0)
+                            except Exception:
+                                pass
+
+                print(f"🎯 [Bandit Emit] 发出 controller_result 事件: arm={_selected_arm}, reward={_reward_val}, mode={_selection_mode}")
                 self._emit_progress_event(
                     document_id=document_id,
                     section_id=section_id,
@@ -1745,6 +2019,10 @@ class DocumentGenerationOrchestrator:
                         "success": bool(controller_result.get("success", False)),
                         "effective": controller_effective,
                         "changed": controller_changed,
+                        "changed_real": real_outline_changed,
+                        "selected_arm": _selected_arm,
+                        "reward": float(_reward_val or 0.0),
+                        "selection_mode": _selection_mode,
                         "improved_outline_chars": len(improved_outline),
                         "error": controller_error_text[:260],
                     },
@@ -1896,6 +2174,7 @@ class DocumentGenerationOrchestrator:
         red_threshold: float,
         rag_context: str,
         require_source_citations: bool,
+        negative_constraints: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         构建增强的生成提示，按照正确流程:
@@ -1933,8 +2212,42 @@ class DocumentGenerationOrchestrator:
 
 """
 
+        persona_block = os.getenv("PERSONA_PROMPT", "").strip()
+        if persona_block:
+            enhanced += f"""【Persona 风格约束（必须遵守）】
+{persona_block}
+
+"""
+
         if rag_context:
-            enhanced += f"{rag_context}\n\n"
+            # 【优化2.0 - 3-Step Evidence Check】
+            # 在RAG上下文后加入严格的3步引用验证工作流
+            enhanced += f"""{rag_context}
+
+【优化2.0 - 引用使用的三步证据对齐工作流（必须严格遵循）】
+当你使用上方"参考资料"中的任何来源时，必须执行以下三步检查：
+
+第1步 - 提取摘要：
+  → 读一遍该参考资料的标题、摘要和关键内容
+  → 提取该资料的"核心主题关键词"（例如：概念、方法、应用领域）
+
+第2步 - 判定匹配：
+  问自己："这篇资料的核心主题和我正在写的小节主题是否属于同一个大领域？"
+  例如：
+    ✓ 如果小节是"博弈论视角下的谈判"，资料是"策略互动模型"→ 同领域 ✓
+    ✗ 如果小节是"谈判策略"，资料是"多维随机变量的性质"→ 跨学科错配 ✗
+    ✗ 如果小节是"商业谈判"，资料是"汉语作为第二语言"→ 完全无关 ✗
+  判定标准：该资料是否能回答或支撑小节大纲中的某个核心要点？
+
+第3步 - 条件引用：
+  ✓ 如果判定为"同领域" → 允许在正文中使用 [序号] 引用
+  ✗ 如果判定为"跨领域或无关" → 绝不使用该资料，宁可不引用，也不强行塞入
+
+【严格执行】
+禁止为了"凑引用数量"而使用不相关的资料！宁可少引用，也不引用不匹配的来源。
+参考资料中的每一个引用都必须通过上述三步检查。如果某个资料不符合要求，请跳过它。
+
+"""
 
         if history_text:
             enhanced += f"""【前面已通过验证的小节内容（作为已生成内容的参考，避免冗余）】
@@ -1955,6 +2268,9 @@ class DocumentGenerationOrchestrator:
    - 与前面小节保持逻辑连贯，但展开全新的视角和信息
    - 字数控制在 500～800 字
    - 表述专业、准确、避免空洞内容
+    - 必须采用论证链结构：Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）
+    - 至少使用 1 个显式过渡词（例如：因此、然而、此外、总之 / therefore, however, moreover, in conclusion）
+    - 若出现强结论（如“必须”“证明了”“it is clear”），必须附带可验证事实或引用
 
 """
         else:
@@ -1967,21 +2283,50 @@ class DocumentGenerationOrchestrator:
 2. 质量要求：
    - 字数控制在 500～800 字
    - 表述专业、准确、避免空洞内容
+    - 必须采用论证链结构：Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）
+    - 至少使用 1 个显式过渡词（例如：因此、然而、此外、总之 / therefore, however, moreover, in conclusion）
+    - 若出现强结论（如“必须”“证明了”“it is clear”），必须附带可验证事实或引用
 
 """
 
         if require_source_citations:
             enhanced += """【来源引用硬性要求（必须满足）】
-- 对关键事实、数据、结论，必须直接写出具体来源信息，不要使用“[来源N]”占位符
-- 推荐正文引用格式： （来源：文章标题，链接：https://example.com/xxx）
+- 正文中的引用必须使用 IEEE 序号形式：如 [1]、[2]、[3]
+- 对关键事实、数据、结论，必须在对应句子后直接标注序号，不要使用“[来源N]”占位符
+- 每个关键事实至少提供 1 组“事实句 + [序号]”的证据最小单元
+- 末尾的参考文献必须按 IEEE 格式编号列出：作者/标题/出处/年份/链接
 - 至少提供 1 处可点击的具体网页链接；若有图片链接，也请直接写出图片 URL
 - 优先使用学术来源：arXiv、SSRN、Google Scholar、期刊/大学/官方机构页面
 - 在无法找到学术来源时，允许使用高质量社媒和技术社区来源（如知乎、B站、微博、X/Twitter、Reddit、Medium）
 - 只能引用上方“参考资料”里给出的来源，不允许编造不存在的论文、文章、链接或图片链接
-- 每个关键事实至少提供 1 组“事实句 + 可验证来源URL”的证据最小单元
 - 禁止引用与当前小节主题语义不一致的链接；如果标题/摘要和小节要点不匹配，禁止使用
-- 在正文末尾增加“引用来源”小节，逐条列出：标题、网页链接、可选图片链接
+- 参考文献末尾保留一个独立的“References”小节，按 [1] [2] [3] 顺序列出
 
+"""
+
+        if negative_constraints:
+            failed_dims = negative_constraints.get("quality_dimensions_failed") if isinstance(negative_constraints.get("quality_dimensions_failed"), list) else []
+            source_check = negative_constraints.get("source_check") if isinstance(negative_constraints.get("source_check"), dict) else {}
+            blacklist = source_check.get("blacklist_matches") if isinstance(source_check.get("blacklist_matches"), list) else []
+            feedback_text = str(negative_constraints.get("feedback", "") or "").strip()
+
+            enhanced += """【负向约束重试（必须严格遵守）】
+上一轮被 Verifier 判定失败，本轮必须明确修复以下问题，禁止重复犯错：
+"""
+            if failed_dims:
+                enhanced += f"\n- 失败维度：{', '.join(str(x) for x in failed_dims)}\n"
+            if feedback_text:
+                enhanced += f"- 失败反馈：{feedback_text[:260]}\n"
+            if blacklist:
+                enhanced += "- 禁止再次引用以下跨领域来源（标题或关键词命中黑名单）：\n"
+                for item in blacklist[:6]:
+                    title = str(item.get("title", "") or "")[:120]
+                    matched = str(item.get("match", "") or item.get("match_keyword", "") or "")[:40]
+                    if title or matched:
+                        enhanced += f"  - {title} (命中词: {matched})\n"
+            enhanced += """
+- 如果来源与当前小节领域不一致，必须舍弃，不允许为了凑引用数量而保留。
+- 本轮至少提供 1 处与小节主题直接相关的事实句 + [序号] 引用。
 """
 
         enhanced += """【原始生成指令】

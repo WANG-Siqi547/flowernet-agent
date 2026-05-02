@@ -4,6 +4,7 @@ Provides HistoryManager for memory/SQLite storage.
 """
 
 import json
+import os
 import sqlite3
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -152,6 +153,34 @@ class HistoryManager:
 
         conn.commit()
         conn.close()
+
+    def _ensure_database_ready(self):
+        if not self.use_database:
+            return
+
+        required_tables = {
+            "history",
+            "outlines",
+            "subsection_tracking",
+            "passed_history",
+            "progress_events",
+        }
+
+        try:
+            if not os.path.exists(self.db_path):
+                self._init_database()
+                return
+
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            existing_tables = {row[0] for row in cursor.fetchall()}
+            conn.close()
+
+            if not required_tables.issubset(existing_tables):
+                self._init_database()
+        except Exception:
+            self._init_database()
 
     def add_entry(
         self,
@@ -313,6 +342,7 @@ class HistoryManager:
         timestamp = datetime.now().isoformat()
         
         if self.use_database:
+            self._ensure_database_ready()
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -344,6 +374,7 @@ class HistoryManager:
     ) -> Optional[str]:
         """获取特定类型的大纲"""
         if self.use_database:
+            self._ensure_database_ready()
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             

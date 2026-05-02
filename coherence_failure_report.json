@@ -1,0 +1,104 @@
+{
+  "summary": {
+    "files_scanned": 1,
+    "failure_items_found": 0,
+    "low_coherence_runs_found": 1,
+    "samples_analyzed": 0,
+    "pattern_counts": {},
+    "low_coherence_pattern_counts": {
+      "missing_transition_markers": 5,
+      "short_sentences_weak_reasoning_chain": 4
+    },
+    "avg_word_count": 0.0,
+    "avg_sentence_len": 0.0,
+    "recommendations": [
+      "In generator prompt, enforce subsection structure: Claim -> Evidence -> Reasoning -> Transition -> Implication.",
+      "Require at least one explicit transition marker per subsection.",
+      "If strong claim markers exist, require at least one evidence/citation marker.",
+      "Increase minimum target length for coherence-critical subsections to >= 180 words."
+    ]
+  },
+  "samples": [],
+  "low_coherence_runs": [
+    {
+      "source": "local_validate_2x2_20260424_121311.json",
+      "logical_coherence": 0.3286,
+      "subsections": [
+        {
+          "title": "document",
+          "metrics": {
+            "word_count": 139,
+            "sentence_count": 11,
+            "avg_sentence_len": 12.64,
+            "has_transition": false,
+            "has_evidence": true,
+            "has_claim": false,
+            "patterns": [
+              "missing_transition_markers"
+            ]
+          }
+        },
+        {
+          "title": "A. Modular Design Principles",
+          "metrics": {
+            "word_count": 414,
+            "sentence_count": 60,
+            "avg_sentence_len": 6.9,
+            "has_transition": false,
+            "has_evidence": true,
+            "has_claim": false,
+            "patterns": [
+              "short_sentences_weak_reasoning_chain",
+              "missing_transition_markers"
+            ]
+          }
+        },
+        {
+          "title": "B. Naming Conventions and Documentation",
+          "metrics": {
+            "word_count": 531,
+            "sentence_count": 84,
+            "avg_sentence_len": 6.32,
+            "has_transition": false,
+            "has_evidence": true,
+            "has_claim": true,
+            "patterns": [
+              "short_sentences_weak_reasoning_chain",
+              "missing_transition_markers"
+            ]
+          }
+        },
+        {
+          "title": "A. Error Handling and Logging",
+          "metrics": {
+            "word_count": 505,
+            "sentence_count": 74,
+            "avg_sentence_len": 6.82,
+            "has_transition": false,
+            "has_evidence": true,
+            "has_claim": true,
+            "patterns": [
+              "short_sentences_weak_reasoning_chain",
+              "missing_transition_markers"
+            ]
+          }
+        },
+        {
+          "title": "B. Testing and Version Control",
+          "metrics": {
+            "word_count": 556,
+            "sentence_count": 80,
+            "avg_sentence_len": 6.95,
+            "has_transition": false,
+            "has_evidence": true,
+            "has_claim": true,
+            "patterns": [
+              "short_sentences_weak_reasoning_chain",
+              "missing_transition_markers"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

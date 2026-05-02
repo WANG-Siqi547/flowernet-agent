@@ -1346,6 +1346,7 @@ class FlowerNetOrchestrator:
                         "content": result.get("draft", ""),
                         "iterations": result.get("iterations", 0),
                         "verification": result.get("verification", {}),
+                        "source_results": result.get("source_results", []),  # 新增：包含引用来源
                         "stored_in_db": result.get("stored_in_db", False)
                     })
                     section_result["success_count"] += 1
@@ -1404,6 +1405,11 @@ class FlowerNetOrchestrator:
 """
         if system_prompt:
             prompt += f"系统指示: {system_prompt}\n\n"
+
+        # 如果环境中设置了 PERSONA_PROMPT，则将 persona 指令注入到 prompt 中
+        persona_block = os.getenv('PERSONA_PROMPT', '').strip()
+        if persona_block:
+            prompt += f"\n人物风格要求（Persona）:\n{persona_block}\n\n"
         
         prompt += f"""
 请根据上述主题编写一段相关内容。要求：
@@ -1411,6 +1417,9 @@ class FlowerNetOrchestrator:
 2. 段落应该逻辑清晰、表述准确
 3. 避免与之前的内容重复（如果有的话）
 4. 长度适中（200-500 字）
+    5. 必须采用论证结构：主张（Claim）→ 证据（Evidence）→ 推理（Reasoning）→ 过渡（Transition）→ 小结（Implication）
+    6. 至少使用一个明确过渡词（例如：因此、然而、此外、总之 / therefore, however, moreover, in conclusion）
+    7. 若出现强结论性表述（如“证明了”“必须”“it is clear”），必须给出可核验证据或引用
 """
         
         return prompt

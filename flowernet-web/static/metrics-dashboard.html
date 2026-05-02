@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowerNet 质量检测指标展示</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 8px;
+            text-align: center;
+            transform: transition(0.3s);
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-value {
+            font-size: 48px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            border-bottom: 2px solid #f0f0f0;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .tab-button {
+            padding: 15px 20px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            color: #666;
+            font-size: 14px;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-button:hover {
+            color: #667eea;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .metric-card {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s;
+        }
+
+        .metric-card:hover {
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .metric-card h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .metric-card p {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .metric-details {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            font-size: 12px;
+        }
+
+        .badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+
+        .badge-threshold {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .badge-importance-high {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .badge-importance-medium {
+            background: #fff3e0;
+            color: #e65100;
+        }
+
+        .badge-importance-low {
+            background: #f1f8e9;
+            color: #558b2f;
+        }
+
+        .badge-category {
+            background: #f3e5f5;
+            color: #6a1b9a;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .feature-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 8px;
+        }
+
+        .feature-card h3 {
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .feature-card p {
+            font-size: 14px;
+            line-height: 1.6;
+            opacity: 0.95;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .section {
+            margin-bottom: 50px;
+        }
+
+        .section h2 {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .comparison-table th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .comparison-table td {
+            padding: 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .comparison-table tr:hover {
+            background: white;
+        }
+
+        .comparison-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+        }
+
+        .api-info {
+            background: #e3f2fd;
+            border-left: 4px solid #1976d2;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            color: #1976d2;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                padding: 20px;
+            }
+
+            header h1 {
+                font-size: 24px;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .comparison-table {
+                font-size: 12px;
+            }
+
+            .comparison-table th,
+            .comparison-table td {
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌸 FlowerNet 质量检测指标体系</h1>
+            <p>全面展示 FlowerNet 文档生成系统的 16+ 个质量检测维度和 6 大核心优势</p>
+        </header>
+
+        <div class="content">
+            <div class="api-info">
+                ℹ️ 本页面通过调用 FlowerNet Web API (http://localhost:8010/api/metrics/*) 实时获取指标定义数据
+            </div>
+
+            <!-- 统计卡片 -->
+            <div id="stats" class="stats-grid">
+                <div class="loading"><div class="loading-spinner"></div>加载中...</div>
+            </div>
+
+            <!-- 控制按钮 -->
+            <div class="controls">
+                <button class="btn btn-primary" onclick="loadDashboard()">📊 仪表板概览</button>
+                <button class="btn btn-secondary" onclick="loadAllMetrics()">📋 所有指标</button>
+                <button class="btn btn-secondary" onclick="loadFeatures()">⭐ 核心特性</button>
+                <button class="btn btn-secondary" onclick="loadComparison()">🔍 指标对比</button>
+            </div>
+
+            <!-- 标签页 -->
+            <div id="tabs" class="tabs" style="display: none;"></div>
+
+            <!-- 主要内容区域 -->
+            <div id="main-content">
+                <div class="loading"><div class="loading-spinner"></div>加载中...</div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>FlowerNet Web Service API 指标展示系统 | v1.0</p>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/metrics';
+        let currentData = null;
+        let currentView = 'dashboard';
+
+        async function fetchAPI(endpoint) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error(`API 错误: ${endpoint}`, error);
+                showError(`加载失败: ${error.message}`);
+                return null;
+            }
+        }
+
+        function showError(message) {
+            const main = document.getElementById('main-content');
+            main.innerHTML = `<div class="error">❌ ${message}</div>`;
+        }
+
+        async function loadDashboard() {
+            document.querySelectorAll('.controls .btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            currentView = 'dashboard';
+            document.getElementById('tabs').style.display = 'none';
+
+            const data = await fetchAPI('/dashboard-summary');
+            if (!data) return;
+
+            currentData = data;
+            displayDashboard(data);
+        }
+
+        function displayDashboard(data) {
+            const summary = data.summary;
+            
+            // 显示统计
+            let statsHtml = '';
+            statsHtml += `<div class="stat-card"><div class="stat-value">${summary.total_metrics}</div><div class="stat-label">质量指标</div></div>`;
+            statsHtml += `<div class="stat-card"><div class="stat-value">${summary.total_categories}</div><div class="stat-label">指标分类</div></div>`;
+            statsHtml += `<div class="stat-card"><div class="stat-value">${summary.total_features}</div><div class="stat-label">核心特性</div></div>`;
+            document.getElementById('stats').innerHTML = statsHtml;
+
+            // 显示分类
+            let html = '<div class="section"><h2>📊 指标分类总览</h2>';
+            html += '<div class="metrics-grid">';
+            for (const [name, info] of Object.entries(summary.categories)) {
+                html += `
+                    <div class="metric-card">
+                        <h3>${info.icon} ${name}</h3>
+                        <p>${info.description}</p>
+                        <div class="metric-details">
+                            <span class="badge badge-category">${info.metrics_count} 个指标</span>
+                        </div>
+                    </div>
+                `;
+            }
+            html += '</div></div>';
+
+            // 显示特性
+            html += '<div class="section"><h2>⭐ 核心竞争优势</h2>';
+            html += '<div class="features-grid">';
+            for (const feature of summary.features) {
+                html += `
+                    <div class="feature-card">
+                        <h3>${feature.title}</h3>
+                        <p><strong>描述:</strong> ${feature.description}</p>
+                        <p><strong>优势:</strong> ${feature.advantage}</p>
+                    </div>
+                `;
+            }
+            html += '</div></div>';
+
+            document.getElementById('main-content').innerHTML = html;
+        }
+
+        async function loadAllMetrics() {
+            document.querySelectorAll('.controls .btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            currentView = 'metrics';
+
+            const data = await fetchAPI('/all');
+            if (!data) return;
+
+            currentData = data;
+            displayAllMetrics(data);
+        }
+
+        function displayAllMetrics(data) {
+            // 按分类分组
+            const grouped = {};
+            for (const [key, metric] of Object.entries(data.metrics)) {
+                const cat = metric.category || '其他';
+                if (!grouped[cat]) grouped[cat] = [];
+                grouped[cat].push({ key, ...metric });
+            }
+
+            // 显示标签页
+            let tabsHtml = '';
+            for (const cat of Object.keys(grouped).sort()) {
+                tabsHtml += `<button class="tab-button" onclick="showCategory('${cat}')">${cat}</button>`;
+            }
+            document.getElementById('tabs').innerHTML = tabsHtml;
+            document.getElementById('tabs').style.display = 'flex';
+            document.querySelector('.tab-button').classList.add('active');
+
+            // 显示第一个分类
+            showCategory(Object.keys(grouped).sort()[0]);
+
+            function showCategory(category) {
+                document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+                event.target.classList.add('active');
+
+                let html = '<div class="metrics-grid">';
+                for (const metric of grouped[category]) {
+                    const importance = metric.importance || '中';
+                    const importanceClass = `badge-importance-${importance.toLowerCase()}`;
+                    
+                    html += `
+                        <div class="metric-card">
+                            <h3>${metric.name}</h3>
+                            <p>${metric.description}</p>
+                            <div class="metric-details">
+                                <span class="badge badge-threshold">阈值: ${metric.threshold || 'N/A'}</span>
+                                <span class="badge ${importanceClass}">优先级: ${importance}</span>
+                            </div>
+                            <p style="margin-top: 10px; font-size: 12px; color: #888;">
+                                <strong>检测方法:</strong> ${metric.feature}
+                            </p>
+                            <p style="font-size: 12px; color: #888;">
+                                <strong>通过标准:</strong> ${metric.pass_criteria}
+                            </p>
+                        </div>
+                    `;
+                }
+                html += '</div>';
+                document.getElementById('main-content').innerHTML = html;
+            }
+
+            window.showCategory = showCategory;
+        }
+
+        async function loadFeatures() {
+            document.querySelectorAll('.controls .btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            currentView = 'features';
+            document.getElementById('tabs').style.display = 'none';
+
+            const data = await fetchAPI('/features');
+            if (!data) return;
+
+            currentData = data;
+            displayFeatures(data);
+        }
+
+        function displayFeatures(data) {
+            let html = '<div class="section"><h2>⭐ FlowerNet 六大核心特性</h2>';
+            html += '<div class="features-grid">';
+            for (const [key, feature] of Object.entries(data.features)) {
+                html += `
+                    <div class="feature-card">
+                        <h3>${feature.title}</h3>
+                        <p><strong>描述:</strong> ${feature.description}</p>
+                        <p><strong>竞争优势:</strong> ${feature.advantage}</p>
+                    </div>
+                `;
+            }
+            html += '</div></div>';
+            document.getElementById('main-content').innerHTML = html;
+        }
+
+        async function loadComparison() {
+            document.querySelectorAll('.controls .btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            currentView = 'comparison';
+            document.getElementById('tabs').style.display = 'none';
+
+            const data = await fetchAPI('/comparison');
+            if (!data) return;
+
+            currentData = data;
+            displayComparison(data);
+        }
+
+        function displayComparison(data) {
+            let html = '<div class="section"><h2>🔍 指标对比分析</h2>';
+            
+            // 统计信息
+            const stats = data.statistics;
+            html += `
+                <p style="margin-bottom: 20px; color: #666;">
+                    <strong>总指标数:</strong> ${stats.total_metrics} | 
+                    <strong>包含阈值:</strong> ${stats.metrics_with_thresholds} | 
+                    <strong>覆盖分类:</strong> ${stats.categories_covered.length} 个
+                </p>
+            `;
+
+            // 按分类显示表格
+            for (const [category, metrics] of Object.entries(data.comparison.metrics_by_category)) {
+                html += `<h3 style="margin-top: 30px; margin-bottom: 15px;">📂 ${category}</h3>`;
+                html += `
+                    <table class="comparison-table">
+                        <thead>
+                            <tr>
+                                <th>指标名称</th>
+                                <th>阈值</th>
+                                <th>检测方法</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                for (const metric of metrics) {
+                    html += `
+                        <tr>
+                            <td><strong>${metric.name}</strong></td>
+                            <td>${metric.threshold || 'N/A'}</td>
+                            <td>${metric.feature || 'N/A'}</td>
+                        </tr>
+                    `;
+                }
+                html += '</tbody></table>';
+            }
+            html += '</div>';
+            document.getElementById('main-content').innerHTML = html;
+        }
+
+        // 初始化：加载仪表板
+        window.addEventListener('DOMContentLoaded', () => {
+            loadDashboard();
+        });
+    </script>
+</body>
+</html>

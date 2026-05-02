@@ -191,7 +191,7 @@ def _build_dimension_guidance(feedback: Dict[str, Any]) -> List[str]:
     dimension_messages = {
         "topic_alignment": "主题对齐不足：重新强化该小节的中心论点、关键定义和必须回答的问题，避免泛化叙述。",
         "coverage_completeness": "覆盖不完整：补全大纲中缺失的关键子点、流程步骤、约束条件或对比维度。",
-        "logical_coherence": "逻辑连贯性不足：按因果、递进或问题-解决结构重排小节层级，减少跳跃式叙述。",
+        "logical_coherence": "逻辑连贯性不足：按因果/递进/问题-解决结构重排小节层级，并显式要求 Claim→Evidence→Reasoning→Transition→Implication。",
         "evidence_grounding": "证据接地性不足：明确要求加入可验证事实、引用、示例或数据支撑，避免空泛结论。",
         "novelty": "新颖性不足：要求引入新的角度、反例、比较对象或未覆盖的信息，避免重复前文。",
         "structure_clarity": "结构清晰度不足：要求使用清晰的小标题、分点或步骤式结构，增强可读性和条理性。",
@@ -210,6 +210,22 @@ def _build_dimension_guidance(feedback: Dict[str, Any]) -> List[str]:
                 )
             else:
                 guidance.append(f"- {dim_name}: {dimension_messages[dim_name]}")
+
+    # Persona consistency guidance (if verifier provides it)
+    persona_check = feedback.get("persona_check") if isinstance(feedback.get("persona_check"), dict) else {}
+    persona_passed = bool(feedback.get("persona_passed", True))
+    persona_threshold = float(feedback.get("persona_threshold", 0.0) or 0.0)
+    persona_similarity = float(persona_check.get("similarity", 0.0) or 0.0) if persona_check else 0.0
+    if persona_check and not persona_passed:
+        guidance.append(
+            f"- persona_consistency: 风格一致性不足，要求生成文本严格贴合指定 persona 语气、术语和叙述方式。当前={persona_similarity:.4f}，阈值={persona_threshold:.4f}。"
+        )
+
+    # Stronger coherence repairs when this dimension fails.
+    if "logical_coherence" in failed_dims:
+        guidance.append("- coherence_template: 每段需包含『主张句 + 证据句 + 推理句』最小结构，段尾添加过渡句连接下一段。")
+        guidance.append("- transition_requirement: 每个小节至少使用 1 个显式过渡词（例如：因此/然而/此外/总之）。")
+        guidance.append("- unsupported_claim_guard: 出现强结论词（必须/证明/it is clear）时，必须绑定可验证事实或引用。")
 
     return guidance
 
@@ -732,6 +748,38 @@ def _structure_score(outline: str) -> float:
     return 0.6 * line_count_score + 0.4 * bullet_score
 
 
+def _normalize_outline_for_compare(text: str) -> str:
+    """Normalize outline text for semantic-equivalent comparison."""
+    normalized = re.sub(r"\s+", " ", str(text or "").strip())
+    return normalized.lower()
+
+
+def _coherence_outline_signal(outline: str) -> float:
+    """Estimate whether an outline is likely to produce coherent prose.
+
+    Signals:
+    - has explicit argument chain markers (claim/evidence/reasoning/transition)
+    - has transition connectors
+    - has stepwise structure
+    """
+    text = str(outline or "")
+    lower = text.lower()
+
+    claim_hit = 1.0 if re.search(r"主张|核心结论|结论|claim|thesis", lower) else 0.0
+    evidence_hit = 1.0 if re.search(r"证据|数据|案例|引用|evidence|citation|data|example", lower) else 0.0
+    reasoning_hit = 1.0 if re.search(r"推理|原因|机制|because|reasoning|rationale", lower) else 0.0
+    implication_hit = 1.0 if re.search(r"小结|启示|结论延伸|implication|takeaway", lower) else 0.0
+
+    transition_count = len(re.findall(r"因此|然而|此外|总之|同时|所以|therefore|however|moreover|in conclusion|meanwhile", lower))
+    transition_score = min(1.0, transition_count / 4.0)
+
+    step_markers = len(re.findall(r"(^|\n)\s*(\d+[\.|\)]|[①②③④⑤]|first|second|third|finally)", lower))
+    step_score = min(1.0, step_markers / 3.0)
+
+    chain_score = (claim_hit + evidence_hit + reasoning_hit + implication_hit) / 4.0
+    return _clip01(0.45 * chain_score + 0.30 * transition_score + 0.25 * step_score)
+
+
 def _score_outline_candidate(
     candidate_outline: str,
     original_outline: str,
@@ -742,6 +790,8 @@ def _score_outline_candidate(
     red_score: float,
     rel_threshold: float,
     red_threshold: float,
+    feedback: Optional[Dict[str, Any]] = None,
+    defect_graph: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
     anchors = _extract_anchor_terms(original_outline)
     relevance_anchor = _keyword_coverage(candidate_outline, anchors)
@@ -753,19 +803,44 @@ def _score_outline_candidate(
     novelty = 1.0 - min(1.0, 0.65 * overlap_history + 0.35 * overlap_failed)
 
     structure = _structure_score(candidate_outline)
+    coherence_signal = _coherence_outline_signal(candidate_outline)
 
     rel_gap = max(0.0, rel_threshold - rel_score)
     red_gap = max(0.0, red_score - red_threshold)
 
-    rel_weight = 0.55 + min(0.25, rel_gap)
-    red_weight = 0.20 + min(0.25, red_gap)
-    structure_weight = max(0.10, 1.0 - rel_weight - red_weight)
+    defect_graph = defect_graph or {}
+    coherence_need = _clip01(float(defect_graph.get("coherence", 0.0)))
+    topic_need = _clip01(max(rel_gap, float(defect_graph.get("topic", 0.0))))
+    novelty_need = _clip01(max(red_gap, float(defect_graph.get("redundancy", 0.0))))
+    structure_need = _clip01(float(defect_graph.get("structure", 0.0)))
+
+    # Dynamic weights to align Controller objective with Verifier failures.
+    rel_weight = 0.32 + 0.20 * topic_need
+    novelty_weight = 0.14 + 0.18 * novelty_need
+    structure_weight = 0.12 + 0.16 * structure_need
+    coherence_weight = 0.18 + 0.28 * coherence_need
+    delta_weight = 0.06
+
+    # If verifier explicitly failed logical_coherence, push more weight to coherence optimization.
+    failed_dims = feedback.get("quality_dimensions_failed") if isinstance(feedback, dict) and isinstance(feedback.get("quality_dimensions_failed"), list) else []
+    if "logical_coherence" in failed_dims:
+        coherence_weight += 0.10
+        rel_weight = max(0.20, rel_weight - 0.05)
+        novelty_weight = max(0.10, novelty_weight - 0.03)
+
+    total_weight = max(1e-6, rel_weight + novelty_weight + structure_weight + coherence_weight + delta_weight)
+    rel_weight /= total_weight
+    novelty_weight /= total_weight
+    structure_weight /= total_weight
+    coherence_weight /= total_weight
+    delta_weight /= total_weight
 
     total = (
         rel_weight * relevance_anchor
-        + red_weight * novelty
+        + novelty_weight * novelty
         + structure_weight * structure
-        + 0.05 * similarity_to_working
+        + coherence_weight * coherence_signal
+        + delta_weight * similarity_to_working
     )
 
     return {
@@ -773,7 +848,15 @@ def _score_outline_candidate(
         "relevance_anchor": round(relevance_anchor, 4),
         "novelty": round(novelty, 4),
         "structure": round(structure, 4),
+        "coherence_signal": round(coherence_signal, 4),
         "delta_from_working": round(similarity_to_working, 4),
+        "weights": {
+            "relevance_anchor": round(rel_weight, 4),
+            "novelty": round(novelty_weight, 4),
+            "structure": round(structure_weight, 4),
+            "coherence_signal": round(coherence_weight, 4),
+            "delta_from_working": round(delta_weight, 4),
+        },
     }
 
 
@@ -1102,6 +1185,8 @@ async def improve_outline(req: ImproveOutlineRequest):
             red_score=red_score,
             rel_threshold=rel_threshold,
             red_threshold=red_threshold,
+            feedback=req.feedback,
+            defect_graph=defect_graph,
         )
 
         candidates: List[Dict[str, Any]] = []
@@ -1138,6 +1223,8 @@ async def improve_outline(req: ImproveOutlineRequest):
                 red_score=red_score,
                 rel_threshold=rel_threshold,
                 red_threshold=red_threshold,
+                feedback=req.feedback,
+                defect_graph=defect_graph,
             )
             dedup_candidates.append(
                 {
@@ -1151,6 +1238,7 @@ async def improve_outline(req: ImproveOutlineRequest):
         min_rel_anchor_gain = float(os.getenv("CONTROLLER_MIN_REL_ANCHOR_GAIN", "0.005"))
         min_novelty_gain = float(os.getenv("CONTROLLER_MIN_NOVELTY_GAIN", "0.005"))
         min_structure_gain = float(os.getenv("CONTROLLER_MIN_STRUCTURE_GAIN", "0.05"))
+        min_coherence_gain = float(os.getenv("CONTROLLER_MIN_COHERENCE_GAIN", "0.03"))
 
         bandit_enabled = os.getenv("CONTROLLER_BANDIT_ENABLED", "true").lower() == "true"
         feature_vector = _build_bandit_context_features(
@@ -1213,13 +1301,17 @@ async def improve_outline(req: ImproveOutlineRequest):
         rel_anchor_gain = (chosen["score"].get("relevance_anchor", 0.0) - baseline_score.get("relevance_anchor", 0.0)) if chosen else 0.0
         novelty_gain = (chosen["score"].get("novelty", 0.0) - baseline_score.get("novelty", 0.0)) if chosen else 0.0
         structure_gain = (chosen["score"].get("structure", 0.0) - baseline_score.get("structure", 0.0)) if chosen else 0.0
+        coherence_gain = (chosen["score"].get("coherence_signal", 0.0) - baseline_score.get("coherence_signal", 0.0)) if chosen else 0.0
 
         rel_needed = rel_score < rel_threshold
         red_needed = red_score > red_threshold
+        coherence_needed = bool(defect_graph.get("coherence", 0.0) >= 0.25 or "logical_coherence" in (req.feedback.get("quality_dimensions_failed") if isinstance(req.feedback.get("quality_dimensions_failed"), list) else []))
         rel_gain_ok = (not rel_needed) or (rel_anchor_gain >= min_rel_anchor_gain) or (structure_gain >= min_structure_gain)
         novelty_gain_ok = (not red_needed) or (novelty_gain >= min_novelty_gain)
+        coherence_gain_ok = (not coherence_needed) or (coherence_gain >= min_coherence_gain) or (chosen_source in ("rule_structured", "defect_structure"))
 
-        if chosen and chosen["outline"].strip() != baseline_outline.strip():
+        candidate_changed = bool(chosen and _normalize_outline_for_compare(chosen["outline"]) != _normalize_outline_for_compare(baseline_outline))
+        if chosen and candidate_changed:
             improved_outline = chosen["outline"]
             chosen_source = chosen["source"]
             changed = True
@@ -1234,7 +1326,7 @@ async def improve_outline(req: ImproveOutlineRequest):
             and (
                 score_gain >= min_gain
                 or chosen_source == "rule_structured"
-                or (rel_gain_ok and novelty_gain_ok)
+                or (rel_gain_ok and novelty_gain_ok and coherence_gain_ok)
             )
         )
         if require_llm_source and chosen_source != "llm":
@@ -1334,7 +1426,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                 "error": "controller_outline_not_effective",
                 "improved_outline": baseline_outline,
                 "source": chosen_source,
-                "changed": changed,
+                "changed": False,
                 "effective": False,
                 "baseline_score": baseline_score,
                 "selected_score": (chosen["score"] if chosen else baseline_score),
@@ -1342,8 +1434,10 @@ async def improve_outline(req: ImproveOutlineRequest):
                 "selection_rel_anchor_gain": round(rel_anchor_gain, 4),
                 "selection_novelty_gain": round(novelty_gain, 4),
                 "selection_structure_gain": round(structure_gain, 4),
+                "selection_coherence_gain": round(coherence_gain, 4),
                 "selection_rel_gain_ok": rel_gain_ok,
                 "selection_novelty_gain_ok": novelty_gain_ok,
+                "selection_coherence_gain_ok": coherence_gain_ok,
                 "llm_error": llm_error,
                 "defect_graph": defect_graph,
                 "bandit": bandit_debug,
@@ -1354,6 +1448,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                         "relevance_anchor": c["score"]["relevance_anchor"],
                         "novelty": c["score"]["novelty"],
                         "structure": c["score"]["structure"],
+                        "coherence_signal": c["score"].get("coherence_signal", 0.0),
                     }
                     for c in dedup_candidates
                 ],
@@ -1380,8 +1475,10 @@ async def improve_outline(req: ImproveOutlineRequest):
             "selection_rel_anchor_gain": round(rel_anchor_gain, 4),
             "selection_novelty_gain": round(novelty_gain, 4),
             "selection_structure_gain": round(structure_gain, 4),
+            "selection_coherence_gain": round(coherence_gain, 4),
             "selection_rel_gain_ok": rel_gain_ok,
             "selection_novelty_gain_ok": novelty_gain_ok,
+            "selection_coherence_gain_ok": coherence_gain_ok,
             "llm_error": llm_error,
             "defect_graph": defect_graph,
             "bandit": bandit_debug,
@@ -1392,6 +1489,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                     "relevance_anchor": c["score"]["relevance_anchor"],
                     "novelty": c["score"]["novelty"],
                     "structure": c["score"]["structure"],
+                    "coherence_signal": c["score"].get("coherence_signal", 0.0),
                 }
                 for c in dedup_candidates
             ],

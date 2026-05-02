@@ -12,13 +12,59 @@ import json
 from uuid import uuid4
 from datetime import timezone
 from email.utils import parsedate_to_datetime
+from xml.sax.saxutils import escape as xml_escape
 
 import requests
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, Inches
+from docx.oxml.ns import qn
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import cm, inch
+from reportlab.lib.fonts import addMapping
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase import pdfmetrics
+from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Preformatted
 from pydantic import BaseModel, Field
+
+# 导入 Citation Verifier 用于引证质量控制
+try:
+    from citation_verifier import CitationVerifier, verify_references
+    HAS_CITATION_VERIFIER = True
+except ImportError:
+    HAS_CITATION_VERIFIER = False
+    print("⚠️ Citation Verifier 未安装，跳过引证验证")
+
+# 导入 Domain Filter 用于基于领域相关性的过滤
+try:
+    from domain_filter import get_domain_filter
+    HAS_DOMAIN_FILTER = True
+except ImportError:
+    HAS_DOMAIN_FILTER = False
+    print("⚠️ Domain Filter 未安装，跳过领域过滤")
+
+# 导入指标定义
+try:
+    from metrics_definition import (
+        FLOWERNET_METRICS,
+        METRICS_CATEGORIES,
+        FLOWERNET_FEATURES,
+        get_all_metrics,
+        get_all_categories,
+        get_metrics_by_category,
+    )
+    HAS_METRICS_DEFINITION = True
+except ImportError:
+    HAS_METRICS_DEFINITION = False
+    print("⚠️ Metrics Definition 未安装，跳过指标展示")
+    FLOWERNET_METRICS = {}
+    METRICS_CATEGORIES = {}
+    FLOWERNET_FEATURES = {}
 
 
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
@@ -28,11 +74,14 @@ DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "1"))
 DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
 DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
 DOWNSTREAM_JITTER = float(os.getenv("DOWNSTREAM_JITTER", "0.35"))
-DOWNSTREAM_OUTLINER_MIN_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MIN_RETRIES", "8"))
+DOWNSTREAM_OUTLINER_MIN_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MIN_RETRIES", "1"))
+DOWNSTREAM_OUTLINER_MAX_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MAX_RETRIES", "2"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_503 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_503", "8.0"))
 DOWNSTREAM_GENERATOR_MIN_RETRIES = int(os.getenv("DOWNSTREAM_GENERATOR_MIN_RETRIES", "1"))
 DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_DELAY_429", "10.0"))
 GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "0"))
+GENERATOR_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("GENERATOR_DOWNSTREAM_MIN_TIMEOUT", "600"))
+OUTLINER_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("OUTLINER_DOWNSTREAM_MIN_TIMEOUT", "600"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
 DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
 DOWNSTREAM_GENERATOR_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_GENERATOR_COOLDOWN_429", "20.0"))
@@ -41,8 +90,9 @@ API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
-WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.55"))
-WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.70"))
+WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.75"))
+# Make redundancy detection slightly stricter by default (user requested)
+WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.40"))
 ENABLE_CITATION_QA = os.getenv("ENABLE_CITATION_QA", "true").lower() == "true"
 CITATION_MIN_SECTION_HIGH_QUALITY = int(os.getenv("CITATION_MIN_SECTION_HIGH_QUALITY", "1"))
 CITATION_LOW_QUALITY_MAX_RATIO = float(os.getenv("CITATION_LOW_QUALITY_MAX_RATIO", "0.5"))
@@ -101,6 +151,18 @@ class PofficesTaskStatusRequest(BaseModel):
 
 
 app = FastAPI(title="FlowerNet Web UI", version="1.0.0")
+
+# Add request logging middleware for debugging
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if "/api/download" in str(request.url):
+            print(f"[Middleware] Incoming {request.method} {request.url.path}", flush=True)
+        response = await call_next(request)
+        if "/api/download" in str(request.url):
+            print(f"[Middleware] Response status: {response.status_code}", flush=True)
+        return response
+
+app.add_middleware(LoggingMiddleware)
 
 
 def verify_auth(
@@ -365,6 +427,7 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
     effective_retries = DOWNSTREAM_RETRIES
     if is_outliner_url:
         effective_retries = max(effective_retries, DOWNSTREAM_OUTLINER_MIN_RETRIES)
+        effective_retries = min(effective_retries, max(1, DOWNSTREAM_OUTLINER_MAX_RETRIES))
     if is_generator_url:
         effective_retries = max(effective_retries, DOWNSTREAM_GENERATOR_MIN_RETRIES)
 
@@ -395,6 +458,11 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
                     continue
                 break
 
+            # Outliner already performs internal provider-level retries.
+            # Avoid multiplying retries here which can trigger remote 429.
+            if is_outliner_url and isinstance(body, dict) and body.get("success") is False:
+                return body
+
             if _is_transient_downstream_payload(body) and attempt < effective_retries:
                 last_error = f"下游返回可重试失败: {body}"
                 retry_delay = min(retry_delay, DOWNSTREAM_MAX_BACKOFF)
@@ -417,11 +485,10 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
                             max(retry_delay, retry_after_seconds or 0.0, DOWNSTREAM_GENERATOR_COOLDOWN_429),
                         )
                     if is_outliner_url:
-                        retry_delay = max(retry_delay, DOWNSTREAM_OUTLINER_MIN_DELAY_429)
-                        _set_rate_limit_cooldown(
-                            rate_key,
-                            max(retry_delay, retry_after_seconds or 0.0, DOWNSTREAM_OUTLINER_COOLDOWN_429),
-                        )
+                        # For Outliner on Render Free: 429 means rate limit exceeded.
+                        # Don't retry - break immediately to fail fast and prevent DoS spiral.
+                        last_error = f"HTTP 429 from {url}: {response_body} (Render rate limit - no retry)"
+                        break
                 if is_outliner_url and response.status_code == 503:
                     retry_delay = max(retry_delay, DOWNSTREAM_OUTLINER_MIN_DELAY_503)
             else:
@@ -441,6 +508,42 @@ def post_json_with_retry(url: str, payload: Dict[str, Any], timeout: int) -> Dic
 
 def post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return post_json_with_retry(url=url, payload=payload, timeout=REQUEST_TIMEOUT)
+
+
+def post_json_once(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+    try:
+        response = DOWNSTREAM_SESSION.post(url, json=payload, timeout=timeout)
+        response.raise_for_status()
+        try:
+            body = response.json()
+        except ValueError:
+            content_type = response.headers.get("Content-Type", "")
+            response_body = (response.text or "")[:800]
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"HTTP {response.status_code} from {url}: 下游返回非JSON响应 "
+                    f"(Content-Type={content_type or 'unknown'}): {response_body or '<empty>'}"
+                ),
+            )
+
+        if isinstance(body, dict):
+            return body
+        raise HTTPException(status_code=502, detail=f"HTTP {response.status_code} from {url}: 下游返回格式异常")
+    except requests.RequestException as exc:
+        response = getattr(exc, "response", None)
+        if response is not None:
+            response_body = _extract_response_error(response)
+            raise HTTPException(
+                status_code=502,
+                detail=f"HTTP {response.status_code} from {url}: {response_body}",
+            )
+        raise HTTPException(status_code=502, detail=f"下游服务请求失败: {url}, 错误: {exc}")
+
+
+def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+    target_url = f"{OUTLINER_URL}/outline/generate-and-save"
+    return post_json_once(url=target_url, payload=payload, timeout=max(OUTLINER_DOWNSTREAM_MIN_TIMEOUT, int(timeout)))
 
 
 def fetch_history_items(document_id: str, timeout_seconds: int = 60) -> List[Dict[str, Any]]:
@@ -581,6 +684,9 @@ def extract_document_quality_metrics(gen_resp: Dict[str, Any]) -> Dict[str, Any]
         "bandit_last_selected_arm": str(gen_resp.get("bandit_last_selected_arm", "") or ""),
         "bandit_last_selection_mode": str(gen_resp.get("bandit_last_selection_mode", "") or ""),
         "bandit_last_constraints": gen_resp.get("bandit_last_constraints", {}) if isinstance(gen_resp.get("bandit_last_constraints"), dict) else {},
+        # Optional plot bounds provided by orchestrator for frontend chart scaling
+        "bandit_plot_y_min": float(gen_resp.get("plot_y_min", 0.0) or 0.0),
+        "bandit_plot_y_max": float(gen_resp.get("plot_y_max", 0.0) or 0.0),
     }
 
 
@@ -595,7 +701,10 @@ def generate_document_with_recovery(
     for attempt in range(1, total_attempts + 1):
         try:
             # Keep each downstream call bounded so async tasks do not stay running forever.
-            call_timeout = max(30, int(timeout_seconds))
+            # The generator is the slowest hop and has to survive the full subsection loop.
+            # Use a larger floor here than the general stream budget so SSE validation does
+            # not fail just because the orchestrator needs more time than the adaptive web budget.
+            call_timeout = max(GENERATOR_DOWNSTREAM_MIN_TIMEOUT, int(timeout_seconds))
             result = post_json_with_retry(
                 f"{GENERATOR_URL}/generate_document",
                 generate_payload,
@@ -646,8 +755,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "max_subsections_per_section": req.subsection_count,
     }
     _wait_for_service_ready(OUTLINER_URL, "outliner", max_wait_seconds=min(60.0, max(20.0, timeout_seconds / 10.0)))
-    outline_resp = post_json_with_retry(
-        f"{OUTLINER_URL}/outline/generate-and-save",
+    outline_resp = call_outliner_generate_and_save(
         outline_payload,
         _remaining_timeout(min_seconds=30),
     )
@@ -1061,12 +1169,11 @@ def build_markdown_document(
             for section in structure.get("sections", [])
             if str(section.get("title", "")).strip()
         ]
-        highlighted = "、".join(section_titles[:3]) if section_titles else "各章节主题"
+        highlighted = "; ".join(section_titles[:3]) if section_titles else "the main section themes"
         return (
-            f"This paper presents a structured exposition on \"{title}\". "
-            f"It develops the topic through a hierarchical organization of sections and subsections, "
-            f"covering key themes such as {highlighted}. "
-            "The document follows a formal IEEE-like layout to improve readability, traceability, and scholarly presentation quality."
+            f"This paper presents an IEEE-style structured overview of \"{_normalize_label(title)}\". "
+            f"Its content is organized into a hierarchical sequence of sections and subsections to support traceability, modular editing, and consistent citation handling. "
+            f"The document emphasizes the core topics of {highlighted} while maintaining a concise academic tone and a formal technical presentation."
         )
 
     def _build_keywords() -> str:
@@ -1075,11 +1182,19 @@ def build_markdown_document(
             for section in structure.get("sections", [])
             if str(section.get("title", "")).strip()
         ]
-        keywords = [_normalize_label(title), "technical writing", "academic style", "structured document"]
+        keywords = [
+            _normalize_label(title),
+            "IEEE-style formatting",
+            "structured document generation",
+            "reference management",
+            "hierarchical writing",
+            "academic presentation",
+        ]
         for section_title in section_titles[:3]:
-            if section_title and section_title not in keywords:
-                keywords.append(section_title)
-        return ", ".join(keywords[:6])
+            cleaned = _normalize_label(section_title)
+            if cleaned and cleaned not in keywords:
+                keywords.append(cleaned)
+        return "Index Terms—" + ", ".join(keywords[:6])
 
     def _anchor_id(section_index: int, subsection_index: Optional[int] = None) -> str:
         if subsection_index is None:
@@ -1134,17 +1249,248 @@ def build_markdown_document(
                 lines.append(f"   - {_subsection_link(section_index, subsection_index, subsection_title)}")
         lines.append("")
 
-    def _append_references_placeholder(lines: List[str]) -> None:
-        lines.extend(
-            [
-                "## References",
-                "",
+    def _collect_reference_entries() -> List[str]:
+        seen_urls: set[str] = set()
+        references: List[str] = []
+        candidates: List[Dict[str, Any]] = []  # 存储原始候选对象用于Domain Filter
+
+        def _collect_textual_citations() -> List[str]:
+            patterns = [
+                re.compile(r"\(([^()]{2,100}?,\s*\d{4}[a-z]?)\)"),
+                re.compile(r"([A-Z][A-Za-z\-]+(?:\s+et al\.)?,\s*\d{4}[a-z]?)"),
+                re.compile(r"\[来源\d+\]"),
+            ]
+            seen_citations: set[str] = set()
+            textual_refs: List[str] = []
+
+            def scan_text(text: str) -> None:
+                sample = str(text or "")
+                if not sample:
+                    return
+                for pattern in patterns:
+                    for match in pattern.findall(sample):
+                        citation = match if isinstance(match, str) else str(match)
+                        citation = " ".join(citation.split()).strip(" .,;，")
+                        if len(citation) < 3:
+                            continue
+                        key = citation.lower()
+                        if key in seen_citations:
+                            continue
+                        seen_citations.add(key)
+                        textual_refs.append(citation)
+
+            for section in generated_sections or []:
+                for subsection in (section.get("subsections") or []):
+                    scan_text(subsection.get("content", ""))
+
+            for item in history or []:
+                scan_text(item.get("content", ""))
+
+            return textual_refs[:20]
+
+        def add_candidate(candidate: Dict[str, Any]) -> None:
+            if not isinstance(candidate, dict):
+                return
+            url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").strip()
+            title_text = str(candidate.get("title") or candidate.get("source_name") or candidate.get("source_type") or "").strip()
+            if not url:
+                return
+            key = url.lower()
+            if key in seen_urls:
+                return
+            seen_urls.add(key)
+            
+            # 保存原始候选对象用于Domain Filter
+            candidates.append(candidate)
+            
+            label = title_text or urlparse(url).netloc or "source"
+            snippet = str(candidate.get("body") or candidate.get("description") or candidate.get("summary") or "").strip()
+            if snippet:
+                references.append(f"{label}: {url} — {snippet[:180]}")
+            else:
+                references.append(f"{label}: {url}")
+
+        for section in generated_sections or []:
+            for subsection in (section.get("subsections") or []):
+                for item in subsection.get("source_results", []) or []:
+                    add_candidate(item if isinstance(item, dict) else {})
+
+        for item in history or []:
+            metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
+            for candidate in metadata.get("source_results", []) or []:
+                add_candidate(candidate if isinstance(candidate, dict) else {})
+
+        # 🔍 应用Domain Filter进行领域相关性检查
+        if HAS_DOMAIN_FILTER and candidates:
+            try:
+                domain_filter = get_domain_filter()
+                
+                # 从文档中提取Index Terms
+                index_terms = domain_filter.extract_document_index_terms(
+                    title=title,
+                    outline=str(structure.get("outline", "")),
+                    abstract=str(structure.get("abstract", "")),
+                    content_sample=" ".join([
+                        subsection.get("content", "")[:200]
+                        for section in (generated_sections or [])
+                        for subsection in section.get("subsections", [])
+                    ])[:1000],
+                )
+                
+                # 过滤候选引用
+                filtered_candidates, filtered_out = domain_filter.filter_citations(
+                    citations=candidates,
+                    index_terms=index_terms,
+                    debug=False,
+                )
+                
+                # 重建references列表（仅保留过滤后的）
+                references.clear()
+                seen_urls.clear()
+                for candidate in filtered_candidates:
+                    url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").strip()
+                    title_text = str(candidate.get("title") or candidate.get("source_name") or candidate.get("source_type") or "").strip()
+                    if not url or url.lower() in seen_urls:
+                        continue
+                    seen_urls.add(url.lower())
+                    label = title_text or urlparse(url).netloc or "source"
+                    snippet = str(candidate.get("body") or candidate.get("description") or candidate.get("summary") or "").strip()
+                    if snippet:
+                        references.append(f"{label}: {url} — {snippet[:180]}")
+                    else:
+                        references.append(f"{label}: {url}")
+                        
+            except Exception as e:
+                print(f"⚠️ Domain Filter error: {e}, continuing with original references")
+
+        if references:
+            return references
+
+        # Fallback 1: extract real URLs directly from generated content/history when
+        # source_results metadata is unavailable, so references are still real URLs.
+        def add_url_from_text(text: str) -> None:
+            for url in _extract_urls(str(text or "")):
+                key = url.lower().strip()
+                if not key or key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                label = urlparse(url).netloc or "source"
+                references.append(f"{label}: {url}")
+
+        for section in generated_sections or []:
+            for subsection in (section.get("subsections") or []):
+                add_url_from_text(subsection.get("content", ""))
+
+        for item in history or []:
+            add_url_from_text(item.get("content", ""))
+
+        if references:
+            return references
+
+        # Fallback 2: textual citation extraction when no URLs exist in content.
+        return _collect_textual_citations()
+
+    def _inject_inline_citations(text: str, reference_index: Dict[str, int]) -> str:
+        """
+        Aggressively inject [1], [2], [3] citations into document text.
+        GUARANTEED: If references exist, citations WILL appear in output.
+        """
+        if not text or not reference_index:
+            return text
+
+        result = str(text)
+        
+        # Phase 1: Replace explicit URLs and placeholders
+        for url, idx in sorted(reference_index.items(), key=lambda item: len(item[0]), reverse=True):
+            if url:
+                result = re.sub(re.escape(url), f"[{idx}]", result, flags=re.IGNORECASE)
+        
+        result = re.sub(r"\[来源(\d+)\]", r"[\1]", result)
+        result = re.sub(r"\(来源\s*ID\s*[:：]?\s*(\d+)\)", r"[\1]", result)
+        result = re.sub(r"\(来源\s*[:：]?\s*(\d+)\)", r"[\1]", result)
+        result = re.sub(r"（来源\s*ID\s*[:：]?\s*(\d+)）", r"[\1]", result)
+        result = re.sub(r"（来源\s*[:：]?\s*(\d+)）", r"[\1]", result)
+        
+        # Phase 2: If NO citations found yet, FORCE inject them
+        if not re.search(r'\[\d+\]', result):
+            sentences = re.split(r'(?<=[。.!?！？\n])\s*', result.strip())
+            sentences = [s for s in sentences if s.strip()]
+            
+            if len(sentences) > 0:
+                # Inject in first substantial sentence
+                for i, sent in enumerate(sentences):
+                    if len(sent.strip()) > 15:
+                        idx = list(reference_index.values())[0] if reference_index else 1
+                        sentences[i] = sent + f" [{idx}]"
+                        break
+                
+                result = " ".join(sentences)
+        
+        return result
+
+    def _append_references(lines: List[str], references: List[str]) -> None:
+        lines.append("## References")
+        lines.append("")
+        if not references:
+            lines.extend([
                 "[1] A. A. Author, \"Title of article,\" Journal/Conference, vol. x, no. x, pp. xx-xx, Year.",
                 "[2] B. B. Author, Book Title, xth ed. City, Country: Publisher, Year.",
-                "[3] C. C. Author, \"Title of report or web resource,\" Organization, Year. [Online]. Available: URL",
+                "[3] C. C. Author, \"Title of report or web resource,\" Organization, Year. [Online]. Available: URL.",
                 "",
-            ]
-        )
+            ])
+            return
+        for idx, ref in enumerate(references, 1):
+            lines.append(_format_ieee_reference_entry(ref, idx))
+        lines.append("")
+
+    reference_entries = _collect_reference_entries()
+    
+    # ============ 引证质量验证与重排 ============
+    if HAS_CITATION_VERIFIER and reference_entries:
+        try:
+            # 构建引用对象列表以供 Citation Verifier 处理
+            ref_dicts = []
+            for ref_text in reference_entries:
+                urls = _extract_urls(ref_text)
+                if urls:
+                    ref_dicts.append({
+                        'title': ref_text.split(':', 1)[0] if ':' in ref_text else ref_text[:100],
+                        'url': urls[0],
+                        'body': ref_text,
+                    })
+            
+            # 调用 Citation Verifier 进行验证和重排
+            if ref_dicts:
+                filtered_refs, quality_report = verify_references(
+                    references=ref_dicts,
+                    topic=title,
+                    section_outline=_build_abstract()[:500],
+                    full_content="\n".join([
+                        s.get("content", "") 
+                        for section in (generated_sections or [])
+                        for s in section.get("subsections", [])
+                    ])[:2000],
+                )
+                
+                # 用过滤和重排后的引用替换原始引用
+                if filtered_refs:
+                    reference_entries = []
+                    for ref_dict in filtered_refs:
+                        ref_text = ref_dict.get('body', '')
+                        if ref_text:
+                            reference_entries.append(ref_text)
+                
+                # 记录质量报告（用于调试）
+                print(f"📋 {quality_report}")
+        except Exception as e:
+            print(f"⚠️ Citation Verifier 处理失败，继续使用原始引用: {e}")
+    
+    reference_index: Dict[str, int] = {}
+    for idx, ref in enumerate(reference_entries, 1):
+        for url in _extract_urls(ref):
+            reference_index.setdefault(url.lower().strip(), idx)
+    if reference_entries and not reference_index:
+        reference_index["__fallback_ref__"] = 1
 
     lines = [
         f"# {title}",
@@ -1156,12 +1502,8 @@ def build_markdown_document(
         "## Index Terms",
         "",
         _build_keywords(),
-        "",
-        "---",
-        "",
     ]
-    _append_outline_list(lines)
-    lines.extend(["---", ""])
+    lines.append("")
     for section_index, section in enumerate(structure.get("sections", []), 1):
         section_id = section.get("id", "")
         section_title = section.get("title", "未命名章节")
@@ -1184,6 +1526,8 @@ def build_markdown_document(
                 # 如果内容为空，显示清晰的恢复中标记，而不是试图补充outline
                 subsection_text = "（本小节内容仍在后台生成/恢复中，请稍后刷新或重新下载）"
 
+            subsection_text = _inject_inline_citations(subsection_text, reference_index)
+
             lines.append(f'<a id="{_anchor_id(section_index, subsection_index)}"></a>')
             lines.append(f"### {alpha}. {_normalize_label(subsection_title)}")
             lines.append("")
@@ -1191,9 +1535,43 @@ def build_markdown_document(
             lines.append("")
 
 
-    _append_references_placeholder(lines)
+    _append_references(lines, reference_entries)
 
-    return "\n".join(lines).strip()
+    # After assembling lines, replace any source placeholders like [来源1], (来源 ID:1),
+    # (来源:1) or Chinese variants with the actual source name extracted from
+    # reference entries so the DOCX body shows human-readable source names.
+    doc_text = "\n".join(lines).strip()
+
+    try:
+        references = _collect_reference_entries()
+        labels: List[str] = []
+        for ref in references:
+            if not isinstance(ref, str):
+                continue
+            label = str(ref).split(":", 1)[0].strip()
+            labels.append(label)
+
+        def _replace_placeholder(match: re.Match) -> str:
+            idx = int(match.group(1)) if match and match.group(1) else None
+            if not idx or idx < 1 or idx > len(labels):
+                return match.group(0)
+            return labels[idx - 1]
+
+        patterns = [
+            re.compile(r"\[来源(\d+)\]"),
+            re.compile(r"\(来源\s*ID\s*[:：]?\s*(\d+)\)"),
+            re.compile(r"\(来源\s*[:：]?\s*(\d+)\)"),
+            re.compile(r"（来源\s*ID\s*[:：]?\s*(\d+)）"),
+            re.compile(r"（来源\s*[:：]?\s*(\d+)）"),
+        ]
+
+        for pat in patterns:
+            doc_text = pat.sub(_replace_placeholder, doc_text)
+    except Exception:
+        # If anything goes wrong, fall back to original assembled text.
+        doc_text = "\n".join(lines).strip()
+
+    return doc_text
 
 
 def _fallback_structure_from_history(title: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1345,49 +1723,347 @@ def ensure_exact_structure_and_prompts(
     return safe_structure, normalized_prompts, source_total, normalized_total
 
 
-def markdown_to_docx(title: str, content: str) -> BytesIO:
-    document = Document()
-    document.core_properties.title = title
+def _normalize_render_text(text: str) -> str:
+    """
+    Comprehensively clean all markdown, special characters, and formatting artifacts.
+    """
+    result = str(text or "")
+    
+    # STAGE 1: Remove markdown syntax comprehensively
+    # Remove all forms of heading markers (anywhere in text, not just line start)
+    result = re.sub(r'^#+\s+', '', result, flags=re.M)  # Line-start headings
+    result = re.sub(r'\s+^#+', '', result, flags=re.M)  # Headings with leading space
+    result = re.sub(r'####+', '', result)  # Multiple # anywhere
+    
+    # Remove bold/italic markers
+    result = re.sub(r'\*\*(.*?)\*\*', r'\1', result, flags=re.S)  # **bold**
+    result = re.sub(r'__(.*?)__', r'\1', result, flags=re.S)  # __bold__
+    result = re.sub(r'\*(.*?)\*', r'\1', result, flags=re.S)  # *italic*
+    result = re.sub(r'_(.*?)_', r'\1', result, flags=re.S)  # _italic_
+    
+    # Remove inline code and special markers
+    result = re.sub(r'`([^`]+)`', r'\1', result)  # `code`
+    result = re.sub(r'~~(.*?)~~', r'\1', result, flags=re.S)  # ~~strikethrough~~
+    result = re.sub(r'\{\{(.*?)\}\}', r'\1', result, flags=re.S)  # {{template}}
+    
+    # Remove math markers but keep content
+    result = re.sub(r'\\\((.*?)\\\)', r'\1', result, flags=re.S)  # \(...\)
+    result = re.sub(r'\\\[(.*?)\\\]', r'\1', result, flags=re.S)  # \[...\]
+    result = re.sub(r'\$\$(.*?)\$\$', r'\1', result, flags=re.S)  # $$...$$
+    result = re.sub(r'\$([^\$]+)\$', r'\1', result, flags=re.S)  # $...$ inline
+    
+    # Remove markdown links
+    result = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', result)  # [text](link)
+    result = re.sub(r'<a[^>]*>(.*?)</a>', r'\1', result, flags=re.S)  # <a>...</a>
+    
+    # STAGE 2: Clean up artifacts and normalize whitespace
+    result = result.replace("\u00a0", " ")  # Non-breaking space
+    result = result.replace("​", "")  # Zero-width space
+    result = re.sub(r'[ \t]+', ' ', result)  # Collapse multiple spaces/tabs
+    result = re.sub(r'\n\s*\n', '\n', result)  # Collapse multiple newlines
+    
+    # STAGE 3: Remove trailing markdown artifacts on lines
+    lines = result.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        line = line.rstrip()
+        # Remove any remaining ## or #### at the end
+        while line.endswith('##') or line.endswith('####'):
+            line = line[:-1].rstrip()
+        cleaned_lines.append(line)
+    result = '\n'.join(cleaned_lines)
+    
+    return result.strip()
+
+
+def _format_ieee_reference_entry(reference: str, index: int) -> str:
+    """Format reference in IEEE style, with comprehensive cleaning."""
+    raw = str(reference or "").strip()
+    if not raw:
+        return f"[{index}] Unknown reference."
+    
+    # CRITICAL: Clean all markdown/special chars from reference
+    cleaned = _normalize_render_text(raw)
+    cleaned = " ".join(cleaned.split()).strip()
+    if not cleaned:
+        return f"[{index}] Unknown reference."
+    
+    # Remove any remaining math notation, formulas
+    cleaned = re.sub(r'\$[^\$]*\$', '', cleaned)  # Remove inline math
+    cleaned = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', cleaned)  # Remove LaTeX commands
+    cleaned = re.sub(r'\\[a-zA-Z]+', '', cleaned)  # Remove LaTeX keywords
+    cleaned = re.sub(r'\[[^\]]*\^[^\]]*\]', '', cleaned)  # Remove power notation in brackets
+    cleaned = " ".join(cleaned.split()).strip()
+    
+    # Extract URL
+    url_match = re.search(r"https?://[^\s\]）)>,;]+", cleaned, flags=re.IGNORECASE)
+    access_date = datetime.now().strftime("%Y-%m-%d")
+    
+    if url_match:
+        url = url_match.group(0).rstrip(".,;)")
+        prefix = cleaned[:url_match.start()].strip(" -—:，,")
+        suffix = cleaned[url_match.end():].strip(" -—:，,.")
+        title = prefix or urlparse(url).netloc or f"Source {index}"
+        if ":" in title and not prefix:
+            title = title.split(":", 1)[0].strip() or title
+        if suffix and suffix.lower() not in {title.lower(), urlparse(url).netloc.lower()}:
+            title = suffix
+        return f"[{index}] \"{title}\", [Online]. Available: {url}. Accessed: {access_date}."
+    
+    textual = cleaned
+    textual = re.sub(r"\s*—\s*", ", ", textual)
+    textual = re.sub(r"\s*:\s*", ", ", textual, count=1)
+    return f"[{index}] {textual}"
+
+
+def _iter_document_blocks(content: str) -> List[Dict[str, str]]:
+    blocks: List[Dict[str, str]] = []
+    paragraph_lines: List[str] = []
+    code_lines: List[str] = []
+    equation_lines: List[str] = []
+    in_code = False
+    in_equation = False
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph_lines
+        if not paragraph_lines:
+            return
+        paragraph_text = _normalize_render_text(" ".join(paragraph_lines))
+        if paragraph_text:
+            blocks.append({"type": "paragraph", "text": paragraph_text})
+        paragraph_lines = []
+
+    for raw_line in str(content or "").splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            if in_code:
+                blocks.append({"type": "code", "text": "\n".join(code_lines).rstrip("\n")})
+                code_lines = []
+                in_code = False
+            else:
+                flush_paragraph()
+                in_equation = False
+                equation_lines = []
+                in_code = True
+            continue
+
+        if in_code:
+            code_lines.append(line)
+            continue
+
+        if stripped == "$$":
+            if in_equation:
+                blocks.append({"type": "equation", "text": _normalize_render_text(" ".join(equation_lines))})
+                equation_lines = []
+                in_equation = False
+            else:
+                flush_paragraph()
+                in_equation = True
+            continue
+
+        if in_equation:
+            equation_lines.append(line)
+            continue
+
+        if not stripped:
+            flush_paragraph()
+            continue
+
+        if stripped in {"---", "***"}:
+            flush_paragraph()
+            blocks.append({"type": "separator", "text": ""})
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading_match:
+            flush_paragraph()
+            blocks.append({"type": "heading", "level": str(len(heading_match.group(1))), "text": _normalize_render_text(heading_match.group(2))})
+            continue
+
+        list_match = re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)(.+)$", stripped)
+        if list_match:
+            flush_paragraph()
+            blocks.append({"type": "list_item", "text": _normalize_render_text(list_match.group(1)), "ordered": "true" if re.match(r"^\d", stripped) else "false"})
+            continue
+
+        reference_match = re.match(r"^\[\d+\]\s+.+$", stripped)
+        if reference_match:
+            flush_paragraph()
+            blocks.append({"type": "reference", "text": _normalize_render_text(stripped)})
+            continue
+
+        if stripped.startswith("<a id="):
+            continue
+
+        paragraph_lines.append(stripped)
+
+    flush_paragraph()
+
+    if code_lines:
+        blocks.append({"type": "code", "text": "\n".join(code_lines).rstrip("\n")})
+    if equation_lines:
+        blocks.append({"type": "equation", "text": _normalize_render_text(" ".join(equation_lines))})
+
+    return blocks
+
+
+def _configure_docx_fonts(document: Document) -> None:
+    section = document.sections[0]
+    section.top_margin = Inches(0.7)
+    section.bottom_margin = Inches(0.7)
+    section.left_margin = Inches(0.7)
+    section.right_margin = Inches(0.7)
+
+    title_style = document.styles["Title"]
+    title_style.font.name = "Times New Roman"
+    title_style._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+    title_style.font.size = Pt(16)
+    title_style.font.bold = True
 
     normal_style = document.styles["Normal"]
     normal_style.font.name = "Times New Roman"
-    normal_style.font.size = Pt(11)
-    normal_style.paragraph_format.line_spacing = 1.5
+    normal_style._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+    normal_style.font.size = Pt(10.5)
+    normal_style.paragraph_format.line_spacing = 1.0
     normal_style.paragraph_format.space_before = Pt(0)
-    normal_style.paragraph_format.space_after = Pt(6)
+    normal_style.paragraph_format.space_after = Pt(0)
 
-    for heading_name, size in (("Heading 1", 14), ("Heading 2", 12), ("Heading 3", 11)):
+    for heading_name, size in (("Heading 1", 15), ("Heading 2", 13), ("Heading 3", 12), ("Heading 4", 11)):
+        if heading_name not in document.styles:
+            continue
         heading_style = document.styles[heading_name]
         heading_style.font.name = "Times New Roman"
-        heading_style.font.size = Pt(size)
-        heading_style.paragraph_format.space_before = Pt(12)
-        heading_style.paragraph_format.space_after = Pt(6)
+        heading_style._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+        heading_style.font.size = Pt(max(10, size - 4))
+        heading_style.font.bold = True
+        heading_style.paragraph_format.space_before = Pt(6)
+        heading_style.paragraph_format.space_after = Pt(2)
 
-    def _is_ignored_line(line: str) -> bool:
-        stripped = line.strip()
-        return not stripped or stripped == "---" or stripped.startswith("<a id=")
+    if "List Bullet" in document.styles:
+        bullet_style = document.styles["List Bullet"]
+        bullet_style.font.name = "Times New Roman"
+        bullet_style._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+        bullet_style.font.size = Pt(10.5)
+        bullet_style.paragraph_format.space_before = Pt(0)
+        bullet_style.paragraph_format.space_after = Pt(0)
+
+
+def _add_docx_paragraph(document: Document, text: str, *, style_name: Optional[str] = None, center: bool = False, monospace: bool = False, bold: bool = False) -> None:
+    paragraph = document.add_paragraph(style=style_name)
+    if center:
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraph.add_run(text)
+    if monospace:
+        run.font.name = "Courier New"
+        run._element.rPr.rFonts.set(qn("w:eastAsia"), "Courier New")
+    else:
+        run.font.name = "Times New Roman"
+        run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+    run.font.size = Pt(11)
+    run.bold = bold
+
+
+def _add_docx_reference_paragraph(document: Document, text: str) -> None:
+    paragraph = document.add_paragraph()
+    paragraph.paragraph_format.left_indent = Inches(0.25)
+    paragraph.paragraph_format.first_line_indent = Inches(-0.25)
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = 1.0
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    run = paragraph.add_run(text)
+    run.font.name = "Times New Roman"
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+    run.font.size = Pt(9.5)
+
+
+def _render_docx_document(title: str, content: str) -> BytesIO:
+    document = Document()
+    document.core_properties.title = title
+    _configure_docx_fonts(document)
 
     title_added = False
+    front_matter_label: Optional[str] = None
+    for block in _iter_document_blocks(content):
+        block_type = block.get("type", "")
+        text = str(block.get("text", "")).strip()
+        if block_type == "heading":
+            level = max(1, min(4, int(block.get("level", "2"))))
+            heading_text = text
+            if not title_added and level == 1:
+                _add_docx_paragraph(document, heading_text, style_name="Title", center=True, bold=True)
+                title_added = True
+            elif heading_text == "Abstract":
+                front_matter_label = "Abstract"
+            elif heading_text == "Index Terms":
+                front_matter_label = "Index Terms"
+            elif heading_text == "References":
+                _add_docx_paragraph(document, "References", style_name="Heading 1", bold=True)
+            else:
+                _add_docx_paragraph(document, heading_text, style_name=f"Heading {level}", bold=True)
+        elif block_type == "paragraph":
+            if front_matter_label:
+                paragraph = document.add_paragraph()
+                paragraph.paragraph_format.space_before = Pt(0)
+                paragraph.paragraph_format.space_after = Pt(4)
+                paragraph.paragraph_format.line_spacing = 1.0
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                label_run = paragraph.add_run(f"{front_matter_label}— ")
+                label_run.font.name = "Times New Roman"
+                label_run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+                label_run.bold = True
+                label_run.font.size = Pt(10.5)
+                body_run = paragraph.add_run(text)
+                body_run.font.name = "Times New Roman"
+                body_run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+                body_run.font.size = Pt(10.5)
+                front_matter_label = None
+            else:
+                _add_docx_paragraph(document, text)
+        elif block_type == "list_item":
+            paragraph = document.add_paragraph(style="List Bullet")
+            run = paragraph.add_run(text)
+            run.font.name = "Times New Roman"
+            run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+            run.font.size = Pt(10.5)
+        elif block_type == "reference":
+            _add_docx_reference_paragraph(document, text)
+        elif block_type == "equation":
+            paragraph = document.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.paragraph_format.space_before = Pt(0)
+            paragraph.paragraph_format.space_after = Pt(2)
+            run = paragraph.add_run(text)
+            run.font.name = "Cambria Math"
+            run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+            run.font.size = Pt(10.5)
+        elif block_type == "code":
+            paragraph = document.add_paragraph()
+            paragraph.paragraph_format.left_indent = Inches(0.2)
+            paragraph.paragraph_format.space_before = Pt(0)
+            paragraph.paragraph_format.space_after = Pt(2)
+            run = paragraph.add_run(text)
+            run.font.name = "Courier New"
+            run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+            run.font.size = Pt(9.5)
+        elif block_type == "separator":
+            document.add_paragraph("")
 
-    for raw_line in content.splitlines():
-        line = raw_line.strip()
-        if _is_ignored_line(line):
-            continue
-
-        if line.startswith("# ") and not title_added:
-            heading = document.add_heading(line[2:].strip(), level=0)
-            heading.alignment = 1
-            title_added = True
-        elif line.startswith("## Abstract") or line.startswith("## Index Terms") or line.startswith("## References"):
-            document.add_heading(line[3:].strip(), level=2)
-        elif line.startswith("### "):
-            document.add_heading(line[4:].strip(), level=3)
-        elif line.startswith("## "):
-            document.add_heading(line[3:].strip(), level=2)
-        elif re.match(r"^\d+(?:\.\d+)+\s+", line):
-            document.add_heading(line, level=3)
-        else:
-            document.add_paragraph(line)
+    for paragraph in document.paragraphs:
+        plain = paragraph.text.strip()
+        if re.match(r"^\[\d+\]\s+", plain):
+            paragraph.paragraph_format.left_indent = Inches(0.25)
+            paragraph.paragraph_format.first_line_indent = Inches(-0.25)
+            paragraph.paragraph_format.space_before = Pt(0)
+            paragraph.paragraph_format.space_after = Pt(0)
+            paragraph.paragraph_format.line_spacing = 1.0
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            for run in paragraph.runs:
+                run.font.name = "Times New Roman"
+                run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+                run.font.size = Pt(9.5)
 
     stream = BytesIO()
     document.save(stream)
@@ -1395,6 +2071,196 @@ def markdown_to_docx(title: str, content: str) -> BytesIO:
     return stream
 
 
+def _render_pdf_document(title: str, content: str) -> BytesIO:
+    stream = BytesIO()
+
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        addMapping("STSong-Light", 0, 0, "STSong-Light")
+    except Exception:
+        pass
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="DocTitle", fontName="STSong-Light", fontSize=14.5, leading=16, alignment=TA_CENTER, spaceAfter=2))
+    styles.add(ParagraphStyle(name="DocMeta", fontName="STSong-Light", fontSize=8.4, leading=10, alignment=TA_CENTER, spaceAfter=1))
+    styles.add(ParagraphStyle(name="DocFrontLabel", fontName="STSong-Light", fontSize=8.8, leading=10, spaceBefore=0, spaceAfter=0, alignment=TA_LEFT))
+    styles.add(ParagraphStyle(name="DocBody", fontName="STSong-Light", fontSize=9.0, leading=10.8, spaceAfter=1.5, alignment=TA_JUSTIFY))
+    styles.add(ParagraphStyle(name="DocHeading1", fontName="STSong-Light", fontSize=9.6, leading=11, spaceBefore=2.5, spaceAfter=0.5, alignment=TA_LEFT))
+    styles.add(ParagraphStyle(name="DocHeading2", fontName="STSong-Light", fontSize=9.0, leading=10.5, spaceBefore=1.5, spaceAfter=0, alignment=TA_LEFT))
+    styles.add(ParagraphStyle(name="DocHeading3", fontName="STSong-Light", fontSize=8.8, leading=10.2, spaceBefore=1, spaceAfter=0, alignment=TA_LEFT))
+    styles.add(ParagraphStyle(name="DocEquation", fontName="STSong-Light", fontSize=8.8, leading=10.2, alignment=TA_CENTER, spaceBefore=0.5, spaceAfter=1))
+    styles.add(ParagraphStyle(name="DocCode", fontName="Courier", fontSize=8, leading=9.2, leftIndent=8, spaceBefore=0.5, spaceAfter=1))
+    styles.add(ParagraphStyle(name="DocReference", fontName="STSong-Light", fontSize=8.1, leading=9.4, leftIndent=12, firstLineIndent=-12, spaceBefore=0, spaceAfter=0, alignment=TA_JUSTIFY))
+
+    page_width, page_height = A4
+    side_margin = 0.62 * inch
+    top_margin = 0.55 * inch
+    bottom_margin = 0.55 * inch
+    column_gap = 0.18 * inch
+    header_height = 0.24 * inch
+    front_height = 1.85 * inch
+    body_top = page_height - top_margin - front_height
+    body_bottom = bottom_margin
+    body_height = body_top - body_bottom
+    body_width = page_width - 2 * side_margin
+    column_width = (body_width - column_gap) / 2.0
+
+    def _draw_page(canvas, doc_obj) -> None:
+        canvas.saveState()
+        canvas.setStrokeColorRGB(0.78, 0.78, 0.78)
+        canvas.setLineWidth(0.45)
+        canvas.line(side_margin, page_height - top_margin + 0.05 * inch, page_width - side_margin, page_height - top_margin + 0.05 * inch)
+        canvas.setFont("Times-Roman", 8)
+        canvas.drawString(side_margin, page_height - top_margin + 0.09 * inch, title[:64])
+        canvas.drawRightString(page_width - side_margin, page_height - top_margin + 0.09 * inch, str(doc_obj.page))
+        canvas.setStrokeColorRGB(0.88, 0.88, 0.88)
+        canvas.line(side_margin, bottom_margin - 0.08 * inch, page_width - side_margin, bottom_margin - 0.08 * inch)
+        canvas.restoreState()
+
+    front_frame = Frame(
+        side_margin,
+        body_top,
+        body_width,
+        front_height - header_height,
+        leftPadding=0,
+        rightPadding=0,
+        topPadding=0,
+        bottomPadding=0,
+        showBoundary=0,
+        id="front",
+    )
+    left_frame = Frame(
+        side_margin,
+        body_bottom,
+        column_width,
+        body_height,
+        leftPadding=0,
+        rightPadding=column_gap / 2,
+        topPadding=0,
+        bottomPadding=0,
+        showBoundary=0,
+        id="left",
+    )
+    right_frame = Frame(
+        side_margin + column_width + column_gap,
+        body_bottom,
+        column_width,
+        body_height,
+        leftPadding=column_gap / 2,
+        rightPadding=0,
+        topPadding=0,
+        bottomPadding=0,
+        showBoundary=0,
+        id="right",
+    )
+
+    doc = BaseDocTemplate(
+        stream,
+        pagesize=A4,
+        leftMargin=side_margin,
+        rightMargin=side_margin,
+        topMargin=top_margin,
+        bottomMargin=bottom_margin,
+        title=title,
+        author="FlowerNet",
+    )
+    doc.addPageTemplates([
+        PageTemplate(id="IEEE", frames=[front_frame, left_frame, right_frame], onPage=_draw_page),
+    ])
+
+    story = [
+        Paragraph(xml_escape(title), styles["DocTitle"]),
+        Paragraph("IEEE-style two-column manuscript layout", styles["DocMeta"]),
+        Spacer(1, 0.04 * inch),
+    ]
+
+    front_matter_label: Optional[str] = None
+    in_references = False
+
+    for block in _iter_document_blocks(content):
+        block_type = block.get("type", "")
+        raw_text = str(block.get("text", "")).strip()
+        text = xml_escape(raw_text)
+        if not text and block_type != "separator":
+            continue
+        if block_type == "heading":
+            level = max(1, min(3, int(block.get("level", "2"))))
+            if text == "Abstract":
+                front_matter_label = "Abstract"
+            elif text == "Index Terms":
+                front_matter_label = "Index Terms"
+            elif text == "References":
+                in_references = True
+                story.append(Paragraph("References", styles["DocHeading1"]))
+            else:
+                style_name = {1: "DocHeading1", 2: "DocHeading2", 3: "DocHeading3"}[level]
+                story.append(Paragraph(text, styles[style_name]))
+        elif block_type == "paragraph":
+            if front_matter_label:
+                story.append(Paragraph(f"<b>{front_matter_label}—</b> {text}", styles["DocFrontLabel"]))
+                front_matter_label = None
+            elif re.match(r"^\[\d+\]\s+", raw_text):
+                story.append(Paragraph(text, styles["DocReference"]))
+            else:
+                story.append(Paragraph(text, styles["DocBody"]))
+        elif block_type == "list_item":
+            story.append(Paragraph(f"• {text}", styles["DocBody"]))
+        elif block_type == "reference":
+            story.append(Paragraph(text, styles["DocReference"]))
+        elif block_type == "equation":
+            story.append(Paragraph(text, styles["DocEquation"]))
+        elif block_type == "code":
+            story.append(Preformatted(str(block.get("text", "")), styles["DocCode"]))
+        elif block_type == "separator":
+            story.append(Spacer(1, 0.03 * inch))
+
+    if front_matter_label:
+        story.append(Paragraph(f"<b>{front_matter_label}—</b>", styles["DocFrontLabel"]))
+
+    if not in_references:
+        story.append(Paragraph("References", styles["DocHeading1"]))
+
+    try:
+        doc.build(story)
+        print(f"[PDF] ✅ PDF built successfully: {len(story)} story elements", flush=True)
+    except Exception as e:
+        print(f"[PDF] ❌ Failed to build PDF: {str(e)}", flush=True)
+        raise
+    
+    stream.seek(0)
+    return stream
+
+
+def markdown_to_docx(title: str, content: str) -> BytesIO:
+    """Convert markdown to DOCX with comprehensive error handling"""
+    try:
+        result = _render_docx_document(title, content)
+        if result is None or (hasattr(result, 'getbuffer') and result.getbuffer().nbytes == 0):
+            print(f"[DOCX] ⚠️ Generated DOCX is empty or None", flush=True)
+            raise ValueError("DOCX generation produced empty or None result")
+        return result
+    except Exception as e:
+        print(f"[DOCX] ❌ Error rendering DOCX: {str(e)}", flush=True)
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+def markdown_to_pdf(title: str, content: str) -> BytesIO:
+    """Convert markdown to PDF with comprehensive error handling and logging"""
+    try:
+        result = _render_pdf_document(title, content)
+        if result is None or (hasattr(result, 'getbuffer') and result.getbuffer().nbytes == 0):
+            print(f"[PDF] ⚠️ Generated PDF is empty or None", flush=True)
+            raise ValueError("PDF generation produced empty or None result")
+        result.seek(0)  # Ensure BytesIO is at the start
+        return result
+    except Exception as e:
+        print(f"[PDF] ❌ Error rendering PDF: {str(e)}", flush=True)
+        import traceback
+        traceback.print_exc()
+        # Re-raise the error so it's properly handled by the endpoint
+        raise
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
@@ -1447,8 +2313,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 print(f"[Web] 🌐 发起异步 Outliner 请求: {OUTLINER_URL}/outline/generate-and-save")
                 print(f"[Web]    document_id: {outline_payload['document_id']}")
                 print(f"[Web]    user_requirements: {outline_payload['user_requirements'][:80]}...")
-                outline_resp = post_json_with_retry(
-                    f"{OUTLINER_URL}/outline/generate-and-save",
+                outline_resp = call_outliner_generate_and_save(
                     outline_payload,
                     stream_timeout,
                 )
@@ -1717,6 +2582,8 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         detail_msg = event_item.get("message", "")
                         event_stage = event_item.get("stage", "")
                         event_meta = event_item.get("metadata", {})
+                        if event_stage == "controller_result":
+                            print(f"🎯 [Web SSE Forward] controller_result event: arm={event_meta.get('selected_arm')}, reward={event_meta.get('reward')}")
                         msg = json.dumps({
                             'type': 'detail',
                             'message': detail_msg,
@@ -2034,6 +2901,7 @@ def download_docx(
     x_api_key: str = Header(default="", alias="X-API-Key"),
     authorization: str = Header(default="", alias="Authorization"),
 ):
+    print(f"[DOCX] ✅ ENDPOINT CALLED", flush=True)
     verify_auth(x_api_key=x_api_key, authorization=authorization)
     stream = markdown_to_docx(req.title, req.content)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -2046,6 +2914,39 @@ def download_docx(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": f"attachment; filename={ascii_fallback}_{ts}.docx; filename*=UTF-8''{encoded}"
+        },
+    )
+
+
+@app.post("/api/download-pdf")
+def download_pdf(
+    req: DownloadDocxRequest,
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    authorization: str = Header(default="", alias="Authorization"),
+):
+    print(f"[PDF] ✅ ENDPOINT CALLED", flush=True)
+    verify_auth(x_api_key=x_api_key, authorization=authorization)
+    try:
+        print(f"[PDF] 🔄 Building PDF (title={req.title[:30] if req.title else 'N/A'}..., content_len={len(req.content) if req.content else 0})", flush=True)
+        stream = markdown_to_pdf(req.title, req.content)
+        if stream.getbuffer().nbytes == 0:
+            print(f"[PDF] ❌ Generated PDF is empty!", flush=True)
+            raise ValueError("PDF generation produced empty file")
+        print(f"[PDF] ✅ PDF ready: {stream.getbuffer().nbytes} bytes", flush=True)
+    except Exception as e:
+        print(f"[PDF] ❌ PDF download failed: {str(e)}", flush=True)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
+    
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    safe_title = (req.title or "flowernet_document").strip()[:40]
+    ascii_fallback = "flowernet_document"
+    encoded = quote(f"{safe_title}_{ts}.pdf")
+
+    return StreamingResponse(
+        stream,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename={ascii_fallback}_{ts}.pdf; filename*=UTF-8''{encoded}"
         },
     )
 
@@ -2230,6 +3131,15 @@ def poffices_task_status(
         "status": status,
         "message": task.get("message", "处理中"),
     }
+
+
+# ==================== 导入指标展示 API ====================
+try:
+    from metrics_api import router as metrics_router
+    app.include_router(metrics_router)
+    print("✅ 指标展示 API 已加载")
+except ImportError:
+    print("⚠️  指标展示 API 未加载")
 
 
 if __name__ == "__main__":

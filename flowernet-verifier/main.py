@@ -13,6 +13,14 @@ from rank_bm25 import BM25Okapi
 from rouge_score import rouge_scorer
 import requests
 
+try:
+    from sentence_transformers import SentenceTransformer, util as st_util
+    _HAS_ST = True
+except Exception:
+    SentenceTransformer = None
+    st_util = None
+    _HAS_ST = False
+
 from history_store import HistoryManager
 
 # 英文停用词表：过滤高频功能词，只保留实义词参与计算
@@ -49,7 +57,96 @@ class FlowerNetVerifier:
         self._unieval_timeout_token_factor = self._safe_float(os.getenv("UNIEVAL_TIMEOUT_TOKEN_FACTOR", "0.006"), 0.006)
         self._unieval_timeout_latency_factor = self._safe_float(os.getenv("UNIEVAL_TIMEOUT_LATENCY_FACTOR", "1.6"), 1.6)
         self._unieval_health_timeout = max(2.0, self._safe_float(os.getenv("UNIEVAL_HEALTH_TIMEOUT", "4"), 4.0))
+        # Persona consistency configuration
+        self.persona_sim_threshold = self._safe_float(os.getenv("PERSONA_SIM_THRESHOLD", "0.65"), 0.65)
+        self.persona_model_name = os.getenv("PERSONA_SEMANTIC_MODEL", "sentence-transformers/paraphrase-MiniLM-L6-v2").strip()
+        self._persona_model = None
+        # 引用黑名单/白名单配置（可通过环境变量覆盖）
+        try:
+            raw = os.getenv("REFERENCE_BLACKLIST_JSON", "").strip()
+            if raw:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    self.reference_blacklist = parsed
+                else:
+                    self.reference_blacklist = {}
+            else:
+                self.reference_blacklist = {}
+        except Exception:
+            self.reference_blacklist = {}
+
+        # 备选默认敏感词集合（用于快速过滤明显跨学科来源）
+        self._math_terms = {
+            "随机变量", "随机过程", "多维", "multivariate", "probability", "expectation", "variance",
+            "stochastic", "measure theory", "lemma", "theorem",
+        }
+        self._ling_terms = {
+            "第二语言", "语言习得", "汉语作为第二语言", "phonetics", "phonology", "syntax", "morphology",
+            "second language acquisition", "l2",
+        }
+        self._negotiation_terms = {
+            "谈判", "谈判策略", "博弈", "博弈论", "negotiation", "bargaining", "商业", "商务", "谈判技巧",
+        }
         print("✅ 验证层就绪")
+
+    def _get_persona_model(self):
+        if not _HAS_ST:
+            return None
+        if self._persona_model is None:
+            try:
+                self._persona_model = SentenceTransformer(self.persona_model_name)
+            except Exception as e:
+                print(f"⚠️ Persona semantic model load failed: {e}")
+                self._persona_model = None
+        return self._persona_model
+
+    def _calculate_persona_alignment(self, draft: str, persona_prompt: str) -> Dict[str, Any]:
+        """Compute persona/style alignment from semantic similarity + lightweight heuristics."""
+        text = str(draft or "")
+        persona = str(persona_prompt or "")
+
+        semantic_similarity = 0.0
+        model = self._get_persona_model()
+        if model is not None and text.strip() and persona.strip():
+            try:
+                emb_draft = model.encode(text, convert_to_tensor=True)
+                emb_persona = model.encode(persona, convert_to_tensor=True)
+                semantic_similarity = float(st_util.cos_sim(emb_draft, emb_persona).item())
+            except Exception as e:
+                print(f"⚠️ Persona semantic scoring failed: {e}")
+
+        lower = text.lower()
+        words = re.findall(r"[A-Za-z\u4e00-\u9fff]+", text)
+        contractions = sum(lower.count(c) for c in ["n't", "'re", "'ve", "'ll", "'m", "'s"])
+        first_person = sum(lower.count(p) for p in [" i ", " we ", " my ", " our "])
+        transition_count = len(re.findall(r"因此|然而|此外|总之|therefore|however|moreover|in conclusion", lower))
+        avg_word_len = (sum(len(w) for w in words) / max(1, len(words))) if words else 0.0
+
+        heuristic_formality = self._clip01(1.0 - min(1.0, contractions / 10.0))
+        heuristic_objectivity = self._clip01(1.0 - min(1.0, first_person / 12.0))
+        heuristic_structure = self._clip01(min(1.0, transition_count / 6.0))
+        heuristic_lexical = self._clip01(min(1.0, avg_word_len / 6.0))
+        heuristic_score = self._clip01(
+            0.35 * heuristic_formality + 0.25 * heuristic_objectivity + 0.25 * heuristic_structure + 0.15 * heuristic_lexical
+        )
+
+        # If semantic is unavailable, rely on heuristic; otherwise fuse.
+        if semantic_similarity <= 0.0:
+            final_similarity = heuristic_score
+        else:
+            final_similarity = self._clip01(0.75 * semantic_similarity + 0.25 * heuristic_score)
+
+        return {
+            "similarity": round(final_similarity, 4),
+            "semantic_similarity": round(float(max(0.0, semantic_similarity)), 4),
+            "heuristic_score": round(heuristic_score, 4),
+            "heuristics": {
+                "contractions": int(contractions),
+                "first_person_count": int(first_person),
+                "transition_count": int(transition_count),
+                "avg_word_len": round(float(avg_word_len), 2),
+            },
+        }
 
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
         try:
@@ -292,14 +389,14 @@ class FlowerNetVerifier:
 
     def _quality_dimension_thresholds(self) -> Dict[str, float]:
         """获取每个维度的阈值（可通过 JSON 覆盖，或使用默认值）"""
-        # 略微放宽默认阈值，减少严格判定导致的普遍兜底
+        # 默认阈值保持适度严格，避免内容过早通过而没有进入 controller 修复环节
         default_thresholds = {
-            "topic_alignment": 0.40,
-            "coverage_completeness": 0.38,
-            "logical_coherence": 0.37,
-            "evidence_grounding": 0.37,
-            "novelty": 0.30,
-            "structure_clarity": 0.34,
+            "topic_alignment": 0.46,
+            "coverage_completeness": 0.45,
+            "logical_coherence": 0.30,
+            "evidence_grounding": 0.24,
+            "novelty": 0.78,
+            "structure_clarity": 0.41,
         }
         
         thresholds_raw = os.getenv("QUALITY_DIMENSION_THRESHOLDS_JSON", "").strip()
@@ -435,7 +532,9 @@ class FlowerNetVerifier:
         min_semantic_source_score: float = 0.35,
     ) -> Dict[str, Any]:
         source_results = source_results or []
-        refs = sorted({int(item) for item in re.findall(r"\[来源(\d+)\]", draft or "")})
+        refs_from_cn = {int(item) for item in re.findall(r"\[来源(\d+)\]", draft or "")}
+        refs_from_ieee = {int(item) for item in re.findall(r"\[(\d+)\]", draft or "")}
+        refs = sorted(refs_from_cn | refs_from_ieee)
         url_pattern = re.compile(r"https?://[^\s\]）)>,;]+", flags=re.IGNORECASE)
         found_urls = sorted(set(url_pattern.findall(draft or "")))
 
@@ -467,6 +566,40 @@ class FlowerNetVerifier:
             if score < float(min_semantic_source_score)
         ]
 
+        # ========== 黑名单扫描：检测明显的跨学科/无关引用 ==========
+        blacklist_matches: List[Dict[str, Any]] = []
+        outline_lower = (outline or "").lower()
+        # 简单判定当前小节是否属于谈判/博弈/商业类主题
+        is_negotiation_topic = any(tok in outline_lower for tok in self._negotiation_terms)
+
+        if is_negotiation_topic and source_results:
+            for idx, item in enumerate(source_results, start=1):
+                title = str(item.get('title', '') or '').lower()
+                body = str(item.get('body', '') or '').lower()
+                text = title + " \n " + body
+                # 数学词汇触发
+                for kw in self._math_terms:
+                    if kw.lower() in text:
+                        blacklist_matches.append({
+                            "index": idx,
+                            "href": item.get('href', ''),
+                            "title": item.get('title', ''),
+                            "match": kw,
+                            "type": "math",
+                        })
+                        break
+                # 语言学词汇触发
+                for kw in self._ling_terms:
+                    if kw.lower() in text:
+                        blacklist_matches.append({
+                            "index": idx,
+                            "href": item.get('href', ''),
+                            "title": item.get('title', ''),
+                            "match": kw,
+                            "type": "linguistics",
+                        })
+                        break
+
         total_available_sources = len(source_results)
         invalid_refs = [ref for ref in refs if ref < 1 or ref > total_available_sources]
         required_count = max(1, int(min_source_citations))
@@ -489,6 +622,10 @@ class FlowerNetVerifier:
         elif len(low_semantic_urls) > 0:
             passed = False
             reason = "low_semantic_source_quality"
+        # 如果发现黑名单匹配，则判定为失败并标注
+        elif blacklist_matches:
+            passed = False
+            reason = "blacklist_detected"
         elif citation_count_ok:
             passed = True
             reason = "ok"
@@ -511,6 +648,8 @@ class FlowerNetVerifier:
             "total_available_sources": total_available_sources,
             "require_source_citations": require_source_citations,
             "min_source_citations": required_count,
+            "blacklist_matches": blacklist_matches,
+            "trigger_controller": bool(blacklist_matches),
         }
 
     def calculate_relevancy(self, draft, outline):
@@ -625,8 +764,8 @@ class FlowerNetVerifier:
         draft,
         outline,
         history_list,
-        rel_threshold=0.4,
-        red_threshold=0.6,
+        rel_threshold=0.55,
+        red_threshold=0.70,
         source_results: Optional[List[Dict[str, Any]]] = None,
         require_source_citations: bool = False,
         min_source_citations: int = 1,
@@ -634,6 +773,12 @@ class FlowerNetVerifier:
         """一键验证逻辑"""
         rel = self.calculate_relevancy(draft, outline)
         red = self.calculate_redundancy(draft, history_list)
+        persona_prompt = os.getenv("PERSONA_PROMPT", "").strip()
+        persona_result: Optional[Dict[str, Any]] = None
+        persona_ok = True
+        if persona_prompt:
+            persona_result = self._calculate_persona_alignment(draft=draft, persona_prompt=persona_prompt)
+            persona_ok = self._safe_float(persona_result.get("similarity"), 0.0) >= self.persona_sim_threshold
         source_check = self.check_sources(
             draft=draft,
             outline=outline,
@@ -675,8 +820,8 @@ class FlowerNetVerifier:
         
         # 用于兼容旧的总分逻辑，但主要用维度级阈值
         quality_score = self._composite_quality_score(semantic_dimensions)
-        # 放宽默认的总体质量分数阈值以减少误报（可通过环境变量覆盖）
-        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.50"), 0.50)
+        # 略微提高总体质量分数阈值，避免弱质量内容过早判定通过
+        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.58"), 0.58)
         
         # 维度级阈值检查（新的主要判定逻辑）
         dimension_check = self._check_dimension_thresholds(semantic_dimensions)
@@ -685,6 +830,7 @@ class FlowerNetVerifier:
         is_passed = (
             (rel['score'] >= rel_threshold)
             and (red['score'] <= red_threshold)
+            and persona_ok
             and source_check["passed"]
             and (quality_passed if require_multidim else True)
         )
@@ -705,6 +851,8 @@ class FlowerNetVerifier:
             advice = "Content is redundant with previous sections. Provide new information."
         if not source_check["passed"]:
             advice = "Source citation check failed. Use semantically relevant, verifiable source URLs for the current subsection outline."
+        if persona_prompt and not persona_ok:
+            advice = "Persona consistency check failed. Align tone, terminology and narrative style with PERSONA_PROMPT."
         if require_multidim and not quality_passed:
             failed_dims = ", ".join(dimension_check["failed_dimensions"])
             advice = f"Multi-dimensional semantic quality failed on: {failed_dims}. Improve these dimensions."
@@ -736,10 +884,14 @@ class FlowerNetVerifier:
             },
             "quality_weights": self._quality_weights(),
             "feedback": advice,
+            "persona_check": persona_result,
+            "persona_passed": bool(persona_ok),
+            "persona_threshold": float(self.persona_sim_threshold),
             "source_check": source_check,
             "raw_data": {
                 "relevancy": rel['details'],
                 "redundancy": red['details'],
+                "persona": persona_result,
                 "source_check": source_check,
                 "semantic_dimensions": semantic_dimensions,
                 "semantic_uncertainty": fusion["uncertainty"],
@@ -756,8 +908,8 @@ class VerifyRequest(BaseModel):
     outline: str                # 对应的大纲/任务要求
     history: List[str] = []     # 之前已经生成的章节内容列表（用于查重）
     document_id: Optional[str] = None  # 如果不传 history，可用 document_id 从数据库读取
-    rel_threshold: Optional[float] = 0.55  # 可选：自定义相关性阈值
-    red_threshold: Optional[float] = 0.70  # 可选：自定义冗余度阈值
+    rel_threshold: Optional[float] = 0.50  # 可选：自定义相关性阈值
+    red_threshold: Optional[float] = 0.75  # 可选：自定义冗余度阈值
     source_results: List[Dict[str, Any]] = []
     require_source_citations: bool = False
     min_source_citations: int = 1
