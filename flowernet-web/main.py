@@ -2795,6 +2795,16 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             msg = json.dumps({'type': 'warning', 'message': f'⚠️ {warn_text}，先展示已通过内容'})
             yield f"data: {msg}\n\n"
         
+        # 聚合所有小节的source_reference_count
+        total_source_refs = 0
+        for h_item in history_items:
+            meta = h_item.get("metadata", {})
+            verification = meta.get("verification", {}) or h_item.get("verification", {})
+            if isinstance(verification, dict):
+                src_check = verification.get("source_check", {})
+                if isinstance(src_check, dict):
+                    total_source_refs += src_check.get("reference_count", 0)
+        
         result = {
             "success": True,
             "partial": partial_mode,
@@ -2813,6 +2823,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 "controller_effective_subsections": gen_resp.get("controller_effective_subsections", 0),
                 "rag_used_subsections": gen_resp.get("rag_used_subsections", 0),
                 "rag_search_success_subsections": gen_resp.get("rag_search_success_subsections", 0),
+                "total_source_references": total_source_refs,
                 **extract_document_quality_metrics(gen_resp if isinstance(gen_resp, dict) else {}),
             },
         }

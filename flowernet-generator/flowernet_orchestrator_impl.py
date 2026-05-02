@@ -72,14 +72,14 @@ class DocumentGenerationOrchestrator:
         self.retry_max_delay = float(os.getenv("DOC_RETRY_MAX_DELAY", "10.0"))
         self.retry_jitter = float(os.getenv("DOC_RETRY_JITTER", "0.2"))
         self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
-        # 默认轮次收敛到 3，快速失败避免长时间卡住。
-        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "3")))
+        # 默认轮次收敛到 5，给 Controller 更多改纲次数以提升质量
+        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "5")))
         # 单个小节最长处理时长（秒），超过后按最佳努力通过，避免长时间卡住。
         self.subsection_max_seconds = max(120, int(os.getenv("SUBSECTION_MAX_SECONDS", "600")))
         # 当 Generator 连续失败时，优先按该阈值触发兜底，避免单小节长时间阻塞。
         self.max_generator_failures_per_subsection = max(
             1,
-            int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "2")),
+            int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "3")),
         )
         self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "2")))
         self.allow_forced_pass = os.getenv("ALLOW_FORCED_PASS", "false").lower() == "true"
@@ -1951,6 +1951,17 @@ class DocumentGenerationOrchestrator:
                 )
                 controller_triggered = True
                 metrics["controller_calls"] += 1
+                # 增强 feedback 对象，包含强化改纲策略约束
+                enhanced_feedback = dict(verify_result or {})
+                enhanced_feedback["controller_strategy_instruction"] = (
+                    f"【改纲强化指令】本轮必须通过改进大纲来强化以下方面：\n"
+                    f"1. 加强对【{current_outline.split(chr(10))[0][:60]}】的核心概念论述\n"
+                    f"2. 确保大纲中的每个要点都能找到相关学术/可靠来源支持\n"
+                    f"3. 增加具体数据、案例、图表引用的placeholder\n"
+                    f"4. 避免与其他学科跨域（若涉及数学/语言学等边界主题，需明确标注）\n"
+                    f"5. 改进逻辑递进：前置概念 → 核心观点 → 证据支撑 → 实际应用\n"
+                    f"【最终验证】改纲后的大纲必须能支撑 ≥{effective_rel_threshold:.2f} 相关性 && ≤{effective_red_threshold:.2f} 冗余度"
+                )
                 controller_result = self._call_controller(
                     old_outline=self._resolve_subsection_outline(
                         document_id=document_id,
@@ -1959,7 +1970,7 @@ class DocumentGenerationOrchestrator:
                         fallback_outline=current_outline,
                     ),
                     failed_draft=draft,
-                    feedback=verify_result,
+                    feedback=enhanced_feedback,
                     outline=outline,
                     history=[h["content"] for h in windowed_history],
                     iteration=iterations,
@@ -2290,18 +2301,13 @@ class DocumentGenerationOrchestrator:
 """
 
         if require_source_citations:
-            enhanced += """【来源引用硬性要求（必须满足）】
-- 正文中的引用必须使用 IEEE 序号形式：如 [1]、[2]、[3]
-- 对关键事实、数据、结论，必须在对应句子后直接标注序号，不要使用“[来源N]”占位符
-- 每个关键事实至少提供 1 组“事实句 + [序号]”的证据最小单元
-- 末尾的参考文献必须按 IEEE 格式编号列出：作者/标题/出处/年份/链接
-- 至少提供 1 处可点击的具体网页链接；若有图片链接，也请直接写出图片 URL
-- 优先使用学术来源：arXiv、SSRN、Google Scholar、期刊/大学/官方机构页面
-- 在无法找到学术来源时，允许使用高质量社媒和技术社区来源（如知乎、B站、微博、X/Twitter、Reddit、Medium）
-- 只能引用上方“参考资料”里给出的来源，不允许编造不存在的论文、文章、链接或图片链接
-- 禁止引用与当前小节主题语义不一致的链接；如果标题/摘要和小节要点不匹配，禁止使用
-- 参考文献末尾保留一个独立的“References”小节，按 [1] [2] [3] 顺序列出
-
+            enhanced += """【来源引用硬性要求（CRITICAL - 强制执行）】
+✓ 内联引用标记强制要求：必须在正文中 3+ 处插入 [1] [2] [3]... IEEE标记
+✓ 关键事实/数据处必须有引用，理论/框架处必须有引用
+✓ 不要仅在末尾列References！要在正文中**嵌入**引用标记
+✓ 参考文献末尾按 [1][2][3]... 顺序列出（作者/标题/出处/年份/链接）
+✓ 禁止虚构论文、编造链接、引用不相关来源
+✓ 最低标准：3处标记 + 1个真实URL + References小节
 """
 
         if negative_constraints:
@@ -2310,23 +2316,27 @@ class DocumentGenerationOrchestrator:
             blacklist = source_check.get("blacklist_matches") if isinstance(source_check.get("blacklist_matches"), list) else []
             feedback_text = str(negative_constraints.get("feedback", "") or "").strip()
 
-            enhanced += """【负向约束重试（必须严格遵守）】
-上一轮被 Verifier 判定失败，本轮必须明确修复以下问题，禁止重复犯错：
+            enhanced += """【负向约束重试（CRITICAL - 本轮必须改进）】
+上一轮被 Verifier 判定失败，本轮MUST IMPROVE或系统自动标记为"失败"。需要在以下方面明确加强：
 """
             if failed_dims:
-                enhanced += f"\n- 失败维度：{', '.join(str(x) for x in failed_dims)}\n"
+                enhanced += f"\n【失败维度 - 本轮必须改进】：{', '.join(str(x) for x in failed_dims)}\n"
             if feedback_text:
-                enhanced += f"- 失败反馈：{feedback_text[:260]}\n"
+                enhanced += f"【Verifier反馈 - 必须立即纠正】：{feedback_text[:280]}\n"
             if blacklist:
-                enhanced += "- 禁止再次引用以下跨领域来源（标题或关键词命中黑名单）：\n"
+                enhanced += "【禁止再次引用 - 跨领域来源黑名单】：\n"
                 for item in blacklist[:6]:
                     title = str(item.get("title", "") or "")[:120]
                     matched = str(item.get("match", "") or item.get("match_keyword", "") or "")[:40]
                     if title or matched:
-                        enhanced += f"  - {title} (命中词: {matched})\n"
-            enhanced += """
-- 如果来源与当前小节领域不一致，必须舍弃，不允许为了凑引用数量而保留。
-- 本轮至少提供 1 处与小节主题直接相关的事实句 + [序号] 引用。
+                        enhanced += f"  ❌ {title} (黑名单关键词: {matched})\n"
+            enhanced += f"""
+【本轮强制要求】：
+- 加强与当前小节【{outline.split(chr(10))[0][:60]}】直接相关的内容、数据、案例
+- 删除所有与小节主题不一致的观点和跨领域引用
+- 至少提供 2+ 处事实句 + [序号] 内联引用（不是末尾列表！）
+- 若原文已包含 [1] [2]，本轮必须加强到 [3] [4] 等更多引用
+- 改进逻辑连贯性：确保每个段落都能直接回答大纲中的某个要点
 """
 
         enhanced += """【原始生成指令】
