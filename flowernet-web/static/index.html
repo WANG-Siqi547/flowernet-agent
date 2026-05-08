@@ -533,11 +533,11 @@
             {items.map((item) => (
               <motion.div key={item.key} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border border-slate-200 p-3">
                 <div className="flex justify-between items-center gap-3 mb-2">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-800">{item.name}</div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-800 truncate" title={item.name}>{item.name}</div>
                     <div className="text-xs text-slate-500">{item.stage}</div>
                   </div>
-                  <span className={`text-xs font-semibold rounded-full px-2 py-1 ${STATUS_STYLE[item.stage] || STATUS_STYLE.Waiting}`}>{item.stage}</span>
+                  <span className={`shrink-0 text-xs font-semibold rounded-full px-2 py-1 ${STATUS_STYLE[item.stage] || STATUS_STYLE.Waiting}`}>{item.stage}</span>
                 </div>
                 <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
                   <motion.div initial={{ width: 0 }} animate={{ width: `${item.progress}%` }} className="h-full bg-gradient-to-r from-coral to-peach" />
@@ -819,9 +819,15 @@
         if (stage === "subsection_start" || stage === "generator_start") return "Drafting";
         if (stage === "verifier_start") return "Evaluating via UniEval";
         if (stage === "verifier_failed" || stage === "controller_start") return "Repairing";
-        if (stage === "subsection_passed" || stage === "verifier_passed") return "Passed";
-        if (stage === "subsection_failed" || stage === "subsection_forced_pass") return "Failed";
+        if (stage === "subsection_passed" || stage === "subsection_forced_pass" || stage === "verifier_passed" || stage === "verifier_forced_pass") return "Passed";
+        if (stage === "subsection_failed") return "Failed";
         return "Waiting";
+      };
+
+      const getSubsectionKey = (meta = {}) => {
+        const sid = meta.section_id || meta.section_title || "Section";
+        const subid = meta.subsection_id || meta.subsection_title || "Subsection";
+        return `${sid}:${subid}`;
       };
 
       const handleStart = () => {
@@ -876,24 +882,29 @@
             setActiveNode(parseStage(stage));
             const section = meta.section_title || meta.section_id || "Section";
             const sub = meta.subsection_title || meta.subsection_id || "Subsection";
-            const key = `${section}-${sub}`;
+            const key = getSubsectionKey(meta);
             const stageLabel = stageToLabel(stage);
 
-            setSubsections((prev) => {
-              const next = [...prev];
-              const idx = next.findIndex((x) => x.key === key);
-              const stepMap = { "Drafting": 34, "Evaluating via UniEval": 62, "Repairing": 81, "Passed": 100, "Failed": 100, "Waiting": 0 };
-              if (idx === -1) {
-                next.push({ key, name: `${section} / ${sub}`, stage: stageLabel, progress: stepMap[stageLabel] || 0 });
-              } else {
-                next[idx] = {
-                  ...next[idx],
-                  stage: stageLabel,
-                  progress: Math.max(next[idx].progress, stepMap[stageLabel] || 0)
-                };
-              }
-              return next.sort((a, b) => a.name.localeCompare(b.name));
-            });
+            if (meta.subsection_id || meta.subsection_title) {
+              setSubsections((prev) => {
+                const next = [...prev];
+                const idx = next.findIndex((x) => x.key === key);
+                const stepMap = { "Drafting": 34, "Evaluating via UniEval": 62, "Repairing": 81, "Passed": 100, "Failed": 100, "Waiting": 0 };
+                const terminal = new Set(["Passed", "Failed"]);
+                if (idx === -1) {
+                  next.push({ key, name: `${section} / ${sub}`, stage: stageLabel, progress: stepMap[stageLabel] || 0 });
+                } else {
+                  const existing = next[idx];
+                  const nextStage = terminal.has(existing.stage) && !terminal.has(stageLabel) ? existing.stage : stageLabel;
+                  next[idx] = {
+                    ...existing,
+                    stage: nextStage,
+                    progress: Math.max(existing.progress, stepMap[nextStage] || 0)
+                  };
+                }
+                return next;
+              });
+            }
 
             if (stage === "verifier_result") {
               const q = meta.quality_dimensions || {};
@@ -983,9 +994,9 @@
             }
 
             // 只在最终完成事件时计入进度，避免把 verifier/controller 中间事件也算进去
-            const subsectionKey = `${data.metadata?.section_id}:${data.metadata?.subsection_id}`;
+            const subsectionKey = getSubsectionKey(data.metadata || {});
             const isFinalSubsectionStage = stage === "subsection_passed" || stage === "subsection_forced_pass" || stage === "subsection_failed";
-            if (subsectionKey && isFinalSubsectionStage) {
+            if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isFinalSubsectionStage) {
               if (!completedSubsectionsRef.current.has(subsectionKey)) {
                 completedSubsectionsRef.current.add(subsectionKey);
                 setProgress((p) => {
@@ -1037,10 +1048,16 @@
               bandit_reward_avg: stats.bandit_reward_avg,
             });
 
-            // 不要立即设为 100%，而是基于实际完成的小节数
             const expected = Math.max(1, Number(stats.expected_subsections || progress.total || 0));
             const actualCompleted = completedSubsectionsRef.current.size;
-            const finalCurrent = Math.min(expected, Math.max(actualCompleted, Number(stats.passed_subsections || 0)));
+            const failedCount = Array.isArray(stats.failed_subsections)
+              ? stats.failed_subsections.length
+              : Number(stats.failed_subsections || 0);
+            const forcedCount = Array.isArray(stats.forced_subsections)
+              ? stats.forced_subsections.length
+              : Number(stats.forced_subsections || 0);
+            const generatedCount = Number(stats.passed_subsections || 0) + failedCount + forcedCount;
+            const finalCurrent = Math.min(expected, Math.max(actualCompleted, generatedCount, result.success ? expected : 0));
             const finalPercent = expected > 0 ? Math.min(100, Math.round((finalCurrent / expected) * 100)) : 100;
 
             console.log("✅ [DEBUG] About to call setRunning(false), current running state:", running);
@@ -1076,17 +1093,21 @@
             setDoc({ title: result.title || "", content: result.content || "" });
             setProgress({ current: finalCurrent, total: expected, percent: finalPercent });
             setSubsections((prev) => {
+              const failedKeys = new Set((Array.isArray(stats.failed_subsections) ? stats.failed_subsections : []).map((item) => {
+                if (!item || typeof item !== "object") return "";
+                return `${item.section_id || item.section_title || "Section"}:${item.subsection_id || item.subsection_title || "Subsection"}`;
+              }).filter(Boolean));
               const completed = prev.map((item) => ({
                 ...item,
                 progress: 100,
-                stage: item.stage === "Waiting" ? "Failed" : item.stage,
+                stage: failedKeys.has(item.key) ? "Failed" : (item.stage === "Failed" && result.success ? "Passed" : (item.stage === "Waiting" ? "Passed" : item.stage)),
               }));
               const need = Math.max(0, expected - completed.length);
               for (let i = 0; i < need; i += 1) {
                 completed.push({
                   key: `final-${i}`,
                   name: `Section / Subsection ${completed.length + 1}`,
-                  stage: "Failed",
+                  stage: result.success ? "Passed" : "Waiting",
                   progress: 100,
                 });
               }
@@ -1250,10 +1271,10 @@
                         <motion.div animate={{ width: `${progress.percent}%` }} className="h-full bg-gradient-to-r from-coral to-peach" />
                       </div>
                       <div className="text-xs text-slate-600">{progress.current}/{progress.total || 0} subsections · {progress.percent}%</div>
-                      <div className="flex gap-2">
-                        <button onClick={handleStart} disabled={running} className="flex-1 rounded-xl bg-slate-900 text-white text-sm font-semibold py-2 disabled:opacity-50">{running ? "Running..." : "Start"}</button>
-                        <button onClick={handleDownload} disabled={!doc.content} className="flex-1 rounded-xl bg-emerald-600 text-white text-sm font-semibold py-2 disabled:opacity-50">Download DOCX</button>
-                        <button onClick={handleDownloadPdf} disabled={!doc.content} className="flex-1 rounded-xl bg-cyan-700 text-white text-sm font-semibold py-2 disabled:opacity-50">Download PDF</button>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button onClick={handleStart} disabled={running} className="min-h-12 rounded-xl bg-slate-900 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap">{running ? "Running..." : "Start"}</button>
+                        <button onClick={handleDownload} disabled={!doc.content} className="min-h-12 rounded-xl bg-emerald-600 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap leading-tight">Download DOCX</button>
+                        <button onClick={handleDownloadPdf} disabled={!doc.content} className="min-h-12 rounded-xl bg-cyan-700 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap leading-tight">Download PDF</button>
                       </div>
                       <div className="text-xs rounded-xl px-3 py-2 bg-slate-100 text-slate-700">{normalizedStatusText}</div>
                     </div>

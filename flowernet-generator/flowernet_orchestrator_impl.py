@@ -2334,12 +2334,12 @@ class DocumentGenerationOrchestrator:
 
         if require_source_citations:
             enhanced += """【来源引用硬性要求（CRITICAL - 强制执行）】
-✓ 内联引用标记强制要求：必须在正文中 3+ 处插入 [1] [2] [3]... IEEE标记
+✓ 内联引用标记强制要求：本小节正文至少插入 2 处专业来源引用，使用紧凑 IEEE 标记如 [1][2]
 ✓ 关键事实/数据处必须有引用，理论/框架处必须有引用
 ✓ 不要仅在末尾列References！要在正文中**嵌入**引用标记
-✓ 参考文献末尾按 [1][2][3]... 顺序列出（作者/标题/出处/年份/链接）
-✓ 禁止虚构论文、编造链接、引用不相关来源
-✓ 最低标准：3处标记 + 1个真实URL + References小节
+✓ 参考文献末尾按 [1][2][3]... 顺序列出（作者/标题/出处/年份；有 DOI/URL 时附上）
+✓ 禁止虚构论文、编造链接、引用不相关来源；没有 URL 时也必须保留最可信的真实书籍、论文或权威综述来源
+✓ 最低标准：正文至少 [1][2] 两个标记 + References小节
 """
 
         if negative_constraints:
@@ -2617,4 +2617,3 @@ class DocumentGenerationOrchestrator:
                 "success": False,
                 "error": str(e)
             }
-
