@@ -235,7 +235,7 @@ services:
       - key: GENERATOR_PROVIDER
         value: sensenova
       - key: GENERATOR_PROVIDER_CHAIN
-        value: sensenova
+        value: sensenova,azure,gemini,dashscope,openrouter
       - key: GENERATOR_MODEL
         value: glm-5
       - key: GENERATOR_OPENROUTER_MODEL
@@ -299,7 +299,7 @@ services:
       - key: GENERATOR_SENSENOVA_CONNECT_TIMEOUT
         value: "8"
       - key: GENERATOR_SENSENOVA_READ_TIMEOUT
-        value: "45"
+        value: "30"
       - key: GENERATOR_SENSENOVA_TRANSPORT_RETRIES
         value: "1"
       - key: GENERATOR_SENSENOVA_TRANSPORT_BACKOFF
@@ -348,6 +348,8 @@ services:
         value: "0.2"
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
+      - key: SUBSECTION_MAX_SECONDS
+        value: "300"
       - key: MAX_SUBSECTION_ATTEMPTS
         value: "3"
       - key: MAX_PASS_REL_MARGIN
