@@ -748,6 +748,27 @@
       }, [totalGenerations]);
 
       useEffect(() => {
+        let cancelled = false;
+        const loadWebStats = async () => {
+          try {
+            const resp = await fetch("/api/stats", { cache: "no-store" });
+            if (!resp.ok) return;
+            const stats = await resp.json();
+            const total = Number(stats?.total_generations);
+            if (!cancelled && Number.isFinite(total) && total > 0) {
+              setTotalGenerations(total);
+            }
+          } catch {
+            // Keep the cached local value if the server-side counter is unavailable.
+          }
+        };
+        loadWebStats();
+        return () => {
+          cancelled = true;
+        };
+      }, []);
+
+      useEffect(() => {
         const timer = setInterval(() => {
           if (generationStartTime && running) {
             setGenerationElapsedSec(Math.floor((Date.now() - generationStartTime) / 1000));
@@ -1116,7 +1137,11 @@
             setActiveNode("controller");
             setStatusText("Generation completed successfully.");
             setRunning(false);
-            setTotalGenerations((n) => n + 1);
+            if (Number.isFinite(Number(stats.total_generations))) {
+              setTotalGenerations(Number(stats.total_generations));
+            } else {
+              setTotalGenerations((n) => n + 1);
+            }
             closeSse();
           }
 

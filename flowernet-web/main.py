@@ -102,6 +102,8 @@ except ImportError:
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
 GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "7200"))
+WEB_STATS_PATH = os.getenv("FLOWERNET_WEB_STATS_PATH", "/tmp/flowernet_web_stats.json")
+WEB_TOTAL_GENERATIONS_BASE = int(os.getenv("FLOWERNET_TOTAL_GENERATIONS_BASE", "151"))
 DOWNSTREAM_RETRIES = int(os.getenv("DOWNSTREAM_RETRIES", "1"))
 DOWNSTREAM_BACKOFF = float(os.getenv("DOWNSTREAM_BACKOFF", "1.0"))
 DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
@@ -421,6 +423,45 @@ def _inject_timeout_profile(result: Dict[str, Any], timeout_profile: Dict[str, A
         result["stats"] = stats
     stats["timeout_profile"] = timeout_profile
     return result
+
+
+def _read_web_stats() -> Dict[str, Any]:
+    stats = {
+        "total_generations": WEB_TOTAL_GENERATIONS_BASE,
+        "successful_generations": 0,
+        "partial_generations": 0,
+    }
+    try:
+        with open(WEB_STATS_PATH, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            for key in list(stats.keys()):
+                stats[key] = int(loaded.get(key, stats[key]) or 0)
+    except Exception:
+        pass
+    stats["total_generations"] = max(WEB_TOTAL_GENERATIONS_BASE, int(stats.get("total_generations", 0) or 0))
+    return stats
+
+
+def _write_web_stats(stats: Dict[str, Any]) -> None:
+    try:
+        os.makedirs(os.path.dirname(WEB_STATS_PATH) or ".", exist_ok=True)
+        with open(WEB_STATS_PATH, "w", encoding="utf-8") as f:
+            json.dump(stats, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[WebStats] 写入统计失败: {e}", flush=True)
+
+
+def _record_generation_success(partial: bool = False) -> Dict[str, Any]:
+    stats = _read_web_stats()
+    stats["total_generations"] = int(stats.get("total_generations", WEB_TOTAL_GENERATIONS_BASE) or WEB_TOTAL_GENERATIONS_BASE) + 1
+    if partial:
+        stats["partial_generations"] = int(stats.get("partial_generations", 0) or 0) + 1
+    else:
+        stats["successful_generations"] = int(stats.get("successful_generations", 0) or 0) + 1
+    stats["updated_at"] = datetime.now().isoformat()
+    _write_web_stats(stats)
+    return stats
 
 
 def _is_transient_downstream_payload(payload: Dict[str, Any]) -> bool:
@@ -3486,6 +3527,43 @@ def health() -> Dict[str, str]:
     return {"status": "ok", "service": "flowernet-web"}
 
 
+@app.get("/api/stats")
+def web_stats() -> Dict[str, Any]:
+    return _read_web_stats()
+
+
+@app.get("/api/metrics/dashboard-summary")
+def metrics_dashboard_summary_fallback() -> Dict[str, Any]:
+    categories = {}
+    for name, info in (METRICS_CATEGORIES or {}).items():
+        if not isinstance(info, dict):
+            continue
+        categories[name] = {
+            "display_name": info.get("display_name", name),
+            "description": info.get("description", ""),
+            "metrics_count": len(info.get("metrics", []) or []),
+            "metrics": info.get("metrics", []) or [],
+        }
+    return {
+        "success": True,
+        "summary": {
+            "total_metrics": len(FLOWERNET_METRICS or {}),
+            "total_categories": len(categories),
+            "categories": categories,
+            "features_count": len(FLOWERNET_FEATURES or {}),
+        },
+    }
+
+
+@app.get("/api/metrics/all")
+def metrics_all_fallback() -> Dict[str, Any]:
+    return {
+        "success": True,
+        "metrics_count": len(FLOWERNET_METRICS or {}),
+        "metrics": FLOWERNET_METRICS or {},
+    }
+
+
 def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
     """流式生成文档，实时推送进度到前端"""
     try:
@@ -3613,6 +3691,14 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             msg = json.dumps({'type': 'error', 'message': f'大纲结果格式异常: {str(outline_resp)[:200]}'} )
             yield f"data: {msg}\n\n"
             return
+
+        structure, content_prompts, _source_subsections, normalized_subsections = ensure_exact_structure_and_prompts(
+            title=title,
+            structure=structure,
+            content_prompts=content_prompts,
+            chapter_count=req.chapter_count,
+            subsection_count=req.subsection_count,
+        )
         total_subsections = len(content_prompts)
         if total_subsections <= 0:
             msg = json.dumps({'type': 'error', 'message': '大纲结果为空，无法开始内容生成'})
@@ -3837,7 +3923,13 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 msg = json.dumps({'type': 'warning', 'message': f'⚠️ 生成中断，先返回已通过的 {len(history_items)} 个小节'})
                 yield f"data: {msg}\n\n"
             else:
-                msg = json.dumps({'type': 'error', 'message': '生成服务连接失败'})
+                detail = ""
+                if isinstance(gen_resp, dict):
+                    detail = str(gen_resp.get("error") or gen_resp.get("message") or "").strip()
+                message = "生成服务连接失败"
+                if detail:
+                    message = f"{message}: {detail[:260]}"
+                msg = json.dumps({'type': 'error', 'message': message})
                 yield f"data: {msg}\n\n"
                 return
 
@@ -4051,6 +4143,8 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 **extract_document_quality_metrics(gen_resp if isinstance(gen_resp, dict) else {}),
             },
         }
+        web_stats_snapshot = _record_generation_success(partial=partial_mode)
+        result["stats"]["total_generations"] = web_stats_snapshot.get("total_generations", WEB_TOTAL_GENERATIONS_BASE)
 
         msg = json.dumps({'type': 'complete', 'result': result})
         print(f"🎉 [BACKEND] Sending complete event with stats:")
@@ -4126,6 +4220,11 @@ def generate_document(
         elapsed = time.time() - start_time
         _record_timeout_metrics(elapsed_seconds=elapsed, result=result)
         _inject_timeout_profile(result=result, timeout_profile=timeout_profile)
+        if result.get("success"):
+            web_stats_snapshot = _record_generation_success(partial=bool(result.get("partial") or result.get("interrupted")))
+            result.setdefault("stats", {})
+            if isinstance(result["stats"], dict):
+                result["stats"]["total_generations"] = web_stats_snapshot.get("total_generations", WEB_TOTAL_GENERATIONS_BASE)
         return result
     except HTTPException:
         raise

@@ -13,6 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码和静态文件
 COPY main.py .
+COPY metrics_api.py .
+COPY metrics_definition.py .
 COPY static/ ./static/
 
 # 暴露端口（Render 会通过 PORT 环境变量注入实际端口）
