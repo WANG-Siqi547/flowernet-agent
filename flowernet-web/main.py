@@ -665,8 +665,71 @@ def post_json_once(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str,
 
 
 def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
-    target_url = f"{OUTLINER_URL}/outline/generate-and-save"
-    return post_json_once(url=target_url, payload=payload, timeout=max(OUTLINER_DOWNSTREAM_MIN_TIMEOUT, int(timeout)))
+    """Start outline generation through the async task API and poll for completion.
+
+    Render can return 429 for long-running blocking requests even when the user
+    only clicked once. The task API keeps the public request short and lets the
+    outliner serialize work internally.
+    """
+    task_url = f"{OUTLINER_URL}/outline/generate-task"
+    legacy_url = f"{OUTLINER_URL}/outline/generate-and-save"
+    poll_timeout = max(OUTLINER_DOWNSTREAM_MIN_TIMEOUT, int(timeout))
+    task_resp: Dict[str, Any] = {}
+
+    try:
+        task_resp = post_json_once(url=task_url, payload=payload, timeout=min(30, poll_timeout))
+    except HTTPException as exc:
+        detail = str(exc.detail)
+        if "HTTP 404" in detail or "Not Found" in detail:
+            print("[Web] ⚠️ Outliner async task API unavailable, falling back to legacy blocking endpoint")
+            return post_json_once(url=legacy_url, payload=payload, timeout=poll_timeout)
+        raise
+
+    if isinstance(task_resp, dict) and task_resp.get("status") == "completed" and isinstance(task_resp.get("result"), dict):
+        return task_resp["result"]
+
+    task_id = str(task_resp.get("task_id") or "").strip() if isinstance(task_resp, dict) else ""
+    if not task_id:
+        if isinstance(task_resp, dict) and task_resp.get("success") is True and task_resp.get("structure"):
+            return task_resp
+        raise HTTPException(status_code=502, detail=f"Outliner task API returned no task_id: {task_resp}")
+
+    deadline = time.time() + poll_timeout
+    sleep_seconds = 2.0
+    status_url = f"{OUTLINER_URL}/outline/task-status/{task_id}"
+    last_status: Dict[str, Any] = {}
+
+    while time.time() < deadline:
+        try:
+            response = DOWNSTREAM_SESSION.get(status_url, timeout=15)
+            response.raise_for_status()
+            status_body = response.json()
+            if isinstance(status_body, dict):
+                last_status = status_body
+                status = str(status_body.get("status") or "").lower()
+                if status == "completed" and isinstance(status_body.get("result"), dict):
+                    return status_body["result"]
+                if status == "failed":
+                    result = status_body.get("result")
+                    if isinstance(result, dict):
+                        return result
+                    return {
+                        "success": False,
+                        "error": status_body.get("error") or "outliner_task_failed",
+                        "task_id": task_id,
+                    }
+        except Exception as e:
+            last_status = {"error": str(e), "task_id": task_id}
+
+        time.sleep(min(8.0, sleep_seconds))
+        sleep_seconds = min(8.0, sleep_seconds * 1.3)
+
+    return {
+        "success": False,
+        "error": f"outliner_task_timeout after {poll_timeout}s",
+        "task_id": task_id,
+        "last_status": last_status,
+    }
 
 
 def fetch_history_items(document_id: str, timeout_seconds: int = 60) -> List[Dict[str, Any]]:

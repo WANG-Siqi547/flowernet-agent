@@ -15,7 +15,7 @@ services:
       - key: OUTLINER_PROVIDER
         value: sensenova
       - key: OUTLINER_PROVIDER_CHAIN
-        value: "sensenova"
+        value: "sensenova,azure,gemini,dashscope,openrouter"
       - key: OUTLINER_MODEL
         value: glm-5
       - key: OUTLINER_OPENROUTER_MODEL

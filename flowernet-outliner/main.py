@@ -12,6 +12,7 @@ import os
 import json
 import time
 import threading
+import queue
 from datetime import datetime
 
 from outliner import FlowerNetOutliner
@@ -81,6 +82,10 @@ class GenerateAndSaveOutlineRequest(BaseModel):
     max_subsections_per_section: int = Field(default=4, ge=1, le=8)
 
 
+class OutlineTaskStatusRequest(BaseModel):
+    task_id: str = Field(..., description="异步大纲任务 ID")
+
+
 class SubsectionTrackingCreateRequest(BaseModel):
     document_id: str = Field(..., description="文档 ID")
     section_id: str = Field(..., description="Section ID")
@@ -145,6 +150,10 @@ app.add_middleware(
 outliner = None
 history_manager = None
 outline_generation_lock = threading.Lock()
+outline_task_queue: "queue.Queue[str]" = queue.Queue()
+outline_tasks: Dict[str, Dict[str, Any]] = {}
+outline_tasks_lock = threading.Lock()
+outline_worker_started = False
 
 
 def _is_transient_outliner_error(message: str) -> bool:
@@ -155,6 +164,67 @@ def _is_transient_outliner_error(message: str) -> bool:
         "retry_after",
     ]
     return any(token in text for token in transient_tokens)
+
+
+def _find_outline_task_by_document(document_id: str) -> Optional[str]:
+    with outline_tasks_lock:
+        for task_id, task in outline_tasks.items():
+            if task.get("document_id") == document_id and task.get("status") in {"queued", "running", "completed"}:
+                return task_id
+    return None
+
+
+def _set_outline_task(task_id: str, **updates: Any) -> None:
+    with outline_tasks_lock:
+        task = outline_tasks.setdefault(task_id, {})
+        task.update(updates)
+        task["updated_at"] = datetime.now().isoformat()
+
+
+def _outline_task_worker_loop() -> None:
+    while True:
+        task_id = outline_task_queue.get()
+        try:
+            with outline_tasks_lock:
+                task = outline_tasks.get(task_id, {})
+                request = task.get("request")
+            if not isinstance(request, GenerateAndSaveOutlineRequest):
+                _set_outline_task(task_id, status="failed", error="invalid_task_request")
+                continue
+
+            _set_outline_task(task_id, status="running", started_at=datetime.now().isoformat())
+            result = generate_and_save_outline(request)
+            if isinstance(result, dict) and result.get("success"):
+                _set_outline_task(task_id, status="completed", result=result, completed_at=datetime.now().isoformat())
+            else:
+                _set_outline_task(
+                    task_id,
+                    status="failed",
+                    result=result if isinstance(result, dict) else None,
+                    error=str((result or {}).get("error") if isinstance(result, dict) else result),
+                    completed_at=datetime.now().isoformat(),
+                )
+        except Exception as e:
+            _set_outline_task(
+                task_id,
+                status="failed",
+                error=str(e),
+                completed_at=datetime.now().isoformat(),
+            )
+        finally:
+            outline_task_queue.task_done()
+
+
+def _ensure_outline_worker_started() -> None:
+    global outline_worker_started
+    if outline_worker_started:
+        return
+    with outline_tasks_lock:
+        if outline_worker_started:
+            return
+        worker = threading.Thread(target=_outline_task_worker_loop, daemon=True, name="outline-task-worker")
+        worker.start()
+        outline_worker_started = True
 
 
 @app.on_event("startup")
@@ -188,6 +258,8 @@ async def startup_event():
         print(f"🔧 初始化 History Manager（use_db={use_db}, db_path={db_path}）...")
         history_manager = HistoryManager(use_database=use_db, db_path=db_path)
         print(f"✅ History Manager 初始化成功")
+        _ensure_outline_worker_started()
+        print("✅ Outline async task worker 已启动")
         
         print("=" * 50)
         print("🚀 FlowerNet Outliner 启动成功")
@@ -812,6 +884,73 @@ def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
     finally:
         if serialize_tasks and acquired:
             outline_generation_lock.release()
+
+
+@app.post("/outline/generate-task")
+def start_outline_generation_task(request: GenerateAndSaveOutlineRequest):
+    """Queue outline generation and return immediately to avoid Render request 429s."""
+    _ensure_outline_worker_started()
+    existing_task_id = _find_outline_task_by_document(request.document_id)
+    if existing_task_id:
+        with outline_tasks_lock:
+            existing = dict(outline_tasks.get(existing_task_id, {}))
+        return {
+            "success": True,
+            "task_id": existing_task_id,
+            "document_id": request.document_id,
+            "status": existing.get("status", "queued"),
+            "queued": existing.get("status") in {"queued", "running"},
+            "message": "Outline task already exists for this document_id.",
+        }
+
+    task_id = f"outline_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(outline_tasks) + 1}"
+    with outline_tasks_lock:
+        outline_tasks[task_id] = {
+            "task_id": task_id,
+            "document_id": request.document_id,
+            "request": request,
+            "status": "queued",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        }
+    outline_task_queue.put(task_id)
+    return {
+        "success": True,
+        "task_id": task_id,
+        "document_id": request.document_id,
+        "status": "queued",
+        "queued": True,
+        "message": "Outline task queued.",
+    }
+
+
+@app.get("/outline/task-status/{task_id}")
+def get_outline_task_status_get(task_id: str):
+    with outline_tasks_lock:
+        task = dict(outline_tasks.get(task_id, {}))
+    if not task:
+        raise HTTPException(status_code=404, detail="outline task not found")
+    response = {
+        "success": True,
+        "task_id": task_id,
+        "document_id": task.get("document_id"),
+        "status": task.get("status", "unknown"),
+        "created_at": task.get("created_at"),
+        "updated_at": task.get("updated_at"),
+        "started_at": task.get("started_at"),
+        "completed_at": task.get("completed_at"),
+        "error": task.get("error", ""),
+    }
+    if task.get("status") == "completed" and isinstance(task.get("result"), dict):
+        response["result"] = task.get("result")
+    elif task.get("status") == "failed":
+        response["result"] = task.get("result")
+    return response
+
+
+@app.post("/outline/task-status")
+def get_outline_task_status_post(request: OutlineTaskStatusRequest):
+    return get_outline_task_status_get(request.task_id)
 
 
 # ============ Main ============
