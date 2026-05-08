@@ -58,9 +58,34 @@ DOMAIN_KEYWORD_MAP = {
         "keywords": ["心理", "行为", "认知", "情感", "压力", "学习", "记忆", "大脑", "神经"],
         "valid_sources": ["心理学期刊", "行为研究", "神经科学论文", "学术研究"],
     },
+    "education": {
+        "keywords": [
+            "大学", "学生", "新生", "学习", "学习习惯", "时间管理", "自我调节", "自主学习",
+            "学业", "复习", "拖延", "专注", "课堂", "高校", "教育",
+            "student", "students", "college", "university", "academic", "learning",
+            "study habits", "time management", "self-regulated learning", "procrastination",
+        ],
+        "valid_sources": ["教育研究", "心理学期刊", "高等教育研究", "ERIC", "APA", "Springer", "Taylor & Francis", "SAGE"],
+    },
     "science": {
         "keywords": ["物理", "化学", "生物", "实验", "科学", "理论", "研究"],
         "valid_sources": ["Nature", "Science", "学科期刊", "同行评审", "研究所"],
+    },
+    "medicine": {
+        "keywords": ["医学", "临床", "疾病", "治疗", "诊断", "患者", "护理", "药物", "medical", "clinical", "patient", "disease", "treatment"],
+        "valid_sources": ["PubMed", "NIH", "WHO", "Cochrane", "BMJ", "Lancet", "NEJM"],
+    },
+    "law": {
+        "keywords": ["法律", "法规", "司法", "法院", "判例", "合同", "合规", "law", "legal", "regulation", "court", "contract"],
+        "valid_sources": ["法律数据库", "法院", "政府法规", "Law Review", "SSRN"],
+    },
+    "finance": {
+        "keywords": ["金融", "投资", "银行", "风险", "资产", "财务", "finance", "financial", "investment", "bank", "risk"],
+        "valid_sources": ["IMF", "World Bank", "BIS", "NBER", "金融期刊"],
+    },
+    "environment": {
+        "keywords": ["环境", "气候", "碳", "生态", "污染", "能源", "可持续", "climate", "carbon", "environment", "sustainability"],
+        "valid_sources": ["IPCC", "UN", "OECD", "Nature", "Science", "环境期刊"],
     },
 }
 
@@ -69,6 +94,11 @@ CROSS_DOMAIN_RED_FLAGS = {
     "physics_only": ["量子", "粒子", "超导", "激光", "等离子体", "LaFeAsO", "原子", "光子"],
     "chemistry_only": ["分子", "化学反应", "元素", "催化", "氧化", "还原", "化学键"],
     "biology_only": ["基因", "蛋白质", "DNA", "细胞", "微生物", "进化", "生物学"],
+    "engineering_only": ["施工", "工程", "建筑", "热电", "低碳建筑", "超危大", "矿业", "混凝土"],
+    "cs_only": ["算法", "机器学习", "深度学习", "神经网络", "sequence-to-sequence", "spectral sequence"],
+    "medicine_only": ["临床试验", "患者", "疾病", "治疗组", "clinical trial", "patient cohort"],
+    "law_only": ["法院", "判例", "诉讼", "合同法", "court", "case law", "litigation"],
+    "finance_only": ["股票", "银行资本", "投资组合", "financial risk", "portfolio", "banking"],
 }
 
 print("✅ Citation Drift Prevention Configuration Loaded")

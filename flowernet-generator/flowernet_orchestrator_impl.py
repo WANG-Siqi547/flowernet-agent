@@ -42,6 +42,11 @@ try:
 except Exception:
     RAG_AVAILABLE = False
 
+try:
+    from citation_drift_prevention import CITATION_DRIFT_PREVENTION_PROMPT
+except Exception:
+    CITATION_DRIFT_PREVENTION_PROMPT = ""
+
 
 class DocumentGenerationOrchestrator:
     """
@@ -107,6 +112,7 @@ class DocumentGenerationOrchestrator:
         
         self.rag_enabled = os.getenv("RAG_ENABLED", "true").lower() == "true" and RAG_AVAILABLE
         self.rag_force_citation = os.getenv("RAG_FORCE_CITATION", "true").lower() == "true"
+        self.source_citation_relaxation_enabled = os.getenv("SOURCE_CITATION_RELAXATION_ENABLED", "false").lower() == "true"
         self.rag_min_citations = max(1, int(os.getenv("RAG_MIN_CITATIONS", "1")))
         self.rag_max_results = max(1, int(os.getenv("RAG_MAX_RESULTS", "5")))
         self.rag_timeout = max(3, int(os.getenv("RAG_TIMEOUT", "10")))
@@ -1182,6 +1188,25 @@ class DocumentGenerationOrchestrator:
                 "controller_ineffective_total": document_result.get("controller_ineffective_total", 0),
                 "controller_fallback_outline_total": document_result.get("controller_fallback_outline_total", 0),
                 "controller_exhausted_total": document_result.get("controller_exhausted_total", 0),
+                # Include quality metrics fields to avoid zero defaults on frontend
+                "quality_score_avg": float(document_result.get("quality_score_avg", 0.0) or 0.0),
+                "quality_overall_uncertainty_avg": float(document_result.get("quality_overall_uncertainty_avg", 0.0) or 0.0),
+                "quality_dimension_avgs": document_result.get("quality_dimension_avgs", {}),
+                "quality_weights": document_result.get("quality_weights", {}),
+                "unieval_available_subsections": int(document_result.get("unieval_available_subsections", 0) or 0),
+                "unieval_fallback_subsections": int(document_result.get("unieval_fallback_subsections", 0) or 0),
+                "unieval_available_ratio": float(document_result.get("unieval_available_ratio", 0.0) or 0.0),
+                "unieval_fallback_ratio": float(document_result.get("unieval_fallback_ratio", 0.0) or 0.0),
+                "bandit_selected_arm_counts": document_result.get("bandit_selected_arm_counts", {}),
+                "bandit_reward_sum": float(document_result.get("bandit_reward_sum", 0.0) or 0.0),
+                "bandit_reward_count": int(document_result.get("bandit_reward_count", 0) or 0),
+                "bandit_reward_avg": float(document_result.get("bandit_reward_avg", 0.0) or 0.0),
+                "bandit_drift_events": int(document_result.get("bandit_drift_events", 0) or 0),
+                "bandit_drift_triggered_subsections": int(document_result.get("bandit_drift_triggered_subsections", 0) or 0),
+                "bandit_drift_trigger_rate": float(document_result.get("bandit_drift_trigger_rate", 0.0) or 0.0),
+                "bandit_last_selected_arm": str(document_result.get("bandit_last_selected_arm", "") or ""),
+                "bandit_last_selection_mode": str(document_result.get("bandit_last_selection_mode", "") or ""),
+                "bandit_last_constraints": document_result.get("bandit_last_constraints", {}),
                 "error": str(e),
                 "warning": f"document_exception_fallback: {str(e)[:180]}",
             }
@@ -1694,7 +1719,7 @@ class DocumentGenerationOrchestrator:
             )
 
             provider_name = str((gen_result.get("metadata") or {}).get("provider", "")).strip().lower()
-            if source_citation_required and provider_name == "ollama":
+            if self.source_citation_relaxation_enabled and source_citation_required and provider_name == "ollama":
                 source_citation_required = False
                 self._emit_progress_event(
                     document_id=document_id,
@@ -1721,6 +1746,7 @@ class DocumentGenerationOrchestrator:
                 history=[h["content"] for h in windowed_history],
                 rel_threshold=effective_rel_threshold,
                 red_threshold=effective_red_threshold,
+                context_text=current_prompt,
                 source_results=rag_search_result.get("results", []),
                 require_source_citations=source_citation_required,
                 min_source_citations=self.rag_min_citations,
@@ -1801,7 +1827,7 @@ class DocumentGenerationOrchestrator:
                     or "citation" in citation_feedback
                     or "来源" in citation_feedback
                 )
-                if citation_failed:
+                if self.source_citation_relaxation_enabled and citation_failed:
                     source_citation_required = False
                     self._emit_progress_event(
                         document_id=document_id,
@@ -2230,6 +2256,12 @@ class DocumentGenerationOrchestrator:
 
 """
 
+        if CITATION_DRIFT_PREVENTION_PROMPT:
+            enhanced += f"""【引用漂移防护（必须遵守）】
+{CITATION_DRIFT_PREVENTION_PROMPT}
+
+"""
+
         if rag_context:
             # 【优化2.0 - 3-Step Evidence Check】
             # 在RAG上下文后加入严格的3步引用验证工作流
@@ -2455,6 +2487,7 @@ class DocumentGenerationOrchestrator:
         history: List[str],
         rel_threshold: float,
         red_threshold: float,
+        context_text: str = "",
         source_results: Optional[List[Dict[str, Any]]] = None,
         require_source_citations: bool = False,
         min_source_citations: int = 1,
@@ -2490,6 +2523,7 @@ class DocumentGenerationOrchestrator:
                         "history": history,
                         "rel_threshold": rel_threshold,
                         "red_threshold": red_threshold,
+                        "context_text": context_text,
                         "source_results": source_results or [],
                         "require_source_citations": require_source_citations,
                         "min_source_citations": max(1, int(min_source_citations)),

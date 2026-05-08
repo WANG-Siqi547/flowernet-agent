@@ -26,11 +26,24 @@ try:
 except ImportError:
     HAS_SENTENCE_TRANSFORMERS = False
 
+# Try to import additional domain keyword maps and red-flag lists
+try:
+    from citation_drift_prevention import DOMAIN_KEYWORD_MAP, CROSS_DOMAIN_RED_FLAGS
+except Exception:
+    DOMAIN_KEYWORD_MAP = {}
+    CROSS_DOMAIN_RED_FLAGS = {}
+
+# Optional Chinese tokenizer to improve index-term extraction
+try:
+    import jieba
+    HAS_JIEBA = True
+except Exception:
+    HAS_JIEBA = False
 logger = logging.getLogger(__name__)
 
 # Configuration
 DOMAIN_FILTER_ENABLED = os.getenv("DOMAIN_FILTER_ENABLED", "true").lower() == "true"
-DOMAIN_FILTER_SIMILARITY_THRESHOLD = float(os.getenv("DOMAIN_FILTER_SIMILARITY_THRESHOLD", "0.35"))
+DOMAIN_FILTER_SIMILARITY_THRESHOLD = float(os.getenv("DOMAIN_FILTER_SIMILARITY_THRESHOLD", "0.30"))
 DOMAIN_FILTER_MIN_INDEX_TERMS = int(os.getenv("DOMAIN_FILTER_MIN_INDEX_TERMS", "3"))
 DOMAIN_FILTER_MODEL = os.getenv("DOMAIN_FILTER_MODEL", "sentence-transformers/paraphrase-MiniLM-L6-v2")
 
@@ -77,12 +90,60 @@ class IndexTermsExtractor:
         
         # 中文关键词提取 - 基于词长和词频
         chinese_terms = self._extract_chinese_terms(combined_text)
-        
+
         # 英文关键词提取
         english_terms = self._extract_english_terms(combined_text)
-        
-        # 合并并去重
-        all_terms = set(chinese_terms) | set(english_terms)
+
+        # jieba-based Chinese tokenization (adds finer-grained tokens)
+        jieba_terms = []
+        if HAS_JIEBA:
+            try:
+                jieba_tokens = [t.strip() for t in jieba.cut(combined_text) if t.strip()]
+                # filter stopwords and short tokens
+                for t in jieba_tokens:
+                    if t not in self.stopwords and len(t) >= 2:
+                        jieba_terms.append(t)
+            except Exception:
+                jieba_terms = []
+
+        # bigrams from English token extractor to capture short phrases
+        bigrams = self._extract_bigrams(combined_text)
+
+        # Include synonyms only for domains that are actually signaled by the
+        # document. Adding every domain map pollutes broad topics such as
+        # education with unrelated terms like "机器学习" or "供应链".
+        synonym_terms = []
+        try:
+            combined_lower = combined_text.lower()
+            weak_domain_signals = {
+                "管理", "学习", "研究", "分析", "模型", "数据", "系统", "应用", "方法",
+                "management", "study", "research", "analysis", "model", "data", "system",
+            }
+            for domain_name, v in (DOMAIN_KEYWORD_MAP or {}).items():
+                kws = v.get("keywords") if isinstance(v, dict) else v
+                if not kws:
+                    continue
+                kw_list = [str(kw).lower() for kw in kws if isinstance(kw, str) and kw]
+                strong_hits = [
+                    kw for kw in kw_list
+                    if kw not in weak_domain_signals
+                    and (len(kw) >= 4 or re.search(r"[\u4e00-\u9fff]{3,}", kw))
+                    and kw in combined_lower
+                ]
+                domain_hit = str(domain_name or "").lower() in combined_lower or len(strong_hits) >= 1
+                if not domain_hit:
+                    continue
+                synonym_terms.extend(kw_list)
+        except Exception:
+            synonym_terms = []
+
+        # 合并并去重：保留有限数量以避免噪声
+        all_terms = set(chinese_terms) | set(english_terms) | set(jieba_terms) | set(bigrams) | set(synonym_terms)
+        # cap total terms to a reasonable size
+        if len(all_terms) > 60:
+            # prefer longer phrases first
+            sorted_terms = sorted(all_terms, key=lambda s: (-len(s), s))
+            all_terms = set(sorted_terms[:60])
         
         logger.info(f"🔍 Extracted {len(all_terms)} index terms: {list(all_terms)[:10]}")
         return all_terms
@@ -136,7 +197,18 @@ class IndexTermsExtractor:
             for i in range(len(words) - 1)
             if len(words[i]) >= 2 and len(words[i+1]) >= 2
         ]
-        return bigrams[:20]
+        # Also add adjacent Chinese character bigrams as phrase hints
+        try:
+            chinese_chars = re.findall(r"[\u4e00-\u9fff]{2,}", text)
+            for chunk in chinese_chars:
+                for i in range(len(chunk) - 1):
+                    big = chunk[i:i+2]
+                    if len(big.strip()) >= 2:
+                        bigrams.append(big)
+        except Exception:
+            pass
+
+        return list(dict.fromkeys(bigrams))[:30]
 
 
 class DomainSimilarityScorer:
@@ -189,8 +261,78 @@ class DomainSimilarityScorer:
             return 0.0
 
         text_lower = str(text).lower()
-        matched = sum(1 for kw in keywords if str(kw).lower() in text_lower)
-        score = matched / len(keywords)
+        matched_keywords = [str(kw) for kw in keywords if str(kw).lower() in text_lower]
+        matched = len(matched_keywords)
+
+        # 补偿：当没有 SBERT 时，尝试基于常见英文词到中文词的小映射增强匹配（轻量启发式）
+        # 这可以帮助 "Sales Negotiation" 类的英文标题配上中文 index terms
+        english_to_chinese = {
+            "negotiation": "谈判",
+            "sales": "销售",
+            "strategy": "策略",
+            "strategies": "策略",
+            "communication": "沟通",
+            "management": "管理",
+            "student": "学生",
+            "students": "学生",
+            "college": "大学",
+            "university": "大学",
+            "learning": "学习",
+            "study": "学习",
+            "academic": "学业",
+            "procrastination": "拖延",
+            "self-regulated": "自我调节",
+            "price": "价格",
+            "marketing": "市场",
+            "psychology": "心理",
+        }
+        try:
+            import re as _re
+            tokens = _re.findall(r"[a-zA-Z]+", str(text or "").lower())
+            for t in set(tokens):
+                mapped = english_to_chinese.get(t)
+                if mapped and mapped in keywords:
+                    # 如果映射的中文关键词尚未计入，则计数补偿
+                    if not any(str(kw).lower() == mapped for kw in keywords):
+                        # mapped not literally in keywords set (unlikely), skip
+                        pass
+                    else:
+                        # 增加一个计数（但不超过关键词总量）
+                        matched += 1
+        except Exception:
+            pass
+        # 如果配置了额外的 domain keyword map，尝试根据当前文献文本检测跨域红旗
+        try:
+            text_lower = str(text or "").lower()
+            # CROSS_DOMAIN_RED_FLAGS may be a dict of lists or a set
+            red_flags = set()
+            if isinstance(CROSS_DOMAIN_RED_FLAGS, dict):
+                for v in CROSS_DOMAIN_RED_FLAGS.values():
+                    if isinstance(v, (list, set)):
+                        red_flags.update(set([str(x).lower() for x in v if x]))
+            elif isinstance(CROSS_DOMAIN_RED_FLAGS, (list, set)):
+                red_flags.update(set([str(x).lower() for x in CROSS_DOMAIN_RED_FLAGS if x]))
+
+            for rf in red_flags:
+                if rf and rf in text_lower:
+                    # strong negative signal -> force very low score
+                    return 0.0
+        except Exception:
+            pass
+
+        # Use a bounded denominator. Full index-term sets include many local
+        # Chinese fragments; requiring overlap with all of them unfairly rejects
+        # relevant English academic records with sparse abstracts.
+        score = matched / max(1, min(len(keywords), 8))
+
+        if matched_keywords:
+            try:
+                logger.info(
+                    f"[DomainFilter] keyword-overlap matched={matched}/{len(keywords)} "
+                    f"sample={matched_keywords[:8]}"
+                )
+            except Exception:
+                pass
         
         return min(1.0, score)
 
@@ -338,20 +480,45 @@ class DomainFilter:
         filtered_out = []
 
         for citation in citations:
-            # 获取Abstract（优先顺序：abstract -> body -> title）
+            # 获取Abstract（优先顺序：abstract -> body -> title），但在无模型回退时
+            # 同时包含 title 以便英文标题中的关键词能被启发式映射检测到
+            title_text = str(citation.get("title") or "")
             abstract = (
                 citation.get("abstract") or
                 citation.get("body") or
-                citation.get("title") or
                 ""
             )
+            scoring_text = f"{title_text} {abstract}".strip()
 
             if not abstract:
                 filtered_out.append(citation)
                 continue
 
+            if debug:
+                try:
+                    print(
+                        f"📎 [DomainFilter] scoring title={title_text[:80]} abstract={str(abstract)[:120]} terms={sorted(list(index_terms))[:12]}"
+                    )
+                except Exception:
+                    pass
+
             # 计算相似度
-            similarity = self.scorer.compute_similarity(abstract, index_terms, debug=debug)
+            similarity = self.scorer.compute_similarity(scoring_text, index_terms, debug=debug)
+
+            # Detailed per-candidate logging for debugging and tuning
+            try:
+                if debug:
+                    matched_terms = [kw for kw in index_terms if str(kw).lower() in scoring_text.lower()]
+                    print(
+                        f"📎 [DomainFilter] candidate={title_text[:80]} | url={citation.get('href') or citation.get('url') or citation.get('link')} | "
+                        f"similarity={similarity:.3f} | threshold={threshold:.3f} | matched_terms={matched_terms[:10]}"
+                    )
+                else:
+                    logger.info(
+                        f"[DomainFilter] Candidate: {title_text[:80]} | url={citation.get('href') or citation.get('url') or citation.get('link')} | similarity={similarity:.3f} | threshold={threshold:.3f}"
+                    )
+            except Exception:
+                pass
 
             if debug:
                 logger.debug(
@@ -360,26 +527,43 @@ class DomainFilter:
                 )
 
             # 过滤决策
+            scored = dict(citation)
+            scored["domain_similarity"] = similarity
+
             if similarity >= threshold:
-                filtered.append(citation)
+                filtered.append(scored)
             else:
-                filtered_out.append(citation)
+                filtered_out.append(scored)
 
         if debug or True:  # 总是输出统计信息
-            logger.info(
-                f"📊 Domain Filter Results:\n"
-                f"  Total: {len(citations)} | "
-                f"Kept: {len(filtered)} | "
-                f"Filtered Out: {len(filtered_out)}"
-            )
-            if filtered_out:
-                logger.info(
-                    f"  Filtered citations:\n" +
-                    "\n".join([
-                        f"    - {c.get('title', '')[:50]}"
-                        for c in filtered_out[:5]
-                    ])
+            if debug:
+                print(
+                    f"📊 Domain Filter Results: Total={len(citations)} | Kept={len(filtered)} | FilteredOut={len(filtered_out)}"
                 )
+            else:
+                logger.info(
+                    f"📊 Domain Filter Results:\n"
+                    f"  Total: {len(citations)} | "
+                    f"Kept: {len(filtered)} | "
+                    f"Filtered Out: {len(filtered_out)}"
+                )
+            if filtered_out:
+                if debug:
+                    print(
+                        "📊 [DomainFilter] filtered citations:\n" +
+                        "\n".join([
+                            f"    - {c.get('title', '')[:50]} | similarity={float(c.get('domain_similarity', 0.0)):.3f}"
+                            for c in filtered_out[:5]
+                        ])
+                    )
+                else:
+                    logger.info(
+                        f"  Filtered citations:\n" +
+                        "\n".join([
+                            f"    - {c.get('title', '')[:50]}"
+                            for c in filtered_out[:5]
+                        ])
+                    )
 
         return filtered, filtered_out
 

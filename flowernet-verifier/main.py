@@ -521,11 +521,75 @@ class FlowerNetVerifier:
         tokens = [t.strip().lower() for t in jieba.cut(text)]
         return [t for t in tokens if len(t) > 1 and t not in _EN_STOPWORDS]
 
+    def _topic_terms(self, outline: str, context_text: str, draft: str = "") -> List[str]:
+        """Extract stable topic terms from the subsection task, falling back to draft only when needed."""
+        topic_source = f"{outline or ''} {context_text or ''}".strip()
+        if not topic_source:
+            topic_source = str(draft or "")
+
+        generic_tokens = {
+            "section", "subsection", "outline", "prompt", "chapter", "content",
+            "write", "writing", "draft", "article", "paper", "document",
+            "要求", "生成", "内容", "小节", "章节", "大纲", "写作", "文档",
+            "介绍", "分析", "讨论", "说明", "包括", "以及", "关于",
+        }
+        terms: List[str] = []
+        for token in self._content_tokens(topic_source):
+            token = token.strip().lower()
+            if not token or token in generic_tokens or token.isdigit():
+                continue
+            if token not in terms:
+                terms.append(token)
+            if len(terms) >= 24:
+                break
+        return terms
+
+    def _configured_blacklist_entries(self) -> List[Dict[str, str]]:
+        entries: List[Dict[str, str]] = []
+        if not isinstance(self.reference_blacklist, dict):
+            return entries
+
+        raw_items = self.reference_blacklist.get("terms") or self.reference_blacklist.get("items") or []
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if isinstance(item, str):
+                    entries.append({"keyword": item, "type": "configured"})
+                elif isinstance(item, dict):
+                    keyword = str(item.get("keyword") or item.get("term") or "").strip()
+                    if keyword:
+                        entries.append({
+                            "keyword": keyword,
+                            "type": str(item.get("type") or "configured"),
+                        })
+        return entries
+
+    def _referenced_source_items(
+        self,
+        refs: List[int],
+        matched_urls: List[str],
+        source_results: List[Dict[str, Any]],
+    ) -> List[tuple[int, Dict[str, Any]]]:
+        """Return source candidates that are actually cited by [n] markers or explicit URLs."""
+        selected: Dict[int, Dict[str, Any]] = {}
+        for ref in refs:
+            idx = int(ref) - 1
+            if 0 <= idx < len(source_results):
+                selected[idx] = source_results[idx]
+
+        matched_url_set = set(matched_urls or [])
+        if matched_url_set:
+            for idx, item in enumerate(source_results):
+                href = str((item or {}).get("href") or "").strip()
+                if href in matched_url_set:
+                    selected[idx] = item
+
+        return [(idx + 1, item) for idx, item in sorted(selected.items()) if isinstance(item, dict)]
 
     def check_sources(
         self,
         draft: str,
         outline: str = "",
+        context_text: str = "",
         source_results: Optional[List[Dict[str, Any]]] = None,
         require_source_citations: bool = False,
         min_source_citations: int = 1,
@@ -568,37 +632,56 @@ class FlowerNetVerifier:
 
         # ========== 黑名单扫描：检测明显的跨学科/无关引用 ==========
         blacklist_matches: List[Dict[str, Any]] = []
-        outline_lower = (outline or "").lower()
-        # 简单判定当前小节是否属于谈判/博弈/商业类主题
-        is_negotiation_topic = any(tok in outline_lower for tok in self._negotiation_terms)
+        topic_terms = self._topic_terms(outline=outline, context_text=context_text, draft=draft)
+        topic_term_set = set(topic_terms)
+        referenced_sources = self._referenced_source_items(
+            refs=refs,
+            matched_urls=matched_urls,
+            source_results=source_results,
+        )
+        configured_blacklist = self._configured_blacklist_entries()
+        domain_mismatch_threshold = float(os.getenv("REFERENCE_DOMAIN_MISMATCH_THRESHOLD", "0.12"))
+        min_topic_terms_for_mismatch = max(2, int(os.getenv("REFERENCE_DOMAIN_MIN_TOPIC_TERMS", "3")))
 
-        if is_negotiation_topic and source_results:
-            for idx, item in enumerate(source_results, start=1):
-                title = str(item.get('title', '') or '').lower()
-                body = str(item.get('body', '') or '').lower()
-                text = title + " \n " + body
-                # 数学词汇触发
-                for kw in self._math_terms:
-                    if kw.lower() in text:
-                        blacklist_matches.append({
-                            "index": idx,
-                            "href": item.get('href', ''),
-                            "title": item.get('title', ''),
-                            "match": kw,
-                            "type": "math",
-                        })
-                        break
-                # 语言学词汇触发
-                for kw in self._ling_terms:
-                    if kw.lower() in text:
-                        blacklist_matches.append({
-                            "index": idx,
-                            "href": item.get('href', ''),
-                            "title": item.get('title', ''),
-                            "match": kw,
-                            "type": "linguistics",
-                        })
-                        break
+        for idx, item in referenced_sources:
+            title = str(item.get("title", "") or "")
+            body = str(item.get("body", "") or item.get("description", "") or item.get("summary", "") or "")
+            text = f"{title}\n{body}"
+            text_lower = text.lower()
+
+            for entry in configured_blacklist:
+                keyword = str(entry.get("keyword", "")).lower()
+                if keyword and keyword in text_lower:
+                    blacklist_matches.append({
+                        "index": idx,
+                        "href": item.get("href", ""),
+                        "title": item.get("title", ""),
+                        "match": entry.get("keyword", ""),
+                        "type": entry.get("type", "configured"),
+                    })
+                    break
+
+            if len(topic_term_set) < min_topic_terms_for_mismatch:
+                continue
+
+            source_tokens = set(self._content_tokens(text))
+            if not source_tokens:
+                continue
+
+            overlap_score = len(topic_term_set & source_tokens) / max(1, len(topic_term_set))
+            semantic_score = float(item.get("semantic_score", 0.0) or 0.0)
+            domain_score = max(overlap_score, semantic_score)
+            if domain_score < domain_mismatch_threshold:
+                blacklist_matches.append({
+                    "index": idx,
+                    "href": item.get("href", ""),
+                    "title": item.get("title", ""),
+                    "match": "low_topic_source_overlap",
+                    "type": "domain_mismatch",
+                    "domain_score": round(domain_score, 4),
+                    "threshold": round(domain_mismatch_threshold, 4),
+                    "topic_terms": topic_terms[:12],
+                })
 
         total_available_sources = len(source_results)
         invalid_refs = [ref for ref in refs if ref < 1 or ref > total_available_sources]
@@ -766,6 +849,7 @@ class FlowerNetVerifier:
         history_list,
         rel_threshold=0.55,
         red_threshold=0.70,
+        context_text: str = "",
         source_results: Optional[List[Dict[str, Any]]] = None,
         require_source_citations: bool = False,
         min_source_citations: int = 1,
@@ -782,6 +866,7 @@ class FlowerNetVerifier:
         source_check = self.check_sources(
             draft=draft,
             outline=outline,
+            context_text=context_text,
             source_results=source_results,
             require_source_citations=require_source_citations,
             min_source_citations=min_source_citations,
@@ -910,6 +995,7 @@ class VerifyRequest(BaseModel):
     document_id: Optional[str] = None  # 如果不传 history，可用 document_id 从数据库读取
     rel_threshold: Optional[float] = 0.50  # 可选：自定义相关性阈值
     red_threshold: Optional[float] = 0.75  # 可选：自定义冗余度阈值
+    context_text: str = ""
     source_results: List[Dict[str, Any]] = []
     require_source_citations: bool = False
     min_source_citations: int = 1
@@ -969,6 +1055,7 @@ async def perform_verification(request: VerifyRequest):
             history_list=history_list,
             rel_threshold=request.rel_threshold,
             red_threshold=request.red_threshold,
+            context_text=request.context_text,
             source_results=request.source_results,
             require_source_citations=request.require_source_citations,
             min_source_citations=request.min_source_citations,
@@ -982,4 +1069,3 @@ async def perform_verification(request: VerifyRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

@@ -49,6 +49,32 @@ DOMAIN_KEYWORDS = {
     "chemistry": {"化学", "分子", "反应", "化合物", "元素", "催化", "氧化", "还原"},
 }
 
+# Merge external mapping if available (from citation_drift_prevention)
+try:
+    from citation_drift_prevention import DOMAIN_KEYWORD_MAP as _EXTERNAL_DOMAIN_KEYWORD_MAP, CROSS_DOMAIN_RED_FLAGS as _EXTERNAL_CROSS_DOMAIN_RED_FLAGS
+except Exception:
+    _EXTERNAL_DOMAIN_KEYWORD_MAP = {}
+    _EXTERNAL_CROSS_DOMAIN_RED_FLAGS = {}
+
+for _d, _meta in (_EXTERNAL_DOMAIN_KEYWORD_MAP or {}).items():
+    try:
+        kws = set(_meta.get("keywords", [])) if isinstance(_meta, dict) else set(_meta)
+        if _d in DOMAIN_KEYWORDS:
+            DOMAIN_KEYWORDS[_d].update(kws)
+        else:
+            DOMAIN_KEYWORDS[_d] = set(kws)
+    except Exception:
+        continue
+
+# Normalize cross-domain red flags into a set for quick checks
+CROSS_DOMAIN_RED_FLAGS = set()
+if isinstance(_EXTERNAL_CROSS_DOMAIN_RED_FLAGS, dict):
+    for v in _EXTERNAL_CROSS_DOMAIN_RED_FLAGS.values():
+        if isinstance(v, (list, set)):
+            CROSS_DOMAIN_RED_FLAGS.update(str(x).lower() for x in v if x)
+elif isinstance(_EXTERNAL_CROSS_DOMAIN_RED_FLAGS, (list, set)):
+    CROSS_DOMAIN_RED_FLAGS.update(str(x).lower() for x in _EXTERNAL_CROSS_DOMAIN_RED_FLAGS if x)
+
 logger = logging.getLogger(__name__)
 
 
@@ -124,6 +150,7 @@ class CitationSemanticScorer:
         topic: str,
         section_content: str,
         domain_keywords: Optional[Set[str]] = None,
+        context_text: str = "",
     ) -> CitationMetrics:
         """
         Compute semantic relevance score for a single citation.
@@ -139,15 +166,22 @@ class CitationSemanticScorer:
             CitationMetrics with relevance assessment
         """
         domain_keywords = domain_keywords or self.classifier.get_domain_keywords()
+        context_text = str(context_text or "").lower()
         
         # Extract citation metadata
         title_lower = ref_title.lower()
         title_tokens = set(re.findall(r"\w+", title_lower))
         domain_tokens = domain_keywords or set()
+        context_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", context_text))
         
         # 1. Title-to-domain keyword overlap
         keyword_overlap = title_tokens & domain_tokens
         title_similarity = len(keyword_overlap) / max(1, len(domain_tokens))
+
+        # 1b. User context alignment: keep citations close to the user's
+        # background and extra requirements, not only the section outline.
+        context_overlap = title_tokens & context_tokens
+        context_alignment = len(context_overlap) / max(1, len(context_tokens))
         
         # 2. Cross-domain drift detection
         cross_domain_keywords = {"physics", "quantum", "particle", "laser", "plasma", "superconductor", "材料", "物理"}
@@ -156,6 +190,17 @@ class CitationSemanticScorer:
         else:
             cross_domain_drift_tokens = title_tokens & cross_domain_keywords
             cross_domain_risk = min(1.0, len(cross_domain_drift_tokens) / max(1, len(title_tokens)))
+
+        # If external CROSS_DOMAIN_RED_FLAGS present, check title and context for them
+        try:
+            if CROSS_DOMAIN_RED_FLAGS:
+                text_for_check = f"{title_lower} {context_text}"
+                for rf in CROSS_DOMAIN_RED_FLAGS:
+                    if rf and rf in text_for_check:
+                        cross_domain_risk = 1.0
+                        break
+        except Exception:
+            pass
         
         # 3. Semantic similarity (if model available)
         domain_alignment = 0.0
@@ -175,8 +220,9 @@ class CitationSemanticScorer:
         # Heavily penalize cross-domain drift
         overall_score = (
             0.4 * domain_alignment
-            + 0.3 * title_similarity
-            - 0.3 * cross_domain_risk
+            + 0.25 * title_similarity
+            + 0.2 * context_alignment
+            - 0.15 * cross_domain_risk
         )
         overall_score = max(0.0, min(1.0, overall_score))
         
@@ -215,6 +261,7 @@ class CitationVerifier:
         topic: str,
         section_outline: str = "",
         full_content: str = "",
+        context_text: str = "",
     ) -> Dict[str, Any]:
         """
         Verify and rerank citations by domain relevance.
@@ -264,6 +311,7 @@ class CitationVerifier:
                 topic=topic,
                 section_content=full_content,
                 domain_keywords=domain_keywords,
+                context_text=context_text or f"{topic}\n{section_outline}\n{full_content}",
             )
             
             metrics[url or f"ref_{idx}"] = metric
@@ -286,9 +334,12 @@ class CitationVerifier:
                 key=lambda x: metrics.get(x.get('url', x.get('href', '')), CitationMetrics(0, 0, 1, 0, False, '')).overall_score,
                 reverse=True
             )
-            for i in range(min(shortage, len(removed_sorted))):
-                filtered.append(removed_sorted[i])
-                removed.pop(i)
+            # Restore top removed entries, removing them safely from the `removed` list
+            to_restore = removed_sorted[:min(shortage, len(removed_sorted))]
+            filtered.extend(to_restore)
+            # Remove restored items from `removed` by identity of url/href
+            restored_urls = {str(x.get('url') or x.get('href') or '') for x in to_restore}
+            removed = [r for r in removed if str(r.get('url') or r.get('href') or '') not in restored_urls]
         
         # Generate quality report
         quality_report = self._generate_quality_report(
@@ -343,6 +394,7 @@ def verify_references(
     topic: str,
     section_outline: str = "",
     full_content: str = "",
+    context_text: str = "",
 ) -> Tuple[List[Dict[str, Any]], str]:
     """
     Standalone function to verify references.
@@ -356,6 +408,7 @@ def verify_references(
         topic=topic,
         section_outline=section_outline,
         full_content=full_content,
+        context_text=context_text,
     )
     return result['filtered'], result['quality_report']
 

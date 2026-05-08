@@ -1,12 +1,14 @@
 from datetime import datetime
 from collections import deque
 from io import BytesIO
+import math
 import os
 import re
+import sys
 import threading
 import time
 import random
-from typing import Any, Dict, List, Generator, Optional
+from typing import Any, Dict, List, Generator, Optional, Set
 from urllib.parse import quote, urlparse
 import json
 from uuid import uuid4
@@ -32,6 +34,15 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Preformatted
 from pydantic import BaseModel, Field
 
+# Ensure repo-root modules are importable even when uvicorn is started from flowernet-web/
+_WEB_DIR = os.path.dirname(__file__)
+_REPO_ROOT = os.path.abspath(os.path.join(_WEB_DIR, ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+_GEN_DIR = os.path.join(_REPO_ROOT, "flowernet-generator")
+if _GEN_DIR not in sys.path:
+    sys.path.insert(0, _GEN_DIR)
+
 # 导入 Citation Verifier 用于引证质量控制
 try:
     from citation_verifier import CitationVerifier, verify_references
@@ -47,6 +58,27 @@ try:
 except ImportError:
     HAS_DOMAIN_FILTER = False
     print("⚠️ Domain Filter 未安装，跳过领域过滤")
+
+# 导入 RAG Search 用于引用兜底重试
+try:
+    from rag_search import RAGSearchEngine
+    HAS_RAG_SEARCH_ENGINE = True
+except Exception:
+    HAS_RAG_SEARCH_ENGINE = False
+    print("⚠️ RAG Search 未安装，无法进行引用兜底重试")
+
+# Optional fetcher for enriching candidate metadata
+try:
+    import requests
+    HAS_REQUESTS = True
+except Exception:
+    HAS_REQUESTS = False
+
+try:
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
+except Exception:
+    HAS_BS4 = False
 
 # 导入指标定义
 try:
@@ -90,12 +122,15 @@ API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
 API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
+FRONTEND_SIGNATURE_ENFORCED = os.getenv("FRONTEND_SIGNATURE_ENFORCED", "true").lower() == "true"
 WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.75"))
 # Make redundancy detection slightly stricter by default (user requested)
 WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.40"))
 ENABLE_CITATION_QA = os.getenv("ENABLE_CITATION_QA", "true").lower() == "true"
 CITATION_MIN_SECTION_HIGH_QUALITY = int(os.getenv("CITATION_MIN_SECTION_HIGH_QUALITY", "1"))
 CITATION_LOW_QUALITY_MAX_RATIO = float(os.getenv("CITATION_LOW_QUALITY_MAX_RATIO", "0.5"))
+STRICT_CITATION_ENFORCEMENT = os.getenv("STRICT_CITATION_ENFORCEMENT", "true").lower() == "true"
+CITATION_FAIL_FAST = os.getenv("CITATION_FAIL_FAST", "false").lower() == "true"
 TIMEOUT_ADAPTIVE_ENABLED = os.getenv("TIMEOUT_ADAPTIVE_ENABLED", "true").lower() == "true"
 TIMEOUT_MIN_SECONDS = int(os.getenv("TIMEOUT_MIN_SECONDS", "60"))
 TIMEOUT_MAX_SECONDS = int(os.getenv("TIMEOUT_MAX_SECONDS", "7200"))
@@ -105,9 +140,20 @@ TIMEOUT_BASE_OUTLINE_SECONDS = int(os.getenv("TIMEOUT_BASE_OUTLINE_SECONDS", "25
 TIMEOUT_BASE_CITATION_SECONDS = int(os.getenv("TIMEOUT_BASE_CITATION_SECONDS", "8"))
 TIMEOUT_BASE_ITERATION_SECONDS = float(os.getenv("TIMEOUT_BASE_ITERATION_SECONDS", "55"))
 ESTIMATED_ITERATIONS_PER_SUBSECTION = float(os.getenv("ESTIMATED_ITERATIONS_PER_SUBSECTION", "1.8"))
+DOMAIN_FILTER_RAG_RETRY_MAX = int(os.getenv("DOMAIN_FILTER_RAG_RETRY_MAX", "3"))
+DOMAIN_FILTER_RAG_RETRY_RESULTS = int(os.getenv("DOMAIN_FILTER_RAG_RETRY_RESULTS", "6"))
+DOMAIN_FILTER_RAG_RETRY_TIMEOUT = int(os.getenv("DOMAIN_FILTER_RAG_RETRY_TIMEOUT", "12"))
+DOMAIN_FILTER_FALLBACK_TOP_K = int(os.getenv("DOMAIN_FILTER_FALLBACK_TOP_K", "3"))
+CITATION_POSTPROCESS_BUDGET_SECONDS = float(os.getenv("CITATION_POSTPROCESS_BUDGET_SECONDS", "20"))
+CITATION_ACADEMIC_QUERY_PAIR_LIMIT = int(os.getenv("CITATION_ACADEMIC_QUERY_PAIR_LIMIT", "3"))
+CITATION_SEMANTIC_SCHOLAR_RETRIES = int(os.getenv("CITATION_SEMANTIC_SCHOLAR_RETRIES", "1"))
+CITATION_EXTERNAL_FALLBACK_ENABLED = os.getenv("CITATION_EXTERNAL_FALLBACK_ENABLED", "false").lower() == "true"
+CITATION_METADATA_FETCH_ENABLED = os.getenv("CITATION_METADATA_FETCH_ENABLED", "false").lower() == "true"
 
 DOWNSTREAM_SESSION = requests.Session()
 DOWNSTREAM_SESSION.trust_env = False
+CITATION_HTTP_SESSION = requests.Session()
+CITATION_HTTP_SESSION.trust_env = False
 
 POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
@@ -151,6 +197,42 @@ class PofficesTaskStatusRequest(BaseModel):
 
 
 app = FastAPI(title="FlowerNet Web UI", version="1.0.0")
+
+
+def _frontend_index_path() -> str:
+    return os.path.join(_WEB_DIR, "static", "index.html")
+
+
+def _assert_expected_frontend() -> None:
+    if not FRONTEND_SIGNATURE_ENFORCED:
+        return
+    static_path = _frontend_index_path()
+    try:
+        html_text = open(static_path, "r", encoding="utf-8").read()
+    except Exception as exc:
+        raise RuntimeError(f"FlowerNet frontend index is missing or unreadable: {static_path}: {exc}") from exc
+
+    required_signatures = [
+        "FlowerNet Agent Dashboard",
+        "FlowerNet Agent: High-Quality Long Document Generation",
+        "Dashboard Core",
+        "Bandit Analytics",
+    ]
+    missing = [sig for sig in required_signatures if sig not in html_text]
+    forbidden_signatures = [
+        "FlowerNet 文档生成器",
+    ]
+    forbidden = [sig for sig in forbidden_signatures if sig in html_text]
+    if missing or forbidden:
+        raise RuntimeError(
+            "Unexpected FlowerNet frontend. Refusing to serve legacy UI. "
+            f"path={static_path}, missing={missing}, forbidden={forbidden}"
+        )
+
+
+@app.on_event("startup")
+def verify_frontend_bundle() -> None:
+    _assert_expected_frontend()
 
 # Add request logging middleware for debugging
 class LoggingMiddleware(BaseHTTPMiddleware):
@@ -801,6 +883,18 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
     history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
     orchestration_metrics = extract_orchestration_metrics(gen_resp if isinstance(gen_resp, dict) else {})
     document_quality_metrics = extract_document_quality_metrics(gen_resp if isinstance(gen_resp, dict) else {})
+
+    # Debug: Log extracted metrics
+    print(f"🔍 [METRICS DEBUG] gen_resp type: {type(gen_resp)}")
+    if isinstance(gen_resp, dict):
+        print(f"🔍 [METRICS DEBUG] gen_resp.success: {gen_resp.get('success')}")
+        print(f"🔍 [METRICS DEBUG] gen_resp has quality_score_avg: {'quality_score_avg' in gen_resp}, value: {gen_resp.get('quality_score_avg')}")
+        print(f"🔍 [METRICS DEBUG] gen_resp has unieval_available_subsections: {'unieval_available_subsections' in gen_resp}, value: {gen_resp.get('unieval_available_subsections')}")
+        print(f"🔍 [METRICS DEBUG] gen_resp has bandit_selected_arm_counts: {'bandit_selected_arm_counts' in gen_resp}, value: {gen_resp.get('bandit_selected_arm_counts')}")
+    print(f"🔍 [METRICS DEBUG] Extracted quality_score_avg: {document_quality_metrics.get('quality_score_avg')}")
+    print(f"🔍 [METRICS DEBUG] Extracted unieval_available_subsections: {document_quality_metrics.get('unieval_available_subsections')}")
+    print(f"🔍 [METRICS DEBUG] Extracted bandit_reward_avg: {document_quality_metrics.get('bandit_reward_avg')}")
+
     if not gen_resp.get("success"):
         if history_items:
             partial_content = build_markdown_document(
@@ -808,8 +902,15 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 structure,
                 history_items,
                 generated_sections=gen_resp.get("sections", []) if isinstance(gen_resp, dict) else [],
+                user_background=req.user_background,
+                extra_requirements=req.extra_requirements,
             )
             citation_quality = _citation_quality_check(partial_content)
+            _enforce_citation_quality_or_raise(citation_quality, context="partial_generation_failure")
+            total_source_refs = _aggregate_source_reference_count(
+                history_items=history_items,
+                generated_sections=gen_resp.get("sections", []) if isinstance(gen_resp, dict) else [],
+            )
             return {
                 "success": True,
                 "partial": True,
@@ -827,6 +928,9 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                     "total_iterations": gen_resp.get("total_iterations", 0) if isinstance(gen_resp, dict) else 0,
                     "generation_time": gen_resp.get("generation_time", "") if isinstance(gen_resp, dict) else "",
                     "citation_quality": citation_quality,
+                    "total_source_references": total_source_refs,
+                    "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0) if isinstance(gen_resp, dict) else 0,
+                    "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0) if isinstance(gen_resp, dict) else 0,
                     **orchestration_metrics,
                     **document_quality_metrics,
                 },
@@ -842,8 +946,15 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             structure,
             history_items,
             generated_sections=gen_resp.get("sections", []),
+            user_background=req.user_background,
+            extra_requirements=req.extra_requirements,
         )
         citation_quality = _citation_quality_check(markdown_content)
+        _enforce_citation_quality_or_raise(citation_quality, context="partial_generation_insufficient_passed")
+        total_source_refs = _aggregate_source_reference_count(
+            history_items=history_items,
+            generated_sections=gen_resp.get("sections", []),
+        )
         return {
             "success": True,
             "partial": True,
@@ -861,6 +972,9 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 "total_iterations": gen_resp.get("total_iterations", 0),
                 "generation_time": gen_resp.get("generation_time", ""),
                 "citation_quality": citation_quality,
+                "total_source_references": total_source_refs,
+                "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
+                "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
                 **orchestration_metrics,
                 **document_quality_metrics,
             },
@@ -873,13 +987,30 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
 
     if not history_items:
         history_items = fetch_history_items(document_id=document_id, timeout_seconds=60)
+
+    # 🔍 诊断：检查生成器返回的 source_results
+    gen_sections = gen_resp.get("sections", []) or []
+    total_gen_source_results = 0
+    for sec in gen_sections:
+        for subsec in sec.get("subsections", []) or []:
+            sr = subsec.get("source_results", []) or []
+            total_gen_source_results += len(sr)
+    print(f"📌 [生成器诊断] 生成器返回 {len(gen_sections)} 个 section, 总 source_results: {total_gen_source_results}")
+
     markdown_content = build_markdown_document(
         title,
         structure,
         history_items,
-        generated_sections=gen_resp.get("sections", []),
+        generated_sections=gen_sections,
+        user_background=req.user_background,
+        extra_requirements=req.extra_requirements,
     )
     citation_quality = _citation_quality_check(markdown_content)
+    _enforce_citation_quality_or_raise(citation_quality, context="final_document")
+    total_source_refs = _aggregate_source_reference_count(
+        history_items=history_items,
+        generated_sections=gen_sections,
+    )
 
     if not citation_quality.get("passed", False):
         return {
@@ -899,6 +1030,9 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 "total_iterations": gen_resp.get("total_iterations", 0),
                 "generation_time": gen_resp.get("generation_time", ""),
                 "citation_quality": citation_quality,
+                "total_source_references": total_source_refs,
+                "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
+                "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
                 **orchestration_metrics,
                 **document_quality_metrics,
             },
@@ -918,6 +1052,9 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             "total_iterations": gen_resp.get("total_iterations", 0),
             "generation_time": gen_resp.get("generation_time", ""),
             "citation_quality": citation_quality,
+            "total_source_references": total_source_refs,
+            "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
+            "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
             **orchestration_metrics,
             **document_quality_metrics,
         },
@@ -1011,6 +1148,43 @@ def _citation_quality_check(markdown: str) -> Dict[str, Any]:
     }
 
 
+def _aggregate_source_reference_count(
+    history_items: Optional[List[Dict[str, Any]]] = None,
+    generated_sections: Optional[List[Dict[str, Any]]] = None,
+) -> int:
+    total = 0
+
+    for h_item in history_items or []:
+        meta = h_item.get("metadata", {}) if isinstance(h_item, dict) else {}
+        verification = meta.get("verification", {}) or (h_item.get("verification", {}) if isinstance(h_item, dict) else {})
+        if isinstance(verification, dict):
+            src_check = verification.get("source_check", {})
+            if isinstance(src_check, dict):
+                total += int(src_check.get("reference_count", 0) or 0)
+
+    for section in generated_sections or []:
+        for subsection in (section.get("subsections") or []):
+            total += int(subsection.get("source_reference_count", 0) or 0)
+
+    return total
+
+
+def _enforce_citation_quality_or_raise(citation_quality: Dict[str, Any], context: str = "") -> None:
+    if not STRICT_CITATION_ENFORCEMENT or not CITATION_FAIL_FAST:
+        return
+    if citation_quality.get("passed", False):
+        return
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "error": "citation_quality_failed",
+            "context": context,
+            "reason": str(citation_quality.get("reason", "unknown")),
+            "citation_quality": citation_quality,
+        },
+    )
+
+
 def _build_download_url(request: Request) -> str:
     if PUBLIC_BASE_URL:
         return f"{PUBLIC_BASE_URL.rstrip('/')}/api/download-docx"
@@ -1096,7 +1270,7 @@ def _build_content_map_from_history(history: List[Dict[str, Any]]) -> Dict[str, 
 
         if _is_outline_like_fallback_content(content=content, outline=outline, forced_pass=bool(is_forced_pass)):
             continue
-        
+
         # 仅当content非空时才添加；如果已有内容且新内容是forced_pass，则不覆盖
         if content:
             if key not in content_map:
@@ -1128,11 +1302,23 @@ def build_markdown_document(
     structure: Dict[str, Any],
     history: List[Dict[str, Any]],
     generated_sections: Optional[List[Dict[str, Any]]] = None,
+    user_background: str = "",
+    extra_requirements: str = "",
 ) -> str:
     content_map = _build_content_map_from_sections(generated_sections)
     history_map = _build_content_map_from_history(history)
     for key, value in history_map.items():
         content_map[key] = value
+    citation_started_at = time.monotonic()
+    citation_budget_seconds = max(0.0, float(CITATION_POSTPROCESS_BUDGET_SECONDS or 0.0))
+
+    def _citation_budget_remaining() -> float:
+        if citation_budget_seconds <= 0:
+            return 0.0
+        return max(0.0, citation_budget_seconds - (time.monotonic() - citation_started_at))
+
+    def _citation_budget_exceeded() -> bool:
+        return citation_budget_seconds > 0 and _citation_budget_remaining() <= 0.0
 
     def _normalize_label(value: str) -> str:
         text = re.sub(r"^第\d+[章节]", "", str(value or "")).strip()
@@ -1254,6 +1440,23 @@ def build_markdown_document(
         references: List[str] = []
         candidates: List[Dict[str, Any]] = []  # 存储原始候选对象用于Domain Filter
 
+        # 🔍 诊断日志：追踪引用收集全过程
+        diagnostics = {
+            "gen_sections_count": len(generated_sections or []),
+            "gen_subsections_count": sum(len(s.get("subsections", [])) for s in (generated_sections or [])),
+            "gen_source_results_collected": 0,
+            "history_items_count": len(history or []),
+            "history_source_results_collected": 0,
+            "total_candidates_before_filter": 0,
+            "domain_filter_applied": False,
+            "domain_filter_rag_retries": 0,
+            "domain_filter_fallback": False,
+            "domain_filter_fallback_count": 0,
+            "candidates_after_filter": 0,
+            "final_references_count": 0,
+            "final_references": [],
+        }
+
         def _collect_textual_citations() -> List[str]:
             patterns = [
                 re.compile(r"\(([^()]{2,100}?,\s*\d{4}[a-z]?)\)"),
@@ -1299,10 +1502,10 @@ def build_markdown_document(
             if key in seen_urls:
                 return
             seen_urls.add(key)
-            
+
             # 保存原始候选对象用于Domain Filter
             candidates.append(candidate)
-            
+
             label = title_text or urlparse(url).netloc or "source"
             snippet = str(candidate.get("body") or candidate.get("description") or candidate.get("summary") or "").strip()
             if snippet:
@@ -1310,21 +1513,691 @@ def build_markdown_document(
             else:
                 references.append(f"{label}: {url}")
 
-        for section in generated_sections or []:
-            for subsection in (section.get("subsections") or []):
-                for item in subsection.get("source_results", []) or []:
-                    add_candidate(item if isinstance(item, dict) else {})
+        def _rebuild_references(selected_candidates: List[Dict[str, Any]]) -> None:
+            references.clear()
+            seen_urls.clear()
+            for candidate in selected_candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").strip()
+                title_text = str(candidate.get("title") or candidate.get("source_name") or candidate.get("source_type") or "").strip()
+                if not url:
+                    continue
+                key = url.lower()
+                if key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                label = title_text or urlparse(url).netloc or "source"
+                snippet = str(candidate.get("body") or candidate.get("description") or candidate.get("summary") or "").strip()
+                if snippet:
+                    references.append(f"{label}: {url} — {snippet[:180]}")
+                else:
+                    references.append(f"{label}: {url}")
 
-        for item in history or []:
-            metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
-            for candidate in metadata.get("source_results", []) or []:
-                add_candidate(candidate if isinstance(candidate, dict) else {})
+        def _normalize_candidates(raw_candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            normalized: List[Dict[str, Any]] = []
+            seen: set[str] = set()
+            for candidate in raw_candidates or []:
+                if not isinstance(candidate, dict):
+                    continue
+                url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").strip()
+                if not url:
+                    continue
+                key = url.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                normalized.append(candidate)
+            return normalized
 
-        # 🔍 应用Domain Filter进行领域相关性检查
-        if HAS_DOMAIN_FILTER and candidates:
+        def _fetch_candidate_metadata(url: str, timeout_sec: int = 2) -> Dict[str, str]:
+            """Attempt to fetch URL and extract a short snippet/description."""
+            if (
+                not url
+                or not HAS_REQUESTS
+                or not CITATION_METADATA_FETCH_ENABLED
+                or _citation_budget_exceeded()
+            ):
+                return {}
+            try:
+                headers = {"User-Agent": "Mozilla/5.0 (compatible; FlowerNet/1.0)"}
+                timeout_value = min(float(timeout_sec), max(0.25, _citation_budget_remaining()))
+                resp = CITATION_HTTP_SESSION.get(url, timeout=timeout_value, headers=headers)
+                if resp.status_code != 200:
+                    return {}
+                text = resp.text or ""
+                # Try BeautifulSoup if available
+                if HAS_BS4:
+                    try:
+                        soup = BeautifulSoup(text, "html.parser")
+                        # meta description
+                        desc = ""
+                        m = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", attrs={"property": "og:description"})
+                        if m and m.get("content"):
+                            desc = m.get("content")
+                        # first paragraph as fallback
+                        if not desc:
+                            p = soup.find("p")
+                            if p:
+                                desc = p.get_text().strip()
+                        return {"abstract": desc[:1000], "body": desc[:1000]}
+                    except Exception:
+                        pass
+                # fallback regex: look for meta description
+                m = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']', text, flags=re.I)
+                if m:
+                    return {"abstract": m.group(1)[:1000], "body": m.group(1)[:1000]}
+                # fallback: extract first 300 chars of body text
+                body_text = re.sub(r"<[^>]+>", " ", text)
+                body_text = " ".join(body_text.split())
+                return {"abstract": body_text[:1000], "body": body_text[:1000]}
+            except Exception:
+                return {}
+
+        def _build_rag_retry_query() -> str:
+            # Build a richer RAG retry query: title + index terms + bigrams + synonyms
+            domain_filter = get_domain_filter()
+            index_terms = domain_filter.extract_document_index_terms(
+                title=title,
+                outline=str(structure.get("outline", "")),
+                abstract=str(structure.get("abstract", "")),
+                content_sample=" ".join([
+                    subsection.get("content", "")[:200]
+                    for section in (generated_sections or [])
+                    for subsection in section.get("subsections", [])
+                ])[:1000],
+            )
+
+            # build synonym expansions from DOMAIN_KEYWORD_MAP
+            synonyms = []
+            try:
+                from citation_drift_prevention import DOMAIN_KEYWORD_MAP
+                for v in (DOMAIN_KEYWORD_MAP or {}).values():
+                    kws = v.get("keywords") if isinstance(v, dict) else v
+                    if kws:
+                        synonyms.extend([str(x) for x in kws])
+            except Exception:
+                pass
+
+            parts = [title, structure.get("outline", ""), user_background, extra_requirements]
+            parts.extend(list(index_terms)[:10])
+            parts.extend([" ".join(b.split()) for b in domain_filter.extractor._extract_bigrams(" ".join(list(index_terms)))][:10])
+            parts.extend(synonyms[:10])
+
+            text = " ".join(str(p or "").strip() for p in parts if str(p or "").strip())
+            # normalize whitespace and truncate
+            return " ".join(text.split())[:480]
+
+        # Shared anti-drift state for retry/fallback stages
+        last_anchor_terms: List[str] = []
+        last_selected_terms: List[str] = []
+        last_flat_red_flags: set[str] = set()
+
+        def _translate_anchor_to_english(anchor: str) -> str:
+            mapping = {
+                "商业谈判": "business negotiation",
+                "商务谈判": "commercial negotiation",
+                "谈判策略": "negotiation strategy",
+                "商务沟通": "business communication",
+                "采购谈判": "procurement negotiation",
+                "供应链谈判": "supply chain negotiation",
+                "商务英语谈判": "business english negotiation",
+            }
+            s = str(anchor or "").strip()
+            return mapping.get(s, s)
+
+        def _passes_anchor_gate(candidate: Dict[str, Any], anchor_terms: List[str], selected_terms: List[str], flat_red_flags: set[str]) -> tuple[bool, str]:
+            text = " ".join([
+                str(candidate.get("title") or ""),
+                str(candidate.get("abstract") or ""),
+                str(candidate.get("body") or ""),
+            ]).lower()
+            if not text.strip():
+                return False, "empty_text"
+            for rf in list(flat_red_flags)[:300]:
+                if rf and rf in text:
+                    return False, f"red_flag:{rf}"
+            anchor_hits = [a for a in anchor_terms if str(a).lower() in text]
+            selected_hits = [t for t in selected_terms if str(t).lower() in text]
+            if anchor_hits or len(selected_hits) >= 2:
+                return True, f"anchor_hits={anchor_hits[:3]} term_hits={selected_hits[:3]}"
+            return False, "weak_domain_overlap"
+
+        def _source_whitelist_weight(candidate: Dict[str, Any]) -> float:
+            text = " ".join([
+                str(candidate.get("title") or ""),
+                str(candidate.get("abstract") or ""),
+                str(candidate.get("body") or ""),
+            ]).lower()
+            url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").lower()
+
+            domain_whitelist = [
+                "sciencedirect.com", "springer.com", "link.springer.com", "wiley.com", "onlinelibrary.wiley.com",
+                "tandfonline.com", "emerald.com", "jstor.org", "ssrn.com", "doi.org", "cambridge.org", "oxfordacademic.com",
+            ]
+            business_terms = [
+                "business", "management", "marketing", "negotiation", "commerce", "economics", "supply chain",
+                "商业", "商务", "管理", "营销", "经济", "谈判", "供应链",
+            ]
+            doi_prefix_whitelist = ["10.1287", "10.5465", "10.1111", "10.1177", "10.1080", "10.1002", "10.2139"]
+
+            w = 0.0
+            if any(d in url for d in domain_whitelist):
+                w += 0.35
+            if any(t in text for t in business_terms):
+                w += 0.35
+            m = re.search(r"10\.\d{4,9}/[^\s]+", url)
+            if m and any(m.group(0).lower().startswith(p) for p in doi_prefix_whitelist):
+                w += 0.30
+            return min(1.0, w)
+
+        def _build_augmented_domain_terms(base_terms: set[str], title_text: str) -> set[str]:
+            augmented = set(base_terms or set())
+            title_lower = (title_text or "").lower()
+
+            # Keep only a small, high-precision business/negotiation anchor family.
+            if any(x in title_lower for x in ["谈判", "negotiation", "business", "商务", "商业"]):
+                augmented.update({
+                    "商业谈判", "商务谈判", "谈判策略", "商务沟通",
+                    "business negotiation", "commercial negotiation", "negotiation strategy",
+                    "sales negotiation", "business communication", "bargaining",
+                })
+            if any(x in title_lower for x in ["采购", "供应链", "procurement", "supply chain"]):
+                augmented.update({
+                    "采购谈判", "供应链谈判", "procurement negotiation", "contract negotiation", "supply chain negotiation",
+                })
+
+            # Add a very small amount of bilingual lexicon expansion to recover English abstracts.
+            zh_en_pairs = {
+                "谈判": "negotiation",
+                "商务": "business",
+                "商业": "commercial",
+                "策略": "strategy",
+                "沟通": "communication",
+                "采购": "procurement",
+                "供应链": "supply chain",
+                "营销": "marketing",
+                "管理": "management",
+            }
+            for zh, en in zh_en_pairs.items():
+                if zh in title_text:
+                    augmented.add(en)
+
+            # Prune obviously noisy fragments while keeping genuine anchor phrases.
+            pruned = set()
+            for term in augmented:
+                t = re.sub(r"\s+", "", str(term or "").strip())
+                if not t:
+                    continue
+                if len(t) == 1:
+                    continue
+                if re.fullmatch(r"[a-zA-Z]{1,2}", t):
+                    continue
+                if t in {"企业", "商业", "谈判", "策略", "管理", "研究", "应用", "分析", "模型"}:
+                    continue
+                if not re.search(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}", t):
+                    continue
+                pruned.add(term)
+            return pruned
+
+        def _apply_source_weighting(cands: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            weighted = []
+            for c in cands or []:
+                cc = dict(c)
+                cc["source_weight"] = _source_whitelist_weight(cc)
+                weighted.append(cc)
+            weighted.sort(key=lambda x: float(x.get("source_weight", 0.0)), reverse=True)
+            if weighted:
+                print(
+                    "📌 [引用诊断] SourceWeight Top: " +
+                    "; ".join([
+                        f"{str(x.get('title') or '')[:40]}={float(x.get('source_weight', 0.0)):.2f}"
+                        for x in weighted[:3]
+                    ])
+                )
+            return weighted
+
+        def _run_rag_retry_candidates() -> List[Dict[str, Any]]:
+            if (
+                not CITATION_EXTERNAL_FALLBACK_ENABLED
+                or not HAS_RAG_SEARCH_ENGINE
+                or _citation_budget_exceeded()
+            ):
+                return []
+            # Enhanced multi-query RAG retry: split into short queries (title + each index term)
+            # Build index terms (reuse domain filter's extractor)
             try:
                 domain_filter = get_domain_filter()
-                
+                index_terms = domain_filter.extract_document_index_terms(
+                    title=title,
+                    outline=str(structure.get("outline", "")),
+                    abstract=str(structure.get("abstract", "")),
+                    content_sample=" ".join([
+                        subsection.get("content", "")[:200]
+                        for section in (generated_sections or [])
+                        for subsection in section.get("subsections", [])
+                    ])[:1000],
+                )
+                augmented_index_terms = _build_augmented_domain_terms(index_terms, title)
+            except Exception:
+                index_terms = set()
+                augmented_index_terms = _build_augmented_domain_terms(index_terms, title)
+
+            # Simple stopword cleaning for English
+            english_stopwords = {
+                "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+                "of", "with", "by", "from", "is", "are", "be", "that", "this",
+            }
+
+            def _clean_query(q: str) -> str:
+                s = " ".join(q.split())
+                # remove punctuation
+                s = re.sub(r"[^\w\u4e00-\u9fff\s]", " ", s)
+                # remove small stopwords for English
+                toks = [t for t in s.split() if t.lower() not in english_stopwords]
+                return " ".join(toks)[:480]
+
+            def _build_boosted_query(parts: List[str]) -> str:
+                boosted = []
+                for p in parts:
+                    p = str(p or "").strip()
+                    if not p:
+                        continue
+                    if len(p) >= 4 and " " in p:
+                        boosted.extend([f'"{p}"', f'"{p}"'])
+                    else:
+                        boosted.append(p)
+                return _clean_query(" ".join(boosted))
+
+            def _select_index_terms(terms: set[str], limit: int = 8) -> List[str]:
+                noise_terms = {
+                    "与", "的", "和", "及", "或", "在", "对", "中", "于", "为", "是", "了",
+                    "企业", "商业", "谈判", "策略", "管理", "研究", "应用", "分析", "模型",
+                }
+                cleaned = []
+                for term in sorted(list(terms), key=lambda s: (-len(str(s)), str(s)))[: max(limit * 2, limit)]:
+                    term = str(term).strip()
+                    if not term:
+                        continue
+                    term_norm = re.sub(r"\s+", "", term)
+                    if not term_norm:
+                        continue
+                    if term_norm.lower() in noise_terms:
+                        continue
+                    if re.fullmatch(r"[\u4e00-\u9fff]{1}", term_norm):
+                        continue
+                    if re.fullmatch(r"[a-zA-Z]{1,2}", term_norm):
+                        continue
+                    if not re.search(r"[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}", term_norm):
+                        continue
+                    cleaned.append(term)
+                # favor longer / phrase-like terms and keep unique order
+                seen_local = set()
+                output = []
+                for term in cleaned:
+                    key = term.lower()
+                    if key in seen_local:
+                        continue
+                    seen_local.add(key)
+                    output.append(term)
+                    if len(output) >= limit:
+                        break
+                return output
+
+            selected_terms = _select_index_terms(augmented_index_terms, limit=8)
+
+            # Domain anchors used to prioritize academic retrieval and aggressively reduce citation drift.
+            anchor_terms: List[str] = []
+            title_lower = (title or "").lower()
+            if any(x in title_lower for x in ["谈判", "negotiation", "business", "商务", "商业"]):
+                anchor_terms.extend([
+                    "商业谈判", "商务谈判", "谈判策略", "商务沟通",
+                    "sales negotiation", "business negotiation",
+                ])
+            if any(x in title_lower for x in ["采购", "供应链", "procurement", "supply chain"]):
+                anchor_terms.extend(["采购谈判", "供应链谈判", "procurement negotiation", "contract negotiation"])
+            anchor_terms.extend(selected_terms[:6])
+            anchor_terms = [a for a in anchor_terms if str(a).strip()]
+            # dedupe anchors
+            seen_anchor = set()
+            anchor_terms = [a for a in anchor_terms if (a.lower() not in seen_anchor and not seen_anchor.add(a.lower()))]
+
+            try:
+                from citation_drift_prevention import CROSS_DOMAIN_RED_FLAGS as _RFLAGS
+                _flat_red_flags = set()
+                if isinstance(_RFLAGS, dict):
+                    for vv in _RFLAGS.values():
+                        if isinstance(vv, (list, set, tuple)):
+                            _flat_red_flags.update({str(x).lower() for x in vv if x})
+                elif isinstance(_RFLAGS, (list, set, tuple)):
+                    _flat_red_flags.update({str(x).lower() for x in _RFLAGS if x})
+            except Exception:
+                _flat_red_flags = set()
+
+            nonlocal last_anchor_terms, last_selected_terms, last_flat_red_flags
+            last_anchor_terms = list(anchor_terms)
+            last_selected_terms = list(selected_terms)
+            last_flat_red_flags = set(_flat_red_flags)
+
+            def _append_candidate(it: Dict[str, Any], source_tag: str) -> bool:
+                url = str(it.get("href") or it.get("url") or it.get("link") or "").strip().lower()
+                if not url or url in seen_urls:
+                    return False
+                ok, reason = _passes_anchor_gate(it, anchor_terms, selected_terms, _flat_red_flags)
+                if not ok:
+                    print(f"📌 [引用诊断] 候选拒绝({source_tag}): {str(it.get('title') or '')[:60]} | 原因={reason}")
+                    return False
+                seen_urls.add(url)
+                merged_results.append(it)
+                return True
+
+            # Execute queries and merge results until we reach desired count
+            merged_results: List[Dict[str, Any]] = []
+            seen_urls: set = set()
+
+            # ---------------- Academic first ----------------
+            # Build high-precision academic anchor queries first, then run providers in order.
+            academic_queries = []
+            academic_queries.append(_build_boosted_query([title or "", *anchor_terms[:3], extra_requirements or ""]))
+            academic_queries.append(_build_boosted_query([title or "", *anchor_terms[3:6], extra_requirements or ""]))
+            for t in selected_terms[:4]:
+                academic_queries.append(_build_boosted_query([title or "", t, extra_requirements or ""]))
+            seen_aq = set()
+            academic_queries = [q for q in academic_queries if q and (q not in seen_aq and not seen_aq.add(q))]
+
+            # Build bilingual query pairs (zh/en) to improve coverage and reduce drift.
+            bilingual_query_pairs: List[tuple[str, str]] = []
+            for q in academic_queries:
+                # english mirror from anchors; preserves domain intent and improves non-Chinese APIs
+                en_parts = [title or ""]
+                for a in anchor_terms[:6]:
+                    en_parts.append(_translate_anchor_to_english(a))
+                if extra_requirements:
+                    en_parts.append(str(extra_requirements))
+                en_q = _build_boosted_query(en_parts)
+                bilingual_query_pairs.append((q, en_q))
+            bilingual_query_pairs = bilingual_query_pairs[: max(0, CITATION_ACADEMIC_QUERY_PAIR_LIMIT)]
+
+            provider_plan = [
+                ("SemanticScholar", _query_semanticscholar),
+                ("Crossref", _query_crossref),
+                ("arXiv", _query_arxiv),
+            ]
+
+            for provider_name, provider_fn in provider_plan:
+                for i, (q_zh, q_en) in enumerate(bilingual_query_pairs):
+                    if _citation_budget_exceeded():
+                        print("⚠️ [引用诊断] 引用后处理达到时间预算，停止学术检索")
+                        return merged_results[:DOMAIN_FILTER_RAG_RETRY_RESULTS]
+                    if len(merged_results) >= DOMAIN_FILTER_RAG_RETRY_RESULTS:
+                        break
+                    need = max(1, DOMAIN_FILTER_RAG_RETRY_RESULTS - len(merged_results))
+                    try:
+                        zh_hits = provider_fn(q_zh, max_results=min(need + 3, DOMAIN_FILTER_RAG_RETRY_RESULTS + 3))
+                        en_hits = provider_fn(q_en, max_results=min(need + 3, DOMAIN_FILTER_RAG_RETRY_RESULTS + 3))
+                        print(f"📌 [引用诊断] 学术锚点查询[{provider_name}]#{i+1}[ZH]: '{q_zh[:80]}' -> 命中 {len(zh_hits or [])}")
+                        print(f"📌 [引用诊断] 学术锚点查询[{provider_name}]#{i+1}[EN]: '{q_en[:80]}' -> 命中 {len(en_hits or [])}")
+
+                        pair_map: Dict[str, Dict[str, Any]] = {}
+                        for lang, items in (("zh", zh_hits or []), ("en", en_hits or [])):
+                            for it in items:
+                                u = str(it.get("href") or it.get("url") or it.get("link") or "").strip().lower()
+                                if not u:
+                                    continue
+                                if u not in pair_map:
+                                    pair_map[u] = {"item": dict(it), "zh": False, "en": False}
+                                pair_map[u][lang] = True
+
+                        # Intersect bilingual hits first, then intersect with domain-gate pass set.
+                        for rec in pair_map.values():
+                            if not (rec.get("zh") and rec.get("en")):
+                                continue
+                            it = rec.get("item") or {}
+                            ok, reason = _passes_anchor_gate(it, anchor_terms, selected_terms, _flat_red_flags)
+                            if not ok:
+                                print(f"📌 [引用诊断] 候选拒绝({provider_name}#{i+1}): {str(it.get('title') or '')[:60]} | 原因={reason}")
+                                continue
+                            _append_candidate(it, f"{provider_name}#{i+1}")
+                            if len(merged_results) >= DOMAIN_FILTER_RAG_RETRY_RESULTS:
+                                break
+                    except Exception as e:
+                        print(f"⚠️ [引用诊断] 学术锚点查询失败[{provider_name}]#{i+1}: {e}")
+                if len(merged_results) >= DOMAIN_FILTER_RAG_RETRY_RESULTS:
+                    break
+
+            # ---------------- Generic RAG backfill ----------------
+            # Only if academic anchor-first path cannot fill enough candidates.
+            if len(merged_results) < DOMAIN_FILTER_RAG_RETRY_RESULTS:
+                queries = []
+                base = " ".join([title or "", structure.get("outline", "") or "", user_background or "", extra_requirements or ""])
+                if base.strip():
+                    queries.append(_build_boosted_query([title or "", extra_requirements or ""]))
+
+                if title and any(x in title for x in ["谈判", "negotiation", "business"]):
+                    queries.append(_build_boosted_query([title or "", "商业谈判", "商务谈判", "谈判策略", extra_requirements or ""]))
+
+                for term in selected_terms:
+                    q_parts = [title or "", term, extra_requirements or ""]
+                    if " " in term:
+                        q_parts.insert(1, term)
+                    queries.append(_build_boosted_query(q_parts))
+
+                # include a few synonyms from DOMAIN_KEYWORD_MAP as queries
+                try:
+                    from citation_drift_prevention import DOMAIN_KEYWORD_MAP as _DQ
+                    syns = []
+                    for v in (_DQ or {}).values():
+                        kws = v.get("keywords") if isinstance(v, dict) else v
+                        if kws:
+                            syns.extend([str(x) for x in kws])
+                    for s in syns[:4]:
+                        queries.append(_build_boosted_query([title or "", s, extra_requirements or ""]))
+                except Exception:
+                    pass
+
+                seen_q = set()
+                queries = [q for q in queries if q and (q not in seen_q and not seen_q.add(q))]
+
+                # Tighten query count to reduce noisy retrievals.
+                queries = queries[:10]
+                per_query = max(2, math.ceil((DOMAIN_FILTER_RAG_RETRY_RESULTS - len(merged_results)) / max(1, len(queries))))
+
+                for i, q in enumerate(queries):
+                    if _citation_budget_exceeded():
+                        print("⚠️ [引用诊断] 引用后处理达到时间预算，停止RAG补全")
+                        break
+                    try:
+                        timeout_value = min(
+                            float(DOMAIN_FILTER_RAG_RETRY_TIMEOUT),
+                            max(0.25, _citation_budget_remaining()),
+                        )
+                        engine = RAGSearchEngine(max_results=per_query, timeout=timeout_value)
+                        result = engine.search(q)
+                        hits = result.get("results") if isinstance(result, dict) else None
+                        hit_count = len(hits) if hits else 0
+                        print(f"📌 [引用诊断] RAG 子查询#{i+1}: '{q[:80]}' -> 命中 {hit_count}")
+                        if hits:
+                            for item in _normalize_candidates(hits):
+                                _append_candidate(item, f"RAG#{i+1}")
+                                if len(merged_results) >= DOMAIN_FILTER_RAG_RETRY_RESULTS:
+                                    break
+                    except Exception as e:
+                        print(f"⚠️ [引用诊断] RAG 子查询失败 #{i+1}: {e}")
+                    if len(merged_results) >= DOMAIN_FILTER_RAG_RETRY_RESULTS:
+                        break
+
+            return merged_results[:DOMAIN_FILTER_RAG_RETRY_RESULTS]
+
+        def _query_crossref(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+            """Query Crossref API for scholarly works and return normalized candidates."""
+            out = []
+            if not query or not HAS_REQUESTS or _citation_budget_exceeded():
+                return out
+            try:
+                url = "https://api.crossref.org/works"
+                params = {"query.bibliographic": query, "rows": max_results}
+                headers = {"User-Agent": "FlowerNet/1.0"}
+                timeout_value = min(4.0, max(0.25, _citation_budget_remaining()))
+                resp = CITATION_HTTP_SESSION.get(url, params=params, timeout=timeout_value, headers=headers)
+                if resp.status_code != 200:
+                    return out
+                j = resp.json()
+                items = j.get("message", {}).get("items", [])
+                for itm in items:
+                    doi = itm.get("DOI")
+                    title = " ".join(itm.get("title") or [])
+                    abstract = itm.get("abstract") or ""
+                    url_link = f"https://doi.org/{doi}" if doi else itm.get("URL")
+                    out.append({"href": url_link, "title": title, "body": re.sub(r"<[^>]+>", " ", str(abstract))[:1000]})
+                    if len(out) >= max_results:
+                        break
+            except Exception:
+                return out
+            return out
+
+        def _query_semanticscholar(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+            """Query Semantic Scholar Graph API for papers with optional API-key and retries.
+
+            Supports exponential backoff for transient errors and allows an API key via
+            the `SEMANTIC_SCHOLAR_API_KEY` environment variable (optional).
+            """
+            out = []
+            if not query or not HAS_REQUESTS or _citation_budget_exceeded():
+                return out
+            import os, time
+
+            api_key = os.environ.get("SEMANTIC_SCHOLAR_API_KEY") or os.environ.get("S2_API_KEY")
+            url = "https://api.semanticscholar.org/graph/v1/paper/search"
+            params = {"query": query, "limit": max_results, "fields": "title,abstract,url,doi,paperId"}
+            headers = {"User-Agent": "FlowerNet/1.0"}
+            if api_key:
+                # try both common header forms
+                headers["x-api-key"] = api_key
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            retries = max(1, CITATION_SEMANTIC_SCHOLAR_RETRIES)
+            backoff = 1.0
+            for attempt in range(1, retries + 1):
+                if _citation_budget_exceeded():
+                    return out
+                try:
+                    timeout_value = min(6.0, max(0.25, _citation_budget_remaining()))
+                    resp = CITATION_HTTP_SESSION.get(url, params=params, timeout=timeout_value, headers=headers)
+                    if resp.status_code == 200:
+                        j = resp.json()
+                        data = j.get("data") or []
+                        for itm in data:
+                            title = itm.get("title") or ""
+                            abstract = itm.get("abstract") or ""
+                            doi = itm.get("doi")
+                            url_link = itm.get("url") or (f"https://doi.org/{doi}" if doi else None)
+                            if not url_link:
+                                pid = itm.get("paperId")
+                                if pid:
+                                    url_link = f"https://www.semanticscholar.org/paper/{pid}"
+                            out.append({"href": url_link, "title": title, "body": abstract[:1000]})
+                            if len(out) >= max_results:
+                                break
+                        return out
+                    if resp.status_code in (429, 500, 502, 503, 504):
+                        # transient, retry with backoff
+                        if attempt < retries and _citation_budget_remaining() > 0.5:
+                            time.sleep(min(backoff, max(0.0, _citation_budget_remaining() - 0.25)))
+                            backoff *= 2
+                            continue
+                        return out
+                    # non-retryable
+                    return out
+                except Exception:
+                    if attempt < retries and _citation_budget_remaining() > 0.5:
+                        time.sleep(min(backoff, max(0.0, _citation_budget_remaining() - 0.25)))
+                        backoff *= 2
+                        continue
+                    return out
+
+        def _query_arxiv(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+            """Query arXiv API and return normalized candidates."""
+            out = []
+            if not query or not HAS_REQUESTS or _citation_budget_exceeded():
+                return out
+            try:
+                # use the arXiv API (Atom)
+                q = re.sub(r"\s+", "+", query.strip())
+                url = f"http://export.arxiv.org/api/query?search_query=all:{q}&start=0&max_results={max_results}"
+                headers = {"User-Agent": "FlowerNet/1.0"}
+                timeout_value = min(6.0, max(0.25, _citation_budget_remaining()))
+                resp = CITATION_HTTP_SESSION.get(url, timeout=timeout_value, headers=headers)
+                if resp.status_code != 200:
+                    return out
+                text = resp.text or ""
+                # simple XML extraction without extra deps
+                entries = re.split(r"<entry>|</entry>", text)
+                for e in entries:
+                    if "<id>" not in e:
+                        continue
+                    m_id = re.search(r"<id>(.*?)</id>", e, re.S)
+                    m_title = re.search(r"<title>(.*?)</title>", e, re.S)
+                    m_sum = re.search(r"<summary>(.*?)</summary>", e, re.S)
+                    url_link = m_id.group(1).strip() if m_id else None
+                    title = re.sub(r"\s+", " ", (m_title.group(1) if m_title else "")).strip()
+                    summary = re.sub(r"\s+", " ", (m_sum.group(1) if m_sum else "")).strip()
+                    out.append({"href": url_link, "title": title, "body": summary[:1000]})
+                    if len(out) >= max_results:
+                        break
+            except Exception:
+                return out
+            return out
+
+        def _pick_domain_fallback(filtered_out: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            gated = []
+            for c in filtered_out or []:
+                ok, reason = _passes_anchor_gate(c, last_anchor_terms, last_selected_terms, last_flat_red_flags)
+                if not ok:
+                    print(f"📌 [引用诊断] 兜底拒绝: {str(c.get('title') or '')[:60]} | 原因={reason}")
+                    continue
+                cc = dict(c)
+                cc["source_weight"] = _source_whitelist_weight(cc)
+                # Weighted fallback score: keep domain similarity primary, source quality secondary
+                cc["fallback_score"] = float(cc.get("domain_similarity", 0.0)) + 0.25 * float(cc.get("source_weight", 0.0))
+                gated.append(cc)
+
+            ranked = sorted(
+                gated,
+                key=lambda x: float(x.get("fallback_score", 0.0)),
+                reverse=True,
+            )
+            return ranked[: max(0, DOMAIN_FILTER_FALLBACK_TOP_K)]
+
+        # ============ 从 generated_sections 中提取 source_results ============
+        for section_idx, section in enumerate(generated_sections or []):
+            for subsection_idx, subsection in enumerate(section.get("subsections") or []):
+                source_results = subsection.get("source_results", []) or []
+                if source_results:
+                    diagnostics["gen_source_results_collected"] += len(source_results)
+                    print(f"📌 [引用诊断] generated_sections[{section_idx}].subsections[{subsection_idx}] 包含 {len(source_results)} 个 source_results")
+                for item in source_results:
+                    add_candidate(item if isinstance(item, dict) else {})
+
+        # ============ 从 history 中提取 source_results ============
+        for history_idx, item in enumerate(history or []):
+            metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
+            source_results = metadata.get("source_results", []) or []
+            if source_results:
+                diagnostics["history_source_results_collected"] += len(source_results)
+                print(f"📌 [引用诊断] history[{history_idx}].metadata.source_results 包含 {len(source_results)} 个条目")
+            for candidate in source_results:
+                add_candidate(candidate if isinstance(candidate, dict) else {})
+
+        diagnostics["total_candidates_before_filter"] = len(candidates)
+        print(f"📌 [引用诊断] 共收集候选引用: {len(candidates)} 个 (生成器:{diagnostics['gen_source_results_collected']}, 历史:{diagnostics['history_source_results_collected']})")
+
+        # 🔍 应用Domain Filter进行领域相关性检查
+        augmented_index_terms: set[str] = set()
+        if HAS_DOMAIN_FILTER and candidates:
+            try:
+                diagnostics["domain_filter_applied"] = True
+                domain_filter = get_domain_filter()
+
                 # 从文档中提取Index Terms
                 index_terms = domain_filter.extract_document_index_terms(
                     title=title,
@@ -1336,34 +2209,107 @@ def build_markdown_document(
                         for subsection in section.get("subsections", [])
                     ])[:1000],
                 )
-                
+                augmented_index_terms = _build_augmented_domain_terms(index_terms, title)
+
                 # 过滤候选引用
+                # Enrich candidates with fetched metadata when missing (limit fetches)
+                if HAS_REQUESTS and candidates:
+                    fetch_budget = 6
+                    for c in candidates:
+                        if fetch_budget <= 0 or _citation_budget_exceeded():
+                            break
+                        url = str(c.get("href") or c.get("url") or c.get("link") or "").strip()
+                        if url and not (c.get("abstract") or c.get("body")):
+                            meta = _fetch_candidate_metadata(url, timeout_sec=2)
+                            if meta:
+                                c.update(meta)
+                                fetch_budget -= 1
+                                print(f"📌 [引用诊断] 已抓取并填充候选元数据: {url}")
+
+                # Source-quality weighting before Domain Filter to prioritize business-aligned sources.
+                candidates = _apply_source_weighting(candidates)
+
+                domain_debug = os.environ.get("DOMAIN_FILTER_DEBUG_DETAILS", "0").lower() in {"1", "true", "yes", "on"}
                 filtered_candidates, filtered_out = domain_filter.filter_citations(
                     citations=candidates,
-                    index_terms=index_terms,
-                    debug=False,
+                    index_terms=augmented_index_terms,
+                    debug=domain_debug,
                 )
-                
+                last_filtered_out = filtered_out
+
+                print(f"📌 [引用诊断] Domain Filter: 过滤前 {len(candidates)} -> 过滤后 {len(filtered_candidates)} (丢弃 {len(filtered_out)})")
+
+                rag_retry_count = 0
+                if not filtered_candidates and candidates and CITATION_EXTERNAL_FALLBACK_ENABLED:
+                    while rag_retry_count < max(0, DOMAIN_FILTER_RAG_RETRY_MAX):
+                        if _citation_budget_exceeded():
+                            print("⚠️ [引用诊断] 引用后处理达到时间预算，跳过剩余Domain Filter重试")
+                            break
+                        rag_retry_count += 1
+                        retry_candidates = _run_rag_retry_candidates()
+                        if not retry_candidates:
+                            continue
+                        # Enrich retry candidates (limit fetches)
+                        if HAS_REQUESTS and retry_candidates:
+                            fetch_budget = 6
+                            for c in retry_candidates:
+                                if fetch_budget <= 0 or _citation_budget_exceeded():
+                                    break
+                                url = str(c.get("href") or c.get("url") or c.get("link") or "").strip()
+                                if url and not (c.get("abstract") or c.get("body")):
+                                    meta = _fetch_candidate_metadata(url, timeout_sec=2)
+                                    if meta:
+                                        c.update(meta)
+                                        fetch_budget -= 1
+                                        print(f"📌 [引用诊断] 已抓取并填充重试候选元数据: {url}")
+                        retry_candidates = _apply_source_weighting(retry_candidates)
+                        filtered_candidates, filtered_out = domain_filter.filter_citations(
+                            citations=retry_candidates,
+                            index_terms=augmented_index_terms,
+                            debug=domain_debug,
+                        )
+                        last_filtered_out = filtered_out
+                        print(
+                            f"📌 [引用诊断] Domain Filter RAG重试#{rag_retry_count}: "
+                            f"候选 {len(retry_candidates)} -> 过滤后 {len(filtered_candidates)}"
+                        )
+                        if filtered_candidates:
+                            candidates = retry_candidates
+                            break
+                elif not filtered_candidates and candidates:
+                    print("📌 [引用诊断] 外部引用补全默认关闭，跳过Domain Filter RAG重试")
+
+                diagnostics["domain_filter_rag_retries"] = rag_retry_count
+
+                if not filtered_candidates and last_filtered_out:
+                    fallback_candidates = _pick_domain_fallback(last_filtered_out)
+                    if fallback_candidates:
+                        filtered_candidates = fallback_candidates
+                        diagnostics["domain_filter_fallback"] = True
+                        diagnostics["domain_filter_fallback_count"] = len(fallback_candidates)
+                        print(
+                            f"⚠️ [引用诊断] Domain Filter 仍无可用引用，启用兜底 {len(fallback_candidates)} 条"
+                        )
+                else:
+                    diagnostics["domain_filter_fallback"] = False
+
                 # 重建references列表（仅保留过滤后的）
-                references.clear()
-                seen_urls.clear()
-                for candidate in filtered_candidates:
-                    url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").strip()
-                    title_text = str(candidate.get("title") or candidate.get("source_name") or candidate.get("source_type") or "").strip()
-                    if not url or url.lower() in seen_urls:
-                        continue
-                    seen_urls.add(url.lower())
-                    label = title_text or urlparse(url).netloc or "source"
-                    snippet = str(candidate.get("body") or candidate.get("description") or candidate.get("summary") or "").strip()
-                    if snippet:
-                        references.append(f"{label}: {url} — {snippet[:180]}")
-                    else:
-                        references.append(f"{label}: {url}")
-                        
+                _rebuild_references(filtered_candidates)
+
+                diagnostics["candidates_after_filter"] = len(filtered_candidates)
+                print(f"📌 [引用诊断] 过滤后重建 references: {len(references)} 条")
+
             except Exception as e:
                 print(f"⚠️ Domain Filter error: {e}, continuing with original references")
+                if os.environ.get("DOMAIN_FILTER_DEBUG_DETAILS", "0").lower() in {"1", "true", "yes", "on"}:
+                    import traceback
+                    traceback.print_exc()
 
         if references:
+            diagnostics["final_references_count"] = len(references)
+            diagnostics["final_references"] = references[:3]  # 记录前3条作为样本
+            print(f"📌 [引用诊断] 已收集引用（Domain Filter后）: {len(references)} 条")
+            print(f"📌 [引用诊断] 诊断数据: {diagnostics}")
             return references
 
         # Fallback 1: extract real URLs directly from generated content/history when
@@ -1377,6 +2323,7 @@ def build_markdown_document(
                 label = urlparse(url).netloc or "source"
                 references.append(f"{label}: {url}")
 
+        print(f"📌 [引用诊断] 无 Domain Filter 结果或被全部过滤，尝试文本 URL 提取...")
         for section in generated_sections or []:
             for subsection in (section.get("subsections") or []):
                 add_url_from_text(subsection.get("content", ""))
@@ -1385,10 +2332,18 @@ def build_markdown_document(
             add_url_from_text(item.get("content", ""))
 
         if references:
+            diagnostics["final_references_count"] = len(references)
+            diagnostics["final_references"] = references[:3]
+            print(f"📌 [引用诊断] 文本提取后收集引用: {len(references)} 条")
+            print(f"📌 [引用诊断] 诊断数据: {diagnostics}")
             return references
 
-        # Fallback 2: textual citation extraction when no URLs exist in content.
-        return _collect_textual_citations()
+        # Do not silently downgrade to non-URL textual citations.
+        # Keep references URL-based so citation QA can enforce real-source constraints.
+        if generated_sections or history:
+            print(f"⚠️ [引用诊断] 无有效 URL 引用被保留（禁用文本引用兜底）")
+            print(f"📌 [引用诊断] 最终诊断数据: {diagnostics}")
+        return []
 
     def _inject_inline_citations(text: str, reference_index: Dict[str, int]) -> str:
         """
@@ -1399,23 +2354,23 @@ def build_markdown_document(
             return text
 
         result = str(text)
-        
+
         # Phase 1: Replace explicit URLs and placeholders
         for url, idx in sorted(reference_index.items(), key=lambda item: len(item[0]), reverse=True):
             if url:
                 result = re.sub(re.escape(url), f"[{idx}]", result, flags=re.IGNORECASE)
-        
+
         result = re.sub(r"\[来源(\d+)\]", r"[\1]", result)
         result = re.sub(r"\(来源\s*ID\s*[:：]?\s*(\d+)\)", r"[\1]", result)
         result = re.sub(r"\(来源\s*[:：]?\s*(\d+)\)", r"[\1]", result)
         result = re.sub(r"（来源\s*ID\s*[:：]?\s*(\d+)）", r"[\1]", result)
         result = re.sub(r"（来源\s*[:：]?\s*(\d+)）", r"[\1]", result)
-        
+
         # Phase 2: If NO citations found yet, FORCE inject them
         if not re.search(r'\[\d+\]', result):
             sentences = re.split(r'(?<=[。.!?！？\n])\s*', result.strip())
             sentences = [s for s in sentences if s.strip()]
-            
+
             if len(sentences) > 0:
                 # Inject in first substantial sentence
                 for i, sent in enumerate(sentences):
@@ -1423,28 +2378,24 @@ def build_markdown_document(
                         idx = list(reference_index.values())[0] if reference_index else 1
                         sentences[i] = sent + f" [{idx}]"
                         break
-                
+
                 result = " ".join(sentences)
-        
+
         return result
 
     def _append_references(lines: List[str], references: List[str]) -> None:
         lines.append("## References")
         lines.append("")
         if not references:
-            lines.extend([
-                "[1] A. A. Author, \"Title of article,\" Journal/Conference, vol. x, no. x, pp. xx-xx, Year.",
-                "[2] B. B. Author, Book Title, xth ed. City, Country: Publisher, Year.",
-                "[3] C. C. Author, \"Title of report or web resource,\" Organization, Year. [Online]. Available: URL.",
-                "",
-            ])
+            lines.append("No valid URL-based references were retained by citation quality checks.")
+            lines.append("")
             return
         for idx, ref in enumerate(references, 1):
             lines.append(_format_ieee_reference_entry(ref, idx))
         lines.append("")
 
     reference_entries = _collect_reference_entries()
-    
+
     # ============ 引证质量验证与重排 ============
     if HAS_CITATION_VERIFIER and reference_entries:
         try:
@@ -1458,7 +2409,7 @@ def build_markdown_document(
                         'url': urls[0],
                         'body': ref_text,
                     })
-            
+
             # 调用 Citation Verifier 进行验证和重排
             if ref_dicts:
                 filtered_refs, quality_report = verify_references(
@@ -1466,12 +2417,23 @@ def build_markdown_document(
                     topic=title,
                     section_outline=_build_abstract()[:500],
                     full_content="\n".join([
-                        s.get("content", "") 
+                        s.get("content", "")
                         for section in (generated_sections or [])
                         for s in section.get("subsections", [])
                     ])[:2000],
+                    context_text="\n".join([
+                        f"Title: {title}",
+                        f"User background: {user_background}",
+                        f"Extra requirements: {extra_requirements}",
+                        _build_abstract(),
+                        "\n".join([
+                            s.get("content", "")
+                            for section in (generated_sections or [])
+                            for s in section.get("subsections", [])
+                        ]),
+                    ]),
                 )
-                
+
                 # 用过滤和重排后的引用替换原始引用
                 if filtered_refs:
                     reference_entries = []
@@ -1479,12 +2441,12 @@ def build_markdown_document(
                         ref_text = ref_dict.get('body', '')
                         if ref_text:
                             reference_entries.append(ref_text)
-                
+
                 # 记录质量报告（用于调试）
                 print(f"📋 {quality_report}")
         except Exception as e:
             print(f"⚠️ Citation Verifier 处理失败，继续使用原始引用: {e}")
-    
+
     reference_index: Dict[str, int] = {}
     for idx, ref in enumerate(reference_entries, 1):
         for url in _extract_urls(ref):
@@ -1517,7 +2479,7 @@ def build_markdown_document(
             subsection_title = subsection.get("title", "未命名小节")
             alpha = _to_alpha(subsection_index)
             key = f"{section_id}::{subsection_id}"
-            
+
             # 获取该subsection的内容，如果为空则表示内容仍在恢复或生成失败
             raw_content = content_map.get(key)
             if raw_content:
@@ -1543,9 +2505,8 @@ def build_markdown_document(
     doc_text = "\n".join(lines).strip()
 
     try:
-        references = _collect_reference_entries()
         labels: List[str] = []
-        for ref in references:
+        for ref in reference_entries:
             if not isinstance(ref, str):
                 continue
             label = str(ref).split(":", 1)[0].strip()
@@ -1728,40 +2689,40 @@ def _normalize_render_text(text: str) -> str:
     Comprehensively clean all markdown, special characters, and formatting artifacts.
     """
     result = str(text or "")
-    
+
     # STAGE 1: Remove markdown syntax comprehensively
     # Remove all forms of heading markers (anywhere in text, not just line start)
     result = re.sub(r'^#+\s+', '', result, flags=re.M)  # Line-start headings
     result = re.sub(r'\s+^#+', '', result, flags=re.M)  # Headings with leading space
     result = re.sub(r'####+', '', result)  # Multiple # anywhere
-    
+
     # Remove bold/italic markers
     result = re.sub(r'\*\*(.*?)\*\*', r'\1', result, flags=re.S)  # **bold**
     result = re.sub(r'__(.*?)__', r'\1', result, flags=re.S)  # __bold__
     result = re.sub(r'\*(.*?)\*', r'\1', result, flags=re.S)  # *italic*
     result = re.sub(r'_(.*?)_', r'\1', result, flags=re.S)  # _italic_
-    
+
     # Remove inline code and special markers
     result = re.sub(r'`([^`]+)`', r'\1', result)  # `code`
     result = re.sub(r'~~(.*?)~~', r'\1', result, flags=re.S)  # ~~strikethrough~~
     result = re.sub(r'\{\{(.*?)\}\}', r'\1', result, flags=re.S)  # {{template}}
-    
+
     # Remove math markers but keep content
     result = re.sub(r'\\\((.*?)\\\)', r'\1', result, flags=re.S)  # \(...\)
     result = re.sub(r'\\\[(.*?)\\\]', r'\1', result, flags=re.S)  # \[...\]
     result = re.sub(r'\$\$(.*?)\$\$', r'\1', result, flags=re.S)  # $$...$$
     result = re.sub(r'\$([^\$]+)\$', r'\1', result, flags=re.S)  # $...$ inline
-    
+
     # Remove markdown links
     result = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', result)  # [text](link)
     result = re.sub(r'<a[^>]*>(.*?)</a>', r'\1', result, flags=re.S)  # <a>...</a>
-    
+
     # STAGE 2: Clean up artifacts and normalize whitespace
     result = result.replace("\u00a0", " ")  # Non-breaking space
     result = result.replace("​", "")  # Zero-width space
     result = re.sub(r'[ \t]+', ' ', result)  # Collapse multiple spaces/tabs
     result = re.sub(r'\n\s*\n', '\n', result)  # Collapse multiple newlines
-    
+
     # STAGE 3: Remove trailing markdown artifacts on lines
     lines = result.split('\n')
     cleaned_lines = []
@@ -1772,7 +2733,7 @@ def _normalize_render_text(text: str) -> str:
             line = line[:-1].rstrip()
         cleaned_lines.append(line)
     result = '\n'.join(cleaned_lines)
-    
+
     return result.strip()
 
 
@@ -1781,24 +2742,24 @@ def _format_ieee_reference_entry(reference: str, index: int) -> str:
     raw = str(reference or "").strip()
     if not raw:
         return f"[{index}] Unknown reference."
-    
+
     # CRITICAL: Clean all markdown/special chars from reference
     cleaned = _normalize_render_text(raw)
     cleaned = " ".join(cleaned.split()).strip()
     if not cleaned:
         return f"[{index}] Unknown reference."
-    
+
     # Remove any remaining math notation, formulas
     cleaned = re.sub(r'\$[^\$]*\$', '', cleaned)  # Remove inline math
     cleaned = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', cleaned)  # Remove LaTeX commands
     cleaned = re.sub(r'\\[a-zA-Z]+', '', cleaned)  # Remove LaTeX keywords
     cleaned = re.sub(r'\[[^\]]*\^[^\]]*\]', '', cleaned)  # Remove power notation in brackets
     cleaned = " ".join(cleaned.split()).strip()
-    
+
     # Extract URL
     url_match = re.search(r"https?://[^\s\]）)>,;]+", cleaned, flags=re.IGNORECASE)
     access_date = datetime.now().strftime("%Y-%m-%d")
-    
+
     if url_match:
         url = url_match.group(0).rstrip(".,;)")
         prefix = cleaned[:url_match.start()].strip(" -—:，,")
@@ -1809,7 +2770,7 @@ def _format_ieee_reference_entry(reference: str, index: int) -> str:
         if suffix and suffix.lower() not in {title.lower(), urlparse(url).netloc.lower()}:
             title = suffix
         return f"[{index}] \"{title}\", [Online]. Available: {url}. Accessed: {access_date}."
-    
+
     textual = cleaned
     textual = re.sub(r"\s*—\s*", ", ", textual)
     textual = re.sub(r"\s*:\s*", ", ", textual, count=1)
@@ -2226,7 +3187,7 @@ def _render_pdf_document(title: str, content: str) -> BytesIO:
     except Exception as e:
         print(f"[PDF] ❌ Failed to build PDF: {str(e)}", flush=True)
         raise
-    
+
     stream.seek(0)
     return stream
 
@@ -2262,8 +3223,22 @@ def markdown_to_pdf(title: str, content: str) -> BytesIO:
         # Re-raise the error so it's properly handled by the endpoint
         raise
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
+def index(request: Request) -> FileResponse:
+    # Serve the repository static index and add a header so we can trace what file was served.
+    _assert_expected_frontend()
+    static_path = _frontend_index_path()
+    try:
+        # Log the file being served for debugging (helps find external overrides)
+        print(f"[Web] Serving index from: {static_path}", flush=True)
+        resp = FileResponse(static_path)
+        # Add header to help clients and logs identify the source file
+        resp.headers["X-Served-From"] = static_path
+        resp.headers["X-FlowerNet-Frontend"] = "agent-dashboard"
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+        return resp
+    except Exception as e:
+        print(f"[Web] Error serving index.html: {e}", flush=True)
+        raise
 
 
 @app.get("/health")
@@ -2303,7 +3278,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             "max_sections": req.chapter_count,
             "max_subsections_per_section": req.subsection_count,
         }
-        
+
         outline_resp = None
         outline_error = None
 
@@ -2361,14 +3336,14 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             msg = json.dumps({'type': 'error', 'message': '大纲生成失败: 返回结果格式异常'})
             yield f"data: {msg}\n\n"
             return
-        
+
         # 检查是否是验证错误（422）
         if "detail" in outline_resp and isinstance(outline_resp["detail"], list):
             errors = [e.get("msg", "未知验证错误") for e in outline_resp["detail"]]
             msg = json.dumps({'type': 'error', 'message': f'参数验证失败: {"; ".join(errors)}'})
             yield f"data: {msg}\n\n"
             return
-        
+
         if not outline_resp.get("success"):
             raw_error = str(outline_resp.get("error", "未知错误"))
             if "localhost:11434" in raw_error or "Connection refused" in raw_error:
@@ -2481,11 +3456,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             "rel_threshold": req.rel_threshold,
             "red_threshold": req.red_threshold,
         }
-        
+
         # 在后台线程中启动生成，同时主线程推送进度
         gen_resp = None
         error_occurred = False
-        
+
         def generate_async():
             nonlocal gen_resp, error_occurred
             try:
@@ -2494,6 +3469,13 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                     generate_payload=generate_payload,
                     timeout_seconds=stream_timeout,
                 )
+                # Debug: 打印gen_resp的关键字段
+                if isinstance(gen_resp, dict):
+                    print(f"🔍 [DEBUG] gen_resp keys: {list(gen_resp.keys())}")
+                    print(f"🔍 [DEBUG] quality_score_avg: {gen_resp.get('quality_score_avg')}")
+                    print(f"🔍 [DEBUG] unieval_available_subsections: {gen_resp.get('unieval_available_subsections')}")
+                    print(f"🔍 [DEBUG] bandit_selected_arm_counts: {gen_resp.get('bandit_selected_arm_counts')}")
+
                 if not isinstance(gen_resp, dict) or not gen_resp.get("success"):
                     error_occurred = True
                     print(f"生成错误: {gen_resp}")
@@ -2501,17 +3483,17 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 error_occurred = True
                 gen_resp = {"success": False, "error": f"生成服务异常: {e}"}
                 print(f"生成错误: {e}")
-        
+
         gen_thread = threading.Thread(target=generate_async, daemon=True)
         gen_thread.start()
-        
+
         # 定期检查生成进度
         last_count = 0
         last_event_id = 0
         timeout = time.time() + stream_timeout
         last_progress_update = time.time()
         last_keepalive = time.time()
-        
+
         while gen_thread.is_alive() and time.time() < timeout:
             try:
                 # 查询当前生成的小节数
@@ -2523,7 +3505,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 if history_resp.status_code == 200:
                     history = history_resp.json().get("history", [])
                     current_count = len(history)
-                    
+
                     # 注意：不要在生成过程中基于 history 的增量来发送 subsection_passed 事件！
                     # 因为这会导致前端错误地认为所有小节都已完成，即使生成还在进行中。
                     # 只有当生成器真正返回最终结果后，才发送这些事件。
@@ -2549,7 +3531,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         })
                         yield f"data: {msg}\n\n"
                         emitted_start_indices.add(next_start_idx)
-                    
+
                     # 每次进度变化或30秒都推送一次进度（但不要做implicit的完成判断）
                     if current_count > last_count or time.time() - last_progress_update > 30:
                         # 注意：这里只是报告已添加到 history 的项目数，不应该用来判断是否完成
@@ -2557,7 +3539,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         # 但可能还没有经过真正的验证（verifier），所以指标可能还是0
                         progress = min(100, int(current_count / total_subsections * 100)) if total_subsections > 0 else 0
                         msg = json.dumps({
-                            'type': 'progress', 
+                            'type': 'progress',
                             'message': f'进度: {current_count}/{total_subsections} 小节已处理 ({progress}%)',
                             'note': '进度反映已保存的内容，部分可能是强制通过的临时结果',
                         })
@@ -2594,12 +3576,12 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         last_event_id = max(last_event_id, int(event_item.get("id", 0)))
             except Exception as e:
                 print(f"查询进度异常: {e}")
-            
+
             time.sleep(2)  # 每2秒检查一次
-        
+
         # 等待线程结束（最多等待10秒）
         gen_thread.join(timeout=10)
-        
+
         if error_occurred:
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
@@ -2618,7 +3600,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 msg = json.dumps({'type': 'error', 'message': '生成服务连接失败'})
                 yield f"data: {msg}\n\n"
                 return
-        
+
         if gen_resp is None:
             # 线程仍在运行但超时 - 尝试从数据库恢复
             try:
@@ -2648,7 +3630,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 msg = json.dumps({'type': 'error', 'message': '生成超时且无法恢复'})
                 yield f"data: {msg}\n\n"
                 return
-        
+
         if not gen_resp.get("success"):
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
@@ -2700,18 +3682,18 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             )
             final_history = history_resp.json().get("history", []) if history_resp.status_code == 200 else []
             final_count = len(final_history)
-            
+
             # 仅在生成器完全返回后，才补发最后的 subsection_passed 事件
             # 注意：检查每个 history 项的 forced_pass 标记，只发送真正通过验证的小节
             # （forced_pass 的小节不发送"通过验证"事件，避免前端误导）
             for idx in range(len(emitted_passed_indices), final_count):
                 if idx >= len(ordered_subsections):
                     break
-                    
+
                 item = ordered_subsections[idx]
                 history_item = final_history[idx] if idx < len(final_history) else {}
                 is_forced_pass = history_item.get("metadata", {}).get("forced_pass", False)
-                
+
                 # 只发送非 forced_pass 的小节为"通过验证"
                 if not is_forced_pass:
                     pass_msg = f"小节通过验证: {item['section_title']} > {item['subsection_title']}"
@@ -2749,15 +3731,15 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         },
                     })
                     yield f"data: {msg}\n\n"
-                
+
                 emitted_passed_indices.add(idx)
         except Exception as e:
             print(f"收尾补发小节事件异常: {e}")
-        
+
         # 第3步：获取最终内容
         msg = json.dumps({'type': 'progress', 'message': '📦 整合文档内容...'})
         yield f"data: {msg}\n\n"
-        
+
         try:
             history_resp = DOWNSTREAM_SESSION.post(
                 f"{OUTLINER_URL}/history/get",
@@ -2773,8 +3755,10 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             structure,
             history_items,
             generated_sections=gen_resp.get("sections", []),
+            user_background=req.user_background,
+            extra_requirements=req.extra_requirements,
         )
-        
+
         # 计算统计数据
         expected_subsections = req.chapter_count * req.subsection_count
         passed = gen_resp.get("passed_subsections", 0)
@@ -2794,7 +3778,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             warn_text = gen_resp.get("interrupted_reason") or f'生成未达到目标小节数：通过 {passed}/{expected_subsections}，失败 {failed}'
             msg = json.dumps({'type': 'warning', 'message': f'⚠️ {warn_text}，先展示已通过内容'})
             yield f"data: {msg}\n\n"
-        
+
         # 聚合所有小节的source_reference_count
         total_source_refs = 0
         for h_item in history_items:
@@ -2804,7 +3788,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 src_check = verification.get("source_check", {})
                 if isinstance(src_check, dict):
                     total_source_refs += src_check.get("reference_count", 0)
-        
+
         result = {
             "success": True,
             "partial": partial_mode,
@@ -2827,10 +3811,16 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 **extract_document_quality_metrics(gen_resp if isinstance(gen_resp, dict) else {}),
             },
         }
-        
+
         msg = json.dumps({'type': 'complete', 'result': result})
+        print(f"🎉 [BACKEND] Sending complete event with stats:")
+        print(f"  - quality_score_avg: {result['stats'].get('quality_score_avg')}")
+        print(f"  - unieval_available_subsections: {result['stats'].get('unieval_available_subsections')}")
+        print(f"  - bandit_selected_arm_counts: {result['stats'].get('bandit_selected_arm_counts')}")
+        print(f"  - bandit_reward_avg: {result['stats'].get('bandit_reward_avg')}")
+        print(f"🎉 [BACKEND] Complete message: {msg[:200]}...")
         yield f"data: {msg}\n\n"
-        
+
     except Exception as e:
         msg = json.dumps({'type': 'error', 'message': f'内部错误: {str(e)}'})
         yield f"data: {msg}\n\n"
@@ -2861,7 +3851,7 @@ async def generate_stream_endpoint(
         red_threshold=red_threshold,
         timeout_seconds=timeout_seconds,
     )
-    
+
     return StreamingResponse(
         generate_stream(req),
         media_type="text/event-stream",
@@ -2947,7 +3937,7 @@ def download_pdf(
     except Exception as e:
         print(f"[PDF] ❌ PDF download failed: {str(e)}", flush=True)
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
-    
+
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     safe_title = (req.title or "flowernet_document").strip()[:40]
     ascii_fallback = "flowernet_document"

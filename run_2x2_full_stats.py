@@ -38,7 +38,9 @@ def main() -> int:
     print()
 
     started = time.time()
-    response = requests.post(url, json=payload, timeout=7500)
+    session = requests.Session()
+    session.trust_env = False
+    response = session.post(url, json=payload, timeout=7500)
     elapsed = time.time() - started
 
     status_code = response.status_code

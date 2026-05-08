@@ -25,16 +25,22 @@ class RAGSearchEngine:
         self._query_stopwords = {
             "section", "subsection", "outline", "prompt", "write", "writing",
             "chapter", "part", "introduction", "conclusion", "要求", "生成", "内容",
-            "小节", "章节", "大纲", "写作", "说明", "包括", "以及", "关于"
+            "小节", "章节", "大纲", "写作", "说明", "包括", "以及", "关于",
+            "指南", "方法", "体系", "策略", "研究", "分析", "综述", "实践"
         }
-        self.include_social_cn = os.getenv("RAG_INCLUDE_SOCIAL_CN", "true").lower() == "true"
-        self.include_social_global = os.getenv("RAG_INCLUDE_SOCIAL_GLOBAL", "true").lower() == "true"
+        self.include_social_cn = os.getenv("RAG_INCLUDE_SOCIAL_CN", "false").lower() == "true"
+        self.include_social_global = os.getenv("RAG_INCLUDE_SOCIAL_GLOBAL", "false").lower() == "true"
         self.include_academic_sources = os.getenv("RAG_INCLUDE_ACADEMIC_SOURCES", "true").lower() == "true"
+        self.min_topic_alignment = float(os.getenv("RAG_MIN_TOPIC_ALIGNMENT", "0.18"))
+        self.safe_min_results = max(1, int(os.getenv("RAG_SAFE_MIN_RESULTS", "1")))
+        self.safe_backfill_enabled = os.getenv("RAG_SAFE_BACKFILL_ENABLED", "true").lower() == "true"
         self.high_quality_domains = {
             "nature.com", "science.org", "sciencedirect.com", "springer.com", "ieee.org",
             "acm.org", "arxiv.org", "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org",
             "nist.gov", "nih.gov", "gov.cn", "edu.cn", "ruc.edu.cn", "tsinghua.edu.cn",
             "pku.edu.cn", "cass.cn", "moe.gov.cn", "researchgate.net", "doi.org",
+            "eric.ed.gov", "apa.org", "psycnet.apa.org", "tandfonline.com", "sagepub.com",
+            "frontiersin.org", "mdpi.com", "cambridge.org", "oxfordacademic.com",
         }
         self.low_quality_domains = {
             "baike.baidu.com", "zhidao.baidu.com", "tieba.baidu.com", "jingyan.baidu.com",
@@ -44,6 +50,103 @@ class RAGSearchEngine:
             "zhihu.com", "bilibili.com", "weibo.com", "xiaohongshu.com", "douyin.com",
             "x.com", "twitter.com", "reddit.com", "linkedin.com", "substack.com",
             "medium.com", "youtube.com", "facebook.com", "instagram.com",
+        }
+        self._domain_profiles = {
+            "education": {
+                "signals": [
+                    "大学", "学生", "新生", "学习", "学习习惯", "时间管理", "自我调节", "自主学习",
+                    "复习", "拖延", "课堂", "高校", "教育", "student", "students", "college",
+                    "university", "learning", "study habits", "time management", "self-regulated",
+                    "procrastination",
+                ],
+                "expansions": [
+                    "college student time management",
+                    "university students study habits",
+                    "self-regulated learning university students",
+                    "academic procrastination college students",
+                    "learning strategies higher education",
+                ],
+                "required_any": [
+                    "student", "students", "college", "university", "learning", "study", "academic",
+                    "education", "time management", "self-regulated", "procrastination",
+                    "学生", "大学", "高校", "学习", "时间管理", "拖延",
+                ],
+                "reject": [
+                    "construction", "engineering", "thermal power", "building", "algorithm",
+                    "sequence-to-sequence", "spectral sequence", "mining frequent sequence",
+                    "fixed point", "cyclic group", "施工", "工程", "建筑", "热电", "算法",
+                    "机器学习", "供应链",
+                ],
+                "preferred_domains": [
+                    "eric.ed.gov", "apa.org", "psycnet.apa.org", "springer.com", "sciencedirect.com",
+                    "tandfonline.com", "sagepub.com", "frontiersin.org", "doi.org",
+                ],
+                "min_alignment": 0.35,
+            },
+            "business": {
+                "signals": ["谈判", "商务", "商业", "企业", "供应链", "采购", "negotiation", "business", "procurement"],
+                "expansions": ["business negotiation", "negotiation strategy", "commercial negotiation"],
+                "required_any": ["negotiation", "business", "commercial", "procurement", "谈判", "商务", "商业"],
+                "reject": ["quantum", "protein", "gene", "spectral sequence", "量子", "基因", "蛋白质"],
+                "preferred_domains": ["hbr.org", "ssrn.com", "sciencedirect.com", "springer.com", "doi.org"],
+                "min_alignment": 0.28,
+            },
+            "technology": {
+                "signals": ["算法", "编程", "软件", "机器学习", "ai", "algorithm", "software", "machine learning"],
+                "expansions": ["computer science", "software engineering", "machine learning"],
+                "required_any": ["algorithm", "software", "computer", "machine learning", "算法", "软件", "机器学习"],
+                "reject": ["student time management", "商业谈判"],
+                "preferred_domains": ["arxiv.org", "acm.org", "ieee.org", "springer.com"],
+                "min_alignment": 0.25,
+            },
+            "medicine": {
+                "signals": ["医学", "临床", "疾病", "治疗", "诊断", "患者", "护理", "药物", "medical", "clinical", "patient", "disease", "treatment"],
+                "expansions": ["clinical study", "systematic review", "medical evidence", "patient outcomes"],
+                "required_any": ["clinical", "medical", "patient", "disease", "treatment", "diagnosis", "医学", "临床", "患者", "治疗", "诊断"],
+                "reject": ["business negotiation", "software architecture", "spectral sequence", "商业谈判", "施工", "供应链"],
+                "preferred_domains": ["pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "nih.gov", "who.int", "thelancet.com", "bmj.com", "nejm.org", "cochranelibrary.com", "doi.org"],
+                "min_alignment": 0.32,
+            },
+            "law": {
+                "signals": ["法律", "法规", "合同", "司法", "法院", "判例", "合规", "law", "legal", "regulation", "court", "contract"],
+                "expansions": ["legal analysis", "law review", "regulatory framework", "case law"],
+                "required_any": ["law", "legal", "regulation", "court", "contract", "法律", "法规", "司法", "法院", "合同"],
+                "reject": ["clinical trial", "machine learning", "quantum", "临床", "算法", "量子"],
+                "preferred_domains": ["law.cornell.edu", "supreme.justia.com", "ssrn.com", "heinonline.org", "doi.org", "gov.cn", "edu.cn"],
+                "min_alignment": 0.30,
+            },
+            "finance": {
+                "signals": ["金融", "投资", "股票", "银行", "风险", "资产", "财务", "finance", "financial", "investment", "bank", "risk", "asset"],
+                "expansions": ["financial risk", "investment management", "corporate finance", "banking regulation"],
+                "required_any": ["finance", "financial", "investment", "bank", "risk", "asset", "金融", "投资", "银行", "风险", "资产", "财务"],
+                "reject": ["clinical", "construction", "spectral sequence", "临床", "施工", "量子"],
+                "preferred_domains": ["imf.org", "worldbank.org", "bis.org", "nber.org", "ssrn.com", "sciencedirect.com", "doi.org"],
+                "min_alignment": 0.30,
+            },
+            "environment": {
+                "signals": ["环境", "气候", "碳", "生态", "污染", "能源", "可持续", "climate", "carbon", "environment", "sustainability", "pollution"],
+                "expansions": ["climate change", "environmental sustainability", "carbon emissions", "pollution control"],
+                "required_any": ["climate", "carbon", "environment", "sustainability", "pollution", "energy", "环境", "气候", "碳", "生态", "污染", "能源"],
+                "reject": ["student affairs", "business negotiation", "spectral sequence", "学生事务", "商业谈判", "谱序列"],
+                "preferred_domains": ["ipcc.ch", "un.org", "oecd.org", "nature.com", "science.org", "sciencedirect.com", "springer.com", "doi.org"],
+                "min_alignment": 0.30,
+            },
+            "social_science": {
+                "signals": ["社会", "文化", "政策", "治理", "人口", "社区", "传播", "social", "policy", "governance", "culture", "community"],
+                "expansions": ["social science research", "public policy", "governance study", "community development"],
+                "required_any": ["social", "policy", "governance", "culture", "community", "社会", "政策", "治理", "文化", "社区"],
+                "reject": ["clinical trial", "quantum", "algorithm", "临床", "量子", "算法"],
+                "preferred_domains": ["oecd.org", "un.org", "worldbank.org", "sagepub.com", "tandfonline.com", "springer.com", "doi.org"],
+                "min_alignment": 0.30,
+            },
+            "humanities": {
+                "signals": ["历史", "文学", "艺术", "文物", "考古", "瓷器", "纹样", "明代", "清代", "history", "literature", "art", "archaeology", "porcelain", "ceramic"],
+                "expansions": ["art history", "cultural history", "archaeology study", "material culture", "porcelain ceramics decorative patterns"],
+                "required_any": ["history", "art", "archaeology", "culture", "porcelain", "ceramic", "历史", "艺术", "考古", "文化", "瓷器", "纹样", "明代", "清代"],
+                "reject": ["clinical trial", "machine learning", "financial risk", "construction", "临床", "机器学习", "金融风险", "施工"],
+                "preferred_domains": ["jstor.org", "cambridge.org", "oxfordacademic.com", "tandfonline.com", "springer.com", "doi.org"],
+                "min_alignment": 0.30,
+            },
         }
 
     def search(self, query: str) -> Dict[str, Any]:
@@ -57,7 +160,7 @@ class RAGSearchEngine:
                 academic_results = self._search_academic_sources(query)
                 if academic_results:
                     ranked_academic = self._rank_results(query, academic_results)
-                    if ranked_academic:
+                    if len(ranked_academic) >= self.safe_min_results:
                         return {
                             "success": True,
                             "query": query,
@@ -67,6 +170,18 @@ class RAGSearchEngine:
                             "error": None,
                             "source_type": "academic",
                         }
+                if self.safe_backfill_enabled:
+                    safe_ranked = self._safe_backfill_results(query, academic_results)
+                    if safe_ranked:
+                        return {
+                            "success": True,
+                            "query": query,
+                            "effective_query": query,
+                            "results": safe_ranked,
+                            "search_time": round(time.time() - started_at, 3),
+                            "error": None,
+                            "source_type": "academic_safe_backfill",
+                        }
 
             for query_candidate in query_candidates:
                 raw_html, fetch_error = self._fetch_duckduckgo_html(query_candidate)
@@ -74,15 +189,16 @@ class RAGSearchEngine:
                     results = self._parse_results(raw_html, self.max_results)
                     if results:
                         ranked_results = self._rank_results(query_candidate, results)
-                        return {
-                            "success": True,
-                            "query": query,
-                            "effective_query": query_candidate,
-                            "results": ranked_results,
-                            "search_time": round(time.time() - started_at, 3),
-                            "error": None,
-                            "source_type": "web",
-                        }
+                        if ranked_results:
+                            return {
+                                "success": True,
+                                "query": query,
+                                "effective_query": query_candidate,
+                                "results": ranked_results,
+                                "search_time": round(time.time() - started_at, 3),
+                                "error": None,
+                                "source_type": "web",
+                            }
                 if fetch_error:
                     last_error = fetch_error
 
@@ -96,15 +212,16 @@ class RAGSearchEngine:
                 fallback_results = self._search_wikipedia(fallback_query)
                 if fallback_results:
                     ranked_fallback = self._rank_results(fallback_query, fallback_results)
-                    return {
-                        "success": True,
-                        "query": query,
-                        "effective_query": fallback_query,
-                        "results": ranked_fallback,
-                        "search_time": round(time.time() - started_at, 3),
-                        "error": "fallback_wikipedia",
-                        "source_type": "wiki",
-                    }
+                    if ranked_fallback:
+                        return {
+                            "success": True,
+                            "query": query,
+                            "effective_query": fallback_query,
+                            "results": ranked_fallback,
+                            "search_time": round(time.time() - started_at, 3),
+                            "error": "fallback_wikipedia",
+                            "source_type": "wiki",
+                        }
 
             return {
                 "success": False,
@@ -177,57 +294,258 @@ class RAGSearchEngine:
     def _search_academic_sources(self, query: str) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         seen: set[str] = set()
+        raw_limit = max(self.max_results * 4, 12)
         query_text = " ".join(str(query or "").split())[:180]
         semantic_query = self._semantic_query(query_text)
+        profile_name, profile = self._infer_domain_profile(query_text)
+        academic_queries = self._academic_queries(query_text, semantic_query, profile)
 
-        arxiv_candidates = [query_text]
-        if semantic_query and semantic_query not in arxiv_candidates:
-            arxiv_candidates.append(semantic_query)
-
-        for arxiv_query in arxiv_candidates:
-            for item in self._search_arxiv(arxiv_query):
+        for crossref_query in academic_queries:
+            for item in self._search_crossref(crossref_query, max_items=raw_limit):
                 href = str(item.get("href", ""))
                 if href and href not in seen:
                     seen.add(href)
                     results.append(item)
-                    if len(results) >= self.max_results:
+                    if len(results) >= raw_limit:
                         return results
 
-        for item in self._search_crossref(semantic_query or query_text):
-            href = str(item.get("href", ""))
-            if href and href not in seen:
-                seen.add(href)
-                results.append(item)
-                if len(results) >= self.max_results:
-                    return results
+        # arXiv is valuable for technical topics but a frequent drift source for
+        # education/business writing, so keep it profile-gated.
+        if profile_name == "technology":
+            arxiv_candidates = [query_text]
+            if semantic_query and semantic_query not in arxiv_candidates:
+                arxiv_candidates.append(semantic_query)
+            for arxiv_query in arxiv_candidates:
+                for item in self._search_arxiv(arxiv_query):
+                    href = str(item.get("href", ""))
+                    if href and href not in seen:
+                        seen.add(href)
+                        results.append(item)
+                        if len(results) >= raw_limit:
+                            return results
 
-        for item in self._search_site_targeted(query_text, "ssrn.com"):
-            href = str(item.get("href", ""))
-            if href and href not in seen:
-                seen.add(href)
-                results.append(item)
-                if len(results) >= self.max_results:
-                    return results
+        targeted_domains = ["ssrn.com", "scholar.google.com", "springer.com", "sciencedirect.com"]
+        if profile_name == "education":
+            targeted_domains = ["eric.ed.gov", "apa.org", "tandfonline.com", "sagepub.com", "springer.com"]
+        elif profile_name == "medicine":
+            targeted_domains = ["pubmed.ncbi.nlm.nih.gov", "who.int", "cochranelibrary.com", "bmj.com"]
+        elif profile_name == "law":
+            targeted_domains = ["law.cornell.edu", "ssrn.com", "justia.com", "gov.cn"]
+        elif profile_name == "finance":
+            targeted_domains = ["imf.org", "worldbank.org", "bis.org", "nber.org", "ssrn.com"]
+        elif profile_name == "environment":
+            targeted_domains = ["ipcc.ch", "un.org", "oecd.org", "nature.com", "sciencedirect.com"]
+        elif profile_name == "social_science":
+            targeted_domains = ["oecd.org", "un.org", "worldbank.org", "sagepub.com", "tandfonline.com"]
+        elif profile_name == "humanities":
+            targeted_domains = ["jstor.org", "cambridge.org", "oxfordacademic.com", "tandfonline.com", "springer.com"]
 
-        for item in self._search_site_targeted(query_text, "scholar.google.com"):
-            href = str(item.get("href", ""))
-            if href and href not in seen:
-                seen.add(href)
-                results.append(item)
-                if len(results) >= self.max_results:
-                    return results
+        for domain in targeted_domains:
+            for item in self._search_site_targeted(academic_queries[0] if academic_queries else query_text, domain):
+                href = str(item.get("href", ""))
+                if href and href not in seen:
+                    seen.add(href)
+                    results.append(item)
+                    if len(results) >= raw_limit:
+                        return results
 
         return results
 
-    def _search_crossref(self, query: str) -> List[Dict[str, Any]]:
+    def _safe_backfill_results(self, query: str, existing: List[Dict[str, Any]] | None = None) -> List[Dict[str, Any]]:
+        query_text = " ".join(str(query or "").split())[:180]
+        semantic_query = self._semantic_query(query_text)
+        profile_name, profile = self._infer_domain_profile(query_text)
+        candidates: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+
+        for item in existing or []:
+            href = str((item or {}).get("href") or "")
+            if href and href not in seen:
+                seen.add(href)
+                candidates.append(item)
+
+        backfill_queries = self._safe_backfill_queries(query_text, semantic_query, profile)
+        for backfill_query in backfill_queries:
+            for item in self._search_crossref(backfill_query, max_items=max(10, self.max_results * 4)):
+                href = str(item.get("href", ""))
+                if href and href not in seen:
+                    seen.add(href)
+                    candidates.append(item)
+
+            ranked = self._rank_results(query, candidates)
+            if len(ranked) >= self.safe_min_results:
+                return ranked
+
+        targeted_domains = list(profile.get("preferred_domains", []) or [])[:4]
+        for domain in targeted_domains:
+            if domain == "doi.org":
+                continue
+            for backfill_query in backfill_queries[:2]:
+                for item in self._search_site_targeted(backfill_query, domain):
+                    href = str(item.get("href", ""))
+                    if href and href not in seen:
+                        seen.add(href)
+                        candidates.append(item)
+                ranked = self._rank_results(query, candidates)
+                if len(ranked) >= self.safe_min_results:
+                    return ranked
+
+        return self._rank_results(query, candidates)
+
+    def _safe_backfill_queries(self, query_text: str, semantic_query: str, profile: Dict[str, Any]) -> List[str]:
+        queries: List[str] = []
+        for expansion in profile.get("expansions", [])[:5]:
+            expansion = str(expansion or "").strip()
+            if expansion:
+                queries.extend([
+                    expansion,
+                    f"{expansion} review",
+                    f"{expansion} empirical study",
+                ])
+
+        required_terms = [str(x).strip() for x in profile.get("required_any", []) if str(x).strip()]
+        if required_terms:
+            queries.append(" ".join(required_terms[:4]))
+            queries.append(" ".join(required_terms[:6]))
+
+        if semantic_query:
+            queries.append(semantic_query)
+            queries.append(f"{semantic_query} review")
+        if query_text:
+            queries.append(query_text)
+
+        dedup: List[str] = []
+        seen: set[str] = set()
+        for query in queries:
+            cleaned = " ".join(str(query or "").split()).strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            dedup.append(cleaned[:180])
+        return dedup[:10]
+
+    def _infer_domain_profile(self, query: str) -> Tuple[str, Dict[str, Any]]:
+        text = str(query or "").lower()
+        best_name = ""
+        best_profile: Dict[str, Any] = {}
+        best_hits = 0
+        for name, profile in self._domain_profiles.items():
+            hits = sum(1 for signal in profile.get("signals", []) if str(signal).lower() in text)
+            if hits > best_hits:
+                best_name = name
+                best_profile = profile
+                best_hits = hits
+        if best_profile:
+            return best_name, best_profile
+        return "generic", self._build_generic_profile(query)
+
+    def _build_generic_profile(self, query: str) -> Dict[str, Any]:
+        anchors = self._extract_anchor_terms(query, limit=8)
+        expansions = []
+        if anchors:
+            anchor_query = " ".join(anchors[:4])
+            expansions = [
+                f"{anchor_query} research",
+                f"{anchor_query} systematic review",
+                f"{anchor_query} empirical study",
+            ]
+        return {
+            "signals": anchors,
+            "expansions": expansions,
+            "required_any": anchors,
+            "reject": self._generic_cross_domain_reject_terms(anchors),
+            "preferred_domains": [
+                "doi.org", "springer.com", "sciencedirect.com", "tandfonline.com", "sagepub.com",
+                "cambridge.org", "oxfordacademic.com", "nature.com", "science.org", "jstor.org",
+                "ssrn.com", "oecd.org", "un.org", "worldbank.org",
+            ],
+            "min_alignment": 0.34 if anchors else 0.45,
+            "generic": True,
+        }
+
+    def _extract_anchor_terms(self, text: str, limit: int = 8) -> List[str]:
+        raw_tokens = re.findall(r"[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff\-_]{1,30}", text or "")
+        anchors: List[str] = []
+
+        def add_anchor(value: str) -> None:
+            normalized_value = value.strip().lower()
+            if not normalized_value or normalized_value in self._query_stopwords or normalized_value.isdigit():
+                return
+            if len(normalized_value) <= 1 or len(normalized_value) > 28:
+                return
+            if re.fullmatch(r"[\u4e00-\u9fff]{1}", normalized_value):
+                return
+            if normalized_value not in anchors:
+                anchors.append(normalized_value)
+
+        for token in raw_tokens:
+            normalized = token.strip().lower()
+            if re.fullmatch(r"[\u4e00-\u9fff]{4,}", normalized):
+                add_anchor(normalized)
+                for n in (4, 3, 2):
+                    for i in range(0, max(0, len(normalized) - n + 1)):
+                        add_anchor(normalized[i:i + n])
+                        if len(anchors) >= limit:
+                            break
+                    if len(anchors) >= limit:
+                        break
+            else:
+                add_anchor(normalized)
+            if len(anchors) >= limit:
+                break
+        return anchors
+
+    def _generic_cross_domain_reject_terms(self, anchors: List[str]) -> List[str]:
+        reject_pool = {
+            "physics": ["quantum", "particle", "superconduct", "spectral sequence", "量子", "粒子", "超导"],
+            "biology": ["gene", "protein", "cell", "dna", "基因", "蛋白质", "细胞"],
+            "engineering": ["construction", "concrete", "thermal power", "施工", "混凝土", "热电"],
+            "cs": ["sequence-to-sequence", "neural network", "algorithm", "算法", "神经网络"],
+            "medicine": ["clinical trial", "patient", "disease", "临床", "患者", "疾病"],
+            "business": ["business negotiation", "procurement", "supply chain", "商业谈判", "采购", "供应链"],
+        }
+        anchor_text = " ".join(anchors).lower()
+        rejects: List[str] = []
+        for terms in reject_pool.values():
+            if any(str(term).lower() in anchor_text for term in terms):
+                continue
+            rejects.extend(terms)
+        return rejects[:80]
+
+    def _academic_queries(self, query_text: str, semantic_query: str, profile: Dict[str, Any]) -> List[str]:
+        candidates: List[str] = []
+        for expansion in profile.get("expansions", [])[:5]:
+            candidates.append(str(expansion))
+        if semantic_query:
+            candidates.append(semantic_query)
+        if query_text:
+            candidates.append(query_text)
+        dedup: List[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            cleaned = " ".join(str(candidate or "").split()).strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            dedup.append(cleaned[:180])
+        return dedup[:6]
+
+    def _search_crossref(self, query: str, max_items: int | None = None) -> List[Dict[str, Any]]:
         if not query:
             return []
         try:
+            rows = max(2, int(max_items or self.max_results))
             response = self.session.get(
                 "https://api.crossref.org/works",
                 params={
                     "query": query,
-                    "rows": max(2, self.max_results),
+                    "rows": rows,
                     "sort": "relevance",
                     "order": "desc",
                 },
@@ -282,7 +600,7 @@ class RAGSearchEngine:
                         "source": "crossref.org",
                     }
                 )
-                if len(results) >= self.max_results:
+                if len(results) >= rows:
                     break
             return results
         except Exception:
@@ -413,25 +731,68 @@ class RAGSearchEngine:
             coverage *= 0.35
         return max(0.0, min(1.0, coverage))
 
+    def _topic_alignment_score(self, query: str, item: Dict[str, Any]) -> Tuple[float, bool, str]:
+        profile_name, profile = self._infer_domain_profile(query)
+        if not profile:
+            return self._semantic_score(query, item), False, ""
+
+        text = f"{item.get('title', '')} {item.get('body', '')} {item.get('source', '')} {item.get('href', '')}".lower()
+        for reject in profile.get("reject", []):
+            if str(reject).lower() in text:
+                return 0.0, True, f"reject:{reject}"
+
+        required = [str(x).lower() for x in profile.get("required_any", []) if str(x).strip()]
+        if not required:
+            return self._semantic_score(query, item), False, profile_name
+
+        hits = [term for term in required if term in text]
+        score = len(hits) / max(1, min(len(required), 8))
+
+        # DOI/Crossref records often have sparse abstracts. A title hit on a
+        # high-precision phrase should be enough to keep the item in play.
+        title = str(item.get("title", "")).lower()
+        phrase_hits = [term for term in hits if " " in term and term in title]
+        if phrase_hits:
+            score = max(score, 0.45)
+
+        return max(0.0, min(1.0, score)), False, profile_name
+
     def _rank_results(self, query: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         ranked: List[Dict[str, Any]] = []
+        profile_name, profile = self._infer_domain_profile(query)
         for item in items or []:
             if not isinstance(item, dict):
                 continue
             domain = self._extract_domain(str(item.get("href", "")))
             semantic_score = self._semantic_score(query, item)
+            topic_alignment, rejected, rejection_reason = self._topic_alignment_score(query, item)
+            if rejected:
+                continue
+            min_alignment = float(profile.get("min_alignment", self.min_topic_alignment) if profile else self.min_topic_alignment)
+            if profile_name and topic_alignment < min_alignment:
+                continue
             domain_score = self._domain_score(domain)
-            quality_score = round((semantic_score * 0.65) + (domain_score * 0.35), 4)
+            preferred_domains = [str(d).lower() for d in profile.get("preferred_domains", [])] if profile else []
+            authority_bonus = 0.12 if any(d in domain for d in preferred_domains) else 0.0
+            quality_score = round((topic_alignment * 0.50) + (semantic_score * 0.25) + (domain_score * 0.25) + authority_bonus, 4)
 
             enriched = dict(item)
             enriched["source"] = enriched.get("source") or domain
             enriched["domain_score"] = round(domain_score, 4)
             enriched["semantic_score"] = round(semantic_score, 4)
+            enriched["topic_alignment_score"] = round(topic_alignment, 4)
+            enriched["domain_profile"] = profile_name
+            if rejection_reason:
+                enriched["alignment_note"] = rejection_reason
             enriched["quality_score"] = quality_score
             ranked.append(enriched)
 
         ranked.sort(
-            key=lambda x: (float(x.get("quality_score", 0.0)), float(x.get("semantic_score", 0.0))),
+            key=lambda x: (
+                float(x.get("quality_score", 0.0)),
+                float(x.get("topic_alignment_score", 0.0)),
+                float(x.get("semantic_score", 0.0)),
+            ),
             reverse=True,
         )
         # Apply optional semantic re-ranking using SBERT if enabled

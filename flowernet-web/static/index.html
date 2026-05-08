@@ -8,6 +8,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/framer-motion@10/dist/framer-motion.js"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -82,15 +86,34 @@
 <body>
   <div id="root"></div>
 
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/framer-motion/dist/framer-motion.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
   <script type="text/babel">
     const { useEffect, useMemo, useRef, useState } = React;
-    const MotionLib = window.FramerMotion || window.Motion || {};
-    const motion = MotionLib.motion || new Proxy({}, { get: () => "div" });
+
+    // Create motion components for framer-motion compatibility
+    const motion = {
+      div: ({ children, animate, className, ...props }) => {
+        const ref = useRef(null);
+        useEffect(() => {
+          if (animate && ref.current) {
+            Object.entries(animate).forEach(([key, value]) => {
+              if (key === 'y' || key === 'x') {
+                ref.current.style.transform = `translate${key === 'y' ? 'Y' : 'X'}(${value}px)`;
+              } else if (key === 'scale') {
+                ref.current.style.transform = `${ref.current.style.transform || ''} scale(${value})`.trim();
+              } else if (key === 'boxShadow') {
+                ref.current.style.boxShadow = value;
+              } else {
+                ref.current.style[key] = value;
+              }
+            });
+          }
+        }, [animate]);
+        return <div ref={ref} className={className} {...props}>{children}</div>;
+      },
+      section: ({ children, animate, className, ...props }) => (
+        <section className={className} {...props}>{children}</section>
+      )
+    };
 
     const PIPELINE = [
       { id: "outliner", title: "Outliner", subtitle: "结构规划" },
@@ -311,6 +334,22 @@
           return `${i === 0 ? "M" : "L"}${x} ${y}`;
         }).join(" ");
       };
+      const getSinglePoint = (arr, plotMin, plotMax) => {
+        if (!arr || arr.length !== 1) {
+          return null;
+        }
+        const min = typeof plotMin === 'number' ? plotMin : 0.0;
+        const max = typeof plotMax === 'number' && plotMax > min ? plotMax : Math.max(min + 0.0001, 0.1);
+        const yTop = 20;
+        const yBottom = 104;
+        const range = yBottom - yTop;
+        const val = Number(arr[0]);
+        const norm = isFinite(val) ? Math.max(0, Math.min(1, (val - min) / (max - min))) : 0;
+        return {
+          x: 28,
+          y: yBottom - norm * range,
+        };
+      };
       const currentMode = String(summary?.bandit_last_selection_mode || "n/a");
       const currentModeItem = modeGuideItems.find((item) => item.key === currentMode);
       return (
@@ -366,6 +405,30 @@
               <path d={toPath(data.defect_topic, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#10b981" fill="none" strokeWidth="2.5" />
               <path d={toPath(data.defect_evidence, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#f97316" fill="none" strokeWidth="2.5" />
               <path d={toPath(data.defect_structure, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#3b82f6" fill="none" strokeWidth="2.5" />
+              {(() => {
+                const p = getSinglePoint(data.llm, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#ef4444" /> : null;
+              })()}
+              {(() => {
+                const p = getSinglePoint(data.rule, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#06b6d4" /> : null;
+              })()}
+              {(() => {
+                const p = getSinglePoint(data.rule_structured, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#8b5cf6" /> : null;
+              })()}
+              {(() => {
+                const p = getSinglePoint(data.defect_topic, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#10b981" /> : null;
+              })()}
+              {(() => {
+                const p = getSinglePoint(data.defect_evidence, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#f97316" /> : null;
+              })()}
+              {(() => {
+                const p = getSinglePoint(data.defect_structure, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#3b82f6" /> : null;
+              })()}
             </g>
           </svg>
           <div className="mt-3 rounded-2xl border border-slate-700/60 bg-slate-950/35 p-3 text-xs text-slate-200">
@@ -961,17 +1024,26 @@
           }
 
           if (data.type === "complete") {
+            console.log("🎉 [DEBUG] COMPLETE EVENT RECEIVED!", data);
             streamEndedRef.current = true;
             const result = data.result || {};
             const stats = result.stats || {};
             const dims = stats.quality_dimension_avgs || {};
-            
+
+            console.log("📊 [DEBUG] Extracted stats:", {
+              quality_score_avg: stats.quality_score_avg,
+              unieval_available_subsections: stats.unieval_available_subsections,
+              bandit_selected_arm_counts: stats.bandit_selected_arm_counts,
+              bandit_reward_avg: stats.bandit_reward_avg,
+            });
+
             // 不要立即设为 100%，而是基于实际完成的小节数
             const expected = Math.max(1, Number(stats.expected_subsections || progress.total || 0));
             const actualCompleted = completedSubsectionsRef.current.size;
             const finalCurrent = Math.min(expected, Math.max(actualCompleted, Number(stats.passed_subsections || 0)));
             const finalPercent = expected > 0 ? Math.min(100, Math.round((finalCurrent / expected) * 100)) : 100;
-            
+
+            console.log("✅ [DEBUG] About to call setRunning(false), current running state:", running);
             setQualitySummary({
               quality_score_avg: Number(stats.quality_score_avg || 0),
               quality_score_count: Number(stats.quality_score_count || 0),
