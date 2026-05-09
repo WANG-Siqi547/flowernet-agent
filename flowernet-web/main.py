@@ -692,163 +692,55 @@ def _is_placeholder_outline_label(value: Any) -> bool:
     )
 
 
-def _topic_fallback_section_title(title: str, section_index: int, total_sections: int) -> str:
-    topic = str(title or "文档主题").strip() or "文档主题"
-    templates = [
-        f"{topic}的基础理论与核心概念",
-        f"{topic}的关键方法与技术机制",
-        f"{topic}的应用场景与实践案例",
-        f"{topic}的评估、风险与治理框架",
-        f"{topic}的前沿趋势与研究展望",
+def _is_bad_outline_label(value: Any) -> bool:
+    text = " ".join(str(value or "").split()).strip()
+    if _is_placeholder_outline_label(text):
+        return True
+    lowered = text.lower()
+    request_artifacts = [
+        "请帮我", "生成一篇", "高质量长文档", "用户背景", "用户需求", "额外要求",
+        "document topic", "user background", "extra requirements", "run generation",
     ]
-    if section_index <= len(templates):
-        return templates[section_index - 1]
-    return f"{topic}专题分析 {section_index}"
+    if any(token in lowered for token in request_artifacts):
+        return True
+    if len(text) > 64 and re.search(r"[。！？.!?，,；;]", text):
+        return True
+    return False
 
 
-def _topic_fallback_subsection_title(title: str, section_title: str, section_index: int, subsection_index: int) -> str:
-    topic = str(title or "文档主题").strip() or "文档主题"
-    bank = [
-        ["定义、发展脉络与研究边界", "核心概念、理论基础与代表模型", "关键问题、假设条件与分析框架"],
-        ["主要算法、方法体系与实现路径", "技术组件、系统架构与性能约束", "数据、模型与工程化挑战"],
-        ["行业应用案例与场景化设计", "跨领域扩展、用户需求与落地条件", "实践效果、局限性与改进方向"],
-        ["风险识别、质量评估与安全边界", "伦理治理、责任划分与合规要求", "可解释性、公平性与持续监督"],
-        ["最新研究趋势与开放问题", "未来发展路径与技术路线", "综合讨论与研究展望"],
-    ]
-    row = bank[min(max(section_index - 1, 0), len(bank) - 1)]
-    if 1 <= subsection_index <= len(row):
-        return row[subsection_index - 1]
-    return f"{topic}在“{section_title}”中的专题要点 {subsection_index}"
-
-
-def _build_topic_fallback_structure(title: str, chapter_count: int, subsection_count: int) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-    sections: List[Dict[str, Any]] = []
-    prompts: List[Dict[str, Any]] = []
-    for sec_idx in range(1, chapter_count + 1):
-        section_id = f"sec_{sec_idx}"
-        section_title = _topic_fallback_section_title(title, sec_idx, chapter_count)
-        section_desc = f"围绕“{title}”展开{section_title}，明确概念、机制、证据和应用边界。"
-        subsections: List[Dict[str, Any]] = []
-        for sub_idx in range(1, subsection_count + 1):
-            subsection_id = f"{section_id}_sub_{sub_idx}"
-            subsection_title = _topic_fallback_subsection_title(title, section_title, sec_idx, sub_idx)
-            subsection_desc = f"聚焦“{title}”中的{subsection_title}，结合权威文献、专业概念和可验证案例展开。"
-            subsections.append({
-                "id": subsection_id,
-                "title": subsection_title,
-                "description": subsection_desc,
-            })
-            prompts.append({
-                "section_id": section_id,
-                "subsection_id": subsection_id,
-                "section_title": section_title,
-                "subsection_title": subsection_title,
-                "subsection_description": subsection_desc,
-                "content_prompt": (
-                    f"请撰写《{title}》中“{section_title} > {subsection_title}”的小节内容。\n"
-                    f"小节说明：{subsection_desc}\n"
-                    "要求：避免空泛模板化表达；正文至少包含一处[1]样式引用标记；论证要贴合主题并保持学术综述风格。"
-                ),
-            })
-        sections.append({
-            "id": section_id,
-            "title": section_title,
-            "description": section_desc,
-            "subsections": subsections,
-        })
-    return {"title": title, "sections": sections}, prompts
-
-
-def _save_fallback_outline_bundle(document_id: str, title: str, structure: Dict[str, Any], content_prompts: List[Dict[str, Any]]) -> None:
-    try:
-        post_json_once(
-            f"{OUTLINER_URL}/outline/save",
-            {
-                "document_id": document_id,
-                "outline_content": f"# {title}\n\n" + json.dumps(structure, ensure_ascii=False, indent=2),
-                "outline_type": "document",
-                "metadata": {"title": title, "fallback": True},
-            },
-            timeout=20,
-        )
-    except Exception as exc:
-        print(f"[Web] ⚠️ 本地兜底大纲 document 保存失败，继续生成: {exc}")
-
-    prompt_map = {
-        f"{cp.get('section_id')}::{cp.get('subsection_id')}": cp
-        for cp in content_prompts
-        if isinstance(cp, dict)
-    }
-    for section in structure.get("sections", []) if isinstance(structure, dict) else []:
+def _validate_outline_structure_quality(structure: Dict[str, Any]) -> tuple[bool, str]:
+    sections = structure.get("sections", []) if isinstance(structure, dict) else []
+    if not isinstance(sections, list) or not sections:
+        return False, "outline_has_no_sections"
+    bad_labels: List[str] = []
+    for section in sections:
         if not isinstance(section, dict):
+            bad_labels.append("invalid_section")
             continue
-        section_id = str(section.get("id") or "")
-        section_title = str(section.get("title") or section_id or "Section")
-        section_outline = str(section.get("description") or section_title)
-        try:
-            post_json_once(
-                f"{OUTLINER_URL}/outline/save",
-                {
-                    "document_id": document_id,
-                    "outline_content": section_outline,
-                    "outline_type": "section",
-                    "section_id": section_id,
-                    "metadata": {"title": section_title, "fallback": True},
-                },
-                timeout=20,
-            )
-        except Exception:
-            pass
-        for subsection in section.get("subsections", []) if isinstance(section.get("subsections"), list) else []:
+        section_title = str(section.get("title") or "")
+        if _is_bad_outline_label(section_title):
+            bad_labels.append(section_title[:80] or "empty_section_title")
+        subsections = section.get("subsections", [])
+        if not isinstance(subsections, list) or not subsections:
+            bad_labels.append(f"{section_title[:40]}: no_subsections")
+            continue
+        for subsection in subsections:
             if not isinstance(subsection, dict):
+                bad_labels.append(f"{section_title[:40]}: invalid_subsection")
                 continue
-            subsection_id = str(subsection.get("id") or "")
-            subsection_title = str(subsection.get("title") or subsection_id or "Subsection")
-            cp = prompt_map.get(f"{section_id}::{subsection_id}", {})
-            try:
-                post_json_once(
-                    f"{OUTLINER_URL}/outline/save",
-                    {
-                        "document_id": document_id,
-                        "outline_content": str(subsection.get("description") or subsection_title),
-                        "outline_type": "subsection",
-                        "section_id": section_id,
-                        "subsection_id": subsection_id,
-                        "metadata": {
-                            "title": subsection_title,
-                            "content_prompt": cp.get("content_prompt", ""),
-                            "fallback": True,
-                        },
-                    },
-                    timeout=20,
-                )
-            except Exception:
-                pass
+            sub_title = str(subsection.get("title") or "")
+            if _is_bad_outline_label(sub_title):
+                bad_labels.append(sub_title[:80] or "empty_subsection_title")
+    if bad_labels:
+        return False, "bad_outline_titles: " + " | ".join(bad_labels[:4])
+    return True, "ok"
 
 
 def _build_local_outline_response(payload: Dict[str, Any], reason: str) -> Dict[str, Any]:
-    """Build a deterministic emergency outline when Render rejects outliner task starts."""
-    document_id = str(payload.get("document_id") or f"fallback_{uuid4().hex[:8]}")
-    title = _extract_title_from_requirements(str(payload.get("user_requirements") or ""))
-    chapter_count = max(1, min(int(payload.get("max_sections") or 2), 10))
-    subsection_count = max(1, min(int(payload.get("max_subsections_per_section") or 2), 8))
-    structure, content_prompts = _build_topic_fallback_structure(
-        title=title,
-        chapter_count=chapter_count,
-        subsection_count=subsection_count,
-    )
-    _save_fallback_outline_bundle(document_id=document_id, title=title, structure=structure, content_prompts=content_prompts)
+    """Return a hard failure instead of fabricating an outline."""
     return {
-        "success": True,
-        "document_title": title,
-        "document_id": document_id,
-        "outline_saved": True,
-        "structure_outline_saved": True,
-        "section_count": len(structure.get("sections", [])),
-        "subsection_outlines_count": chapter_count * subsection_count,
-        "structure": structure,
-        "content_prompts": content_prompts,
-        "fallback_outline": True,
+        "success": False,
+        "error": "outliner_unavailable_or_rate_limited",
         "fallback_reason": reason,
     }
 
@@ -880,7 +772,7 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
             if "HTTP 429" not in detail and "Too Many Requests" not in detail:
                 raise
             if start_attempt >= start_attempts:
-                print("[Web] ⚠️ Outliner task start repeatedly hit 429; using local emergency outline")
+                print("[Web] ⚠️ Outliner task start repeatedly hit 429; refusing to fabricate an outline")
                 return _build_local_outline_response(payload, reason=last_start_error[:240])
             delay = min(
                 DOWNSTREAM_MAX_BACKOFF,
@@ -1203,6 +1095,15 @@ def generate_document_with_recovery(
                         if status == "failed":
                             result = status_body.get("result")
                             if isinstance(result, dict):
+                                if not str(result.get("error") or result.get("message") or "").strip():
+                                    status_error = str(status_body.get("error") or "").strip()
+                                    if status_error:
+                                        result["error"] = status_error
+                                    else:
+                                        result["error"] = f"generator_task_failed: {task_id}"
+                                result.setdefault("task_id", task_id)
+                                result.setdefault("last_status", status_body)
+                                result.setdefault("interrupted", True)
                                 result.setdefault("recovery_attempt", attempt)
                                 result.setdefault("recovery_attempts", total_attempts)
                                 result.setdefault("generator_task_id", task_id)
@@ -1292,6 +1193,12 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         chapter_count=req.chapter_count,
         subsection_count=req.subsection_count,
     )
+    outline_ok, outline_reason = _validate_outline_structure_quality(structure)
+    if not outline_ok:
+        raise HTTPException(
+            status_code=422,
+            detail=f"大纲质量异常，已拒绝继续生成: {outline_reason}",
+        )
 
     expected_subsections = req.chapter_count * req.subsection_count
     outlined_subsections = normalized_subsections
@@ -1665,10 +1572,14 @@ def _build_poffices_result(request: Request, result: Dict[str, Any]) -> Dict[str
 
 
 def build_requirements_text(req: GenerateDocRequest) -> str:
+    background = req.user_background.strip() or "未指定"
     base = (
-        f"请帮我生成一篇关于“{req.topic}”的高质量长文档，"
-        f"总共需要 {req.chapter_count} 个章节，"
-        f"每个章节包含 {req.subsection_count} 个子章节。"
+        f"文档主题：{req.topic}\n"
+        f"目标读者/用户背景：{background}\n"
+        f"写作目标：生成一篇主题聚焦、结构完整、适合目标读者的专业长文档。\n"
+        f"结构规模：恰好 {req.chapter_count} 个章节；每个章节恰好 {req.subsection_count} 个子章节。\n"
+        "大纲要求：章节和子章节标题必须是围绕文档主题展开的专业学术标题；"
+        "不得把本需求文本、写作指令、用户背景或数量要求复制成标题。"
     )
     if req.extra_requirements.strip():
         return f"{base}\n\n附加要求：{req.extra_requirements.strip()}"
@@ -3296,12 +3207,8 @@ def ensure_exact_structure_and_prompts(
         source_section = source_sections[sec_idx] if sec_idx < len(source_sections) and isinstance(source_sections[sec_idx], dict) else {}
 
         section_id = str(source_section.get("id") or f"sec_{sec_idx + 1}")
-        raw_section_title = str(source_section.get("title") or "")
-        section_title = (
-            _topic_fallback_section_title(title, sec_idx + 1, chapter_count)
-            if _is_placeholder_outline_label(raw_section_title)
-            else raw_section_title
-        )
+        raw_section_title = str(source_section.get("title") or "").strip()
+        section_title = raw_section_title or f"未命名章节 {sec_idx + 1}"
         section_desc = str(source_section.get("description") or f"围绕“{title}”展开{section_title}。")
 
         source_subs = source_section.get("subsections", [])
@@ -3313,12 +3220,8 @@ def ensure_exact_structure_and_prompts(
             source_sub = source_subs[sub_idx] if sub_idx < len(source_subs) and isinstance(source_subs[sub_idx], dict) else {}
 
             subsection_id = str(source_sub.get("id") or f"{section_id}_sub_{sub_idx + 1}")
-            raw_subsection_title = str(source_sub.get("title") or "")
-            subsection_title = (
-                _topic_fallback_subsection_title(title, section_title, sec_idx + 1, sub_idx + 1)
-                if _is_placeholder_outline_label(raw_subsection_title)
-                else raw_subsection_title
-            )
+            raw_subsection_title = str(source_sub.get("title") or "").strip()
+            subsection_title = raw_subsection_title or f"未命名小节 {sub_idx + 1}"
             subsection_desc = str(source_sub.get("description") or f"围绕主题“{title}”展开：{subsection_title}")
 
             normalized_subsections.append({
@@ -4179,6 +4082,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             chapter_count=req.chapter_count,
             subsection_count=req.subsection_count,
         )
+        outline_ok, outline_reason = _validate_outline_structure_quality(structure)
+        if not outline_ok:
+            msg = json.dumps({'type': 'error', 'message': f'大纲质量异常，已拒绝继续生成: {outline_reason}'})
+            yield f"data: {msg}\n\n"
+            return
         total_subsections = len(content_prompts)
         if total_subsections <= 0:
             msg = json.dumps({'type': 'error', 'message': '大纲结果为空，无法开始内容生成'})

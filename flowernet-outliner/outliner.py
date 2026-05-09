@@ -179,61 +179,106 @@ class FlowerNetOutliner:
 
         raise json.JSONDecodeError("Unable to parse model JSON output", sanitized, 0)
 
-    def _generate_default_structure(
-        self,
-        user_requirements: str,
-        max_sections: int = 5,
-        max_subsections_per_section: int = 4
-    ) -> Dict[str, Any]:
-        """
-        在 LLM 无法生成有效大纲时，生成一个合理的默认大纲
-        """
-        # 简化标题生成（从需求的前几个词）
-        title = user_requirements[:50].split('\n')[0].strip() or "Generated Document"
-        
-        sections = []
-        keywords = user_requirements.split() if user_requirements else []
-        
-        # 生成默认 section 结构
-        default_sections_names = [
-            "Overview and Introduction",
-            "Core Concepts and Fundamentals",
-            "Implementation and Practices",
-            "Analysis and Evaluation",
-            "Conclusion and Recommendations"
+    @staticmethod
+    def _is_bad_outline_title(value: Any) -> bool:
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            return True
+        lowered = text.lower()
+        if re.fullmatch(r"第\s*\d+\s*[章节节]", text):
+            return True
+        if re.fullmatch(r"(section|chapter|subsection)\s*\d*", text, flags=re.I):
+            return True
+        request_artifacts = [
+            "请帮我", "生成一篇", "高质量长文档", "用户背景", "用户需求", "额外要求",
+            "document topic", "user background", "extra requirements",
         ]
-        
-        for i in range(1, min(max_sections + 1, 6)):
-            section_name = default_sections_names[i - 1] if i <= len(default_sections_names) else f"Section {i}"
-            subsections = []
-            
-            # 生成默认 subsection
-            default_subsection_names = [
-                "Background and Context",
-                "Key Principles and Theory",
-                "Practical Implementation",
-                "Examples and Case Studies"
-            ]
-            
-            for j in range(1, min(max_subsections_per_section + 1, 5)):
-                sub_name = default_subsection_names[j - 1] if j <= len(default_subsection_names) else f"Subsection {j}"
-                subsections.append({
-                    "subsection_id": f"{i}_{j}",
-                    "name": sub_name,
-                    "description": f"{section_name}: {sub_name}"
-                })
-            
-            sections.append({
-                "section_id": str(i),
-                "name": section_name,
-                "description": f"{section_name}",
-                "subsections": subsections
-            })
-        
-        return {
-            "document_title": title,
-            "sections": sections
-        }
+        if any(token in lowered for token in request_artifacts):
+            return True
+        if len(text) > 64 and re.search(r"[。！？.!?，,；;]", text):
+            return True
+        return False
+
+    def _outline_quality_issues(self, structure: Dict[str, Any]) -> List[str]:
+        issues: List[str] = []
+        sections = structure.get("sections", []) if isinstance(structure, dict) else []
+        if not isinstance(sections, list) or not sections:
+            return ["missing_sections"]
+        for section in sections:
+            if not isinstance(section, dict):
+                issues.append("invalid_section")
+                continue
+            section_title = str(section.get("title") or section.get("name") or "").strip()
+            if self._is_bad_outline_title(section_title):
+                issues.append(f"bad_section_title={section_title[:80]}")
+            subsections = section.get("subsections", [])
+            if not isinstance(subsections, list) or not subsections:
+                issues.append(f"section_without_subsections={section_title[:40]}")
+                continue
+            for subsection in subsections:
+                if not isinstance(subsection, dict):
+                    issues.append(f"invalid_subsection={section_title[:40]}")
+                    continue
+                subsection_title = str(subsection.get("title") or subsection.get("name") or "").strip()
+                if self._is_bad_outline_title(subsection_title):
+                    issues.append(f"bad_subsection_title={subsection_title[:80]}")
+        return issues
+
+    def _repair_outline_structure(
+        self,
+        structure: Dict[str, Any],
+        user_background: str,
+        user_requirements: str,
+        max_sections: int,
+        max_subsections_per_section: int,
+        reason: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        repair_prompt = f"""
+你是严谨的学术大纲编辑器。下面的大纲质量不合格，原因是：{reason}
+
+请基于用户背景与用户需求，重新输出一个合格的 JSON 大纲。
+
+硬性要求：
+1. 必须恰好 {max_sections} 个 sections，每个 section 恰好 {max_subsections_per_section} 个 subsections。
+2. title/section title/subsection title 必须是专业、简洁、主题相关的学术标题。
+3. 禁止把“请帮我生成...”“高质量长文档”“用户背景/用户需求/额外要求”等请求文本复制成标题。
+4. 不要输出模板占位标题，如“第1章”“Section 1”“Subsection”。
+5. 不要输出解释，不要代码块，只输出 JSON。
+
+用户背景：
+{user_background}
+
+用户需求：
+{user_requirements}
+
+原始不合格大纲：
+{json.dumps(structure, ensure_ascii=False, indent=2)[:5000]}
+
+输出格式：
+{{
+  "title": "文档标题",
+  "sections": [
+    {{
+      "id": "section_1",
+      "title": "章节标题",
+      "description": "章节定位",
+      "subsections": [
+        {{
+          "id": "subsection_1_1",
+          "title": "小节标题",
+          "description": "小节说明"
+        }}
+      ]
+    }}
+  ]
+}}
+"""
+        repaired, metadata, _ = self._generate_json_with_repair(
+            repair_prompt,
+            max_tokens=self.structure_max_tokens,
+            stage_name="outline_quality_repair",
+        )
+        return repaired, metadata
     
     def generate_document_structure(
         self,
@@ -283,6 +328,8 @@ class FlowerNetOutliner:
 3. 每个章节包含 {max_subsections_per_section} 个子章节（Subsection）- 每个章节都必须恰好是 {max_subsections_per_section} 个！
 4. 每个子章节需要有标题和简短描述（1-2句话说明该段应该写什么）
 5. 总共应该生成：{max_sections * max_subsections_per_section} 个小节
+6. 标题必须是专业学术标题；禁止把用户请求句、写作要求、用户背景、"请帮我生成..."、"高质量长文档" 复制成章节或小节标题
+7. 禁止使用“第1章”“第1节”“Section 1”“Subsection”等占位标题
 
 **输出格式**（严格按照 JSON 格式）:
 {{
@@ -321,6 +368,31 @@ class FlowerNetOutliner:
                 max_tokens=self.structure_max_tokens,
                 stage_name="document_structure",
             )
+
+            issues = self._outline_quality_issues(structure)
+            if issues:
+                print(f"⚠️ 大纲标题质量异常，尝试LLM修复: {issues[:4]}")
+                structure, repair_metadata = self._repair_outline_structure(
+                    structure=structure,
+                    user_background=user_background,
+                    user_requirements=user_requirements,
+                    max_sections=max_sections,
+                    max_subsections_per_section=max_subsections_per_section,
+                    reason="; ".join(issues[:6]),
+                )
+                llm_metadata = {**llm_metadata, "repair": repair_metadata}
+                issues = self._outline_quality_issues(structure)
+                if issues:
+                    return {
+                        "success": False,
+                        "error": "outline_quality_failed_after_repair",
+                        "issues": issues[:8],
+                        "metadata": {
+                            "provider_chain": self.provider_chain,
+                            "active_provider": llm_metadata.get("provider", self.last_provider_used),
+                            "model": llm_metadata.get("model", self.model),
+                        },
+                    }
             
             # 验证结构是否符合要求
             sections = structure.get('sections', [])
@@ -369,6 +441,18 @@ class FlowerNetOutliner:
                     section['subsections'] = subsections
             
             total_subsections = sum(len(s.get('subsections', [])) for s in sections)
+            final_issues = self._outline_quality_issues(structure)
+            if final_issues:
+                return {
+                    "success": False,
+                    "error": "outline_quality_failed",
+                    "issues": final_issues[:8],
+                    "metadata": {
+                        "provider_chain": self.provider_chain,
+                        "active_provider": llm_metadata.get("provider", self.last_provider_used),
+                        "model": llm_metadata.get("model", self.model),
+                    },
+                }
             
             print(f"✅ 文档大纲生成成功:")
             print(f"  - 标题: {structure.get('title', 'N/A')}")
@@ -392,38 +476,24 @@ class FlowerNetOutliner:
         except json.JSONDecodeError as e:
             print(f"❌ JSON 解析失败: {e}")
             print(f"原始输出: {structure_text[:500]}")
-            # Fallback: 返回默认大纲结构而不是失败
-            default_structure = self._generate_default_structure(
-                user_requirements=user_requirements,
-                max_sections=max_sections,
-                max_subsections_per_section=max_subsections_per_section
-            )
             return {
-                "success": True,
-                "structure": default_structure,
+                "success": False,
+                "error": f"outline_json_parse_failed: {e}",
                 "metadata": {
                     "provider_chain": self.provider_chain,
-                    "active_provider": "fallback",
-                    "model": "default",
-                    "note": f"使用默认大纲，原因: JSON 解析失败"
+                    "active_provider": self.last_provider_used,
+                    "model": self.model,
                 }
             }
         except Exception as e:
             print(f"❌ 大纲生成失败: {e}")
-            # Fallback: 返回默认大纲结构而不是失败
-            default_structure = self._generate_default_structure(
-                user_requirements=user_requirements,
-                max_sections=max_sections,
-                max_subsections_per_section=max_subsections_per_section
-            )
             return {
-                "success": True,
-                "structure": default_structure,
+                "success": False,
+                "error": f"outline_generation_failed: {e}",
                 "metadata": {
                     "provider_chain": self.provider_chain,
-                    "active_provider": "fallback",
-                    "model": "default",
-                    "note": f"使用默认大纲，原因: {str(e)}"
+                    "active_provider": self.last_provider_used,
+                    "model": self.model,
                 }
             }
 
