@@ -1268,6 +1268,7 @@ class DocumentGenerationOrchestrator:
         windowed_count = len(windowed_history)
         print(f"   📜 已通过的前置内容数: {total_history_count} (使用最近 {windowed_count} 个小节)")
 
+        subsection_started_at = time.time()
         rag_search_result: Dict[str, Any] = {"success": False, "results": []}
         rag_context = ""
         require_source_citations = False
@@ -1326,7 +1327,6 @@ class DocumentGenerationOrchestrator:
             source_citation_required = require_source_citations
 
         effective_attempt_cap = self.max_subsection_attempts if self.max_subsection_attempts > 0 else self.max_iterations
-        subsection_started_at = time.time()
         
         while True:
             iterations += 1

@@ -322,6 +322,10 @@ services:
         value: "3500"
       - key: PROMPT_RAG_MAX_CHARS
         value: "2200"
+      - key: RAG_TIMEOUT
+        value: "4"
+      - key: RAG_SEARCH_MAX_SECONDS
+        value: "12"
       - key: PROMPT_HISTORY_MAX_CHARS
         value: "2600"
       - key: PROVIDER_JITTER
@@ -349,7 +353,7 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: SUBSECTION_MAX_SECONDS
-        value: "300"
+        value: "180"
       - key: MAX_SUBSECTION_ATTEMPTS
         value: "3"
       - key: MAX_PASS_REL_MARGIN

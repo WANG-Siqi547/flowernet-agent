@@ -13,6 +13,8 @@ class RAGSearchEngine:
     def __init__(self, max_results: int = 5, timeout: int = 10):
         self.max_results = max_results
         self.timeout = timeout
+        self.max_total_seconds = max(3.0, float(os.getenv("RAG_SEARCH_MAX_SECONDS", str(timeout))))
+        self._active_deadline: float | None = None
         self.available = True
         self.session = requests.Session()
         self.session.trust_env = False
@@ -149,9 +151,22 @@ class RAGSearchEngine:
             },
         }
 
+    def _deadline_exceeded(self) -> bool:
+        return self._active_deadline is not None and time.time() >= self._active_deadline
+
+    def _request_timeout(self) -> float:
+        if self._active_deadline is None:
+            return float(self.timeout)
+        remaining = self._active_deadline - time.time()
+        if remaining <= 0:
+            return 0.0
+        return max(0.5, min(float(self.timeout), remaining))
+
     def search(self, query: str) -> Dict[str, Any]:
         try:
             started_at = time.time()
+            previous_deadline = self._active_deadline
+            self._active_deadline = started_at + self.max_total_seconds
             query_candidates = self._build_query_candidates(query)
             results: List[Dict[str, Any]] = []
             last_error = "no_results_parsed"
@@ -184,6 +199,9 @@ class RAGSearchEngine:
                         }
 
             for query_candidate in query_candidates:
+                if self._deadline_exceeded():
+                    last_error = "rag_search_timeout"
+                    break
                 raw_html, fetch_error = self._fetch_duckduckgo_html(query_candidate)
                 if raw_html:
                     results = self._parse_results(raw_html, self.max_results)
@@ -209,6 +227,9 @@ class RAGSearchEngine:
                     fallback_candidates.append(extra_short)
 
             for fallback_query in fallback_candidates:
+                if self._deadline_exceeded():
+                    last_error = "rag_search_timeout"
+                    break
                 fallback_results = self._search_wikipedia(fallback_query)
                 if fallback_results:
                     ranked_fallback = self._rank_results(fallback_query, fallback_results)
@@ -237,6 +258,8 @@ class RAGSearchEngine:
                 "results": [],
                 "error": str(exc),
             }
+        finally:
+            self._active_deadline = previous_deadline if "previous_deadline" in locals() else None
 
     def _build_query_candidates(self, query: str) -> List[str]:
         query_text = " ".join(str(query or "").split())[:300].strip()
@@ -301,6 +324,8 @@ class RAGSearchEngine:
         academic_queries = self._academic_queries(query_text, semantic_query, profile)
 
         for crossref_query in academic_queries:
+            if self._deadline_exceeded():
+                return results
             for item in self._search_crossref(crossref_query, max_items=raw_limit):
                 href = str(item.get("href", ""))
                 if href and href not in seen:
@@ -316,6 +341,8 @@ class RAGSearchEngine:
             if semantic_query and semantic_query not in arxiv_candidates:
                 arxiv_candidates.append(semantic_query)
             for arxiv_query in arxiv_candidates:
+                if self._deadline_exceeded():
+                    return results
                 for item in self._search_arxiv(arxiv_query):
                     href = str(item.get("href", ""))
                     if href and href not in seen:
@@ -341,6 +368,8 @@ class RAGSearchEngine:
             targeted_domains = ["jstor.org", "cambridge.org", "oxfordacademic.com", "tandfonline.com", "springer.com"]
 
         for domain in targeted_domains:
+            if self._deadline_exceeded():
+                return results
             for item in self._search_site_targeted(academic_queries[0] if academic_queries else query_text, domain):
                 href = str(item.get("href", ""))
                 if href and href not in seen:
@@ -366,6 +395,8 @@ class RAGSearchEngine:
 
         backfill_queries = self._safe_backfill_queries(query_text, semantic_query, profile)
         for backfill_query in backfill_queries:
+            if self._deadline_exceeded():
+                return self._rank_results(query, candidates)
             for item in self._search_crossref(backfill_query, max_items=max(10, self.max_results * 4)):
                 href = str(item.get("href", ""))
                 if href and href not in seen:
@@ -381,6 +412,8 @@ class RAGSearchEngine:
             if domain == "doi.org":
                 continue
             for backfill_query in backfill_queries[:2]:
+                if self._deadline_exceeded():
+                    return self._rank_results(query, candidates)
                 for item in self._search_site_targeted(backfill_query, domain):
                     href = str(item.get("href", ""))
                     if href and href not in seen:
@@ -539,6 +572,9 @@ class RAGSearchEngine:
     def _search_crossref(self, query: str, max_items: int | None = None) -> List[Dict[str, Any]]:
         if not query:
             return []
+        request_timeout = self._request_timeout()
+        if request_timeout <= 0:
+            return []
         try:
             rows = max(2, int(max_items or self.max_results))
             response = self.session.get(
@@ -549,7 +585,7 @@ class RAGSearchEngine:
                     "sort": "relevance",
                     "order": "desc",
                 },
-                timeout=self.timeout,
+                timeout=request_timeout,
                 headers={"User-Agent": self._user_agent},
             )
             if response.status_code != 200:
@@ -609,6 +645,9 @@ class RAGSearchEngine:
     def _search_arxiv(self, query: str) -> List[Dict[str, Any]]:
         if not query:
             return []
+        request_timeout = self._request_timeout()
+        if request_timeout <= 0:
+            return []
         try:
             api_url = "http://export.arxiv.org/api/query"
             response = self.session.get(
@@ -620,7 +659,7 @@ class RAGSearchEngine:
                     "sortBy": "relevance",
                     "sortOrder": "descending",
                 },
-                timeout=self.timeout,
+                timeout=request_timeout,
                 headers={"User-Agent": self._user_agent},
             )
             if response.status_code != 200 or not response.text:
@@ -663,6 +702,8 @@ class RAGSearchEngine:
 
     def _search_site_targeted(self, query: str, domain: str) -> List[Dict[str, Any]]:
         if not query or not domain:
+            return []
+        if self._deadline_exceeded():
             return []
         site_query = f"{query} site:{domain}"
         raw_html, _ = self._fetch_duckduckgo_html(site_query)
@@ -878,11 +919,14 @@ class RAGSearchEngine:
         last_error = "unknown"
         for endpoint in endpoints:
             for attempt in range(1, 3):
+                request_timeout = self._request_timeout()
+                if request_timeout <= 0:
+                    return "", "rag_search_timeout"
                 try:
                     response = self.session.get(
                         endpoint,
                         params={"q": query},
-                        timeout=self.timeout,
+                        timeout=request_timeout,
                         headers=headers,
                     )
                     if response.status_code == 200 and response.text:
@@ -892,7 +936,9 @@ class RAGSearchEngine:
                     last_error = str(exc)
 
                 if attempt == 1:
-                    time.sleep(0.35)
+                    if self._deadline_exceeded():
+                        return "", "rag_search_timeout"
+                    time.sleep(min(0.35, max(0.0, self._request_timeout())))
 
         return "", f"duckduckgo_html_fetch_failed: {last_error}"
 
@@ -911,6 +957,9 @@ class RAGSearchEngine:
         results: List[Dict[str, Any]] = []
 
         for endpoint in endpoints:
+            request_timeout = self._request_timeout()
+            if request_timeout <= 0:
+                return results
             try:
                 response = self.session.get(
                     endpoint,
@@ -922,7 +971,7 @@ class RAGSearchEngine:
                         "format": "json",
                         "utf8": 1,
                     },
-                    timeout=self.timeout,
+                    timeout=request_timeout,
                     headers=headers,
                 )
                 if response.status_code != 200:

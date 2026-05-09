@@ -1157,35 +1157,47 @@
           if (streamEndedRef.current) {
             return;
           }
-          setRunning(false);
           closeSse();
 
           const docId = documentIdRef.current;
           if (docId) {
-            try {
-              const resp = await fetch(`/api/recover-document?document_id=${encodeURIComponent(docId)}`);
-              if (resp.ok) {
-                const recovered = await resp.json();
-                if (recovered && recovered.success) {
-                  const stats = recovered.stats || {};
-                  const expected = Math.max(1, Number(stats.expected_subsections || progress.total || 0));
-                  const passed = Math.min(expected, Number(stats.passed_subsections || 0));
-                  setDoc({ title: recovered.title || "", content: recovered.content || "" });
-                  setProgress({
-                    current: passed,
-                    total: expected,
-                    percent: expected > 0 ? Math.min(100, Math.round((passed / expected) * 100)) : 0
-                  });
-                  setStatusText(`Stream disconnected, recovered ${passed}/${expected || passed} subsections.`);
-                  return;
+            setStatusText("Stream disconnected. Continuing recovery polling...");
+            const expectedTotal = Math.max(1, Number(progress.total || total || 0));
+            const recoveryDeadline = Date.now() + (2 * 60 * 60 * 1000);
+
+            while (!streamEndedRef.current && Date.now() < recoveryDeadline) {
+              try {
+                const resp = await fetch(`/api/recover-document?document_id=${encodeURIComponent(docId)}`, { cache: "no-store" });
+                if (resp.ok) {
+                  const recovered = await resp.json();
+                  if (recovered && recovered.success) {
+                    const stats = recovered.stats || {};
+                    const expected = Math.max(1, Number(stats.expected_subsections || expectedTotal || 0));
+                    const passed = Math.min(expected, Number(stats.passed_subsections || 0));
+                    setDoc({ title: recovered.title || "", content: recovered.content || "" });
+                    setProgress({
+                      current: passed,
+                      total: expected,
+                      percent: expected > 0 ? Math.min(100, Math.round((passed / expected) * 100)) : 0
+                    });
+                    setStatusText(`Stream disconnected, continuing in background. Recovered ${passed}/${expected} subsections.`);
+                    if (passed >= expected) {
+                      streamEndedRef.current = true;
+                      setRunning(false);
+                      setStatusText("Generation completed after stream recovery.");
+                      return;
+                    }
+                  }
                 }
+              } catch {
+                // Continue polling. Render may briefly restart or reject a request.
               }
-            } catch {
-              // fall through to generic status text
+              await new Promise((resolve) => setTimeout(resolve, 15000));
             }
           }
 
-          setStatusText("Stream disconnected before completion. Possible service restart or upstream timeout.");
+          setRunning(false);
+          setStatusText("Stream disconnected before completion. Background recovery timed out.");
         });
       };
 
