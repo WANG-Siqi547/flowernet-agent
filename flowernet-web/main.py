@@ -110,6 +110,8 @@ DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
 DOWNSTREAM_JITTER = float(os.getenv("DOWNSTREAM_JITTER", "0.35"))
 DOWNSTREAM_OUTLINER_MIN_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MIN_RETRIES", "1"))
 DOWNSTREAM_OUTLINER_MAX_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MAX_RETRIES", "2"))
+OUTLINER_TASK_START_RETRIES = int(os.getenv("OUTLINER_TASK_START_RETRIES", "8"))
+OUTLINER_TASK_START_BACKOFF = float(os.getenv("OUTLINER_TASK_START_BACKOFF", "8.0"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_503 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_503", "8.0"))
 DOWNSTREAM_GENERATOR_MIN_RETRIES = int(os.getenv("DOWNSTREAM_GENERATOR_MIN_RETRIES", "1"))
 DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_DELAY_429", "10.0"))
@@ -664,6 +666,117 @@ def post_json_once(url: str, payload: Dict[str, Any], timeout: int) -> Dict[str,
         raise HTTPException(status_code=502, detail=f"下游服务请求失败: {url}, 错误: {exc}")
 
 
+def _extract_title_from_requirements(requirements: str) -> str:
+    text = str(requirements or "").strip()
+    for line in text.splitlines():
+        line = line.strip(" -#:\t")
+        if not line:
+            continue
+        for prefix in ("文档主题", "主题", "Topic", "topic"):
+            if line.startswith(prefix):
+                candidate = line.split(":", 1)[-1].split("：", 1)[-1].strip()
+                if candidate:
+                    return candidate[:80]
+        return line[:80]
+    return "FlowerNet Document"
+
+
+def _save_fallback_outline_bundle(document_id: str, title: str, structure: Dict[str, Any], content_prompts: List[Dict[str, Any]]) -> None:
+    try:
+        post_json_once(
+            f"{OUTLINER_URL}/outline/save",
+            {
+                "document_id": document_id,
+                "outline_content": f"# {title}\n\n" + json.dumps(structure, ensure_ascii=False, indent=2),
+                "outline_type": "document",
+                "metadata": {"title": title, "fallback": True},
+            },
+            timeout=20,
+        )
+    except Exception as exc:
+        print(f"[Web] ⚠️ 本地兜底大纲 document 保存失败，继续生成: {exc}")
+
+    prompt_map = {
+        f"{cp.get('section_id')}::{cp.get('subsection_id')}": cp
+        for cp in content_prompts
+        if isinstance(cp, dict)
+    }
+    for section in structure.get("sections", []) if isinstance(structure, dict) else []:
+        if not isinstance(section, dict):
+            continue
+        section_id = str(section.get("id") or "")
+        section_title = str(section.get("title") or section_id or "Section")
+        section_outline = str(section.get("description") or section_title)
+        try:
+            post_json_once(
+                f"{OUTLINER_URL}/outline/save",
+                {
+                    "document_id": document_id,
+                    "outline_content": section_outline,
+                    "outline_type": "section",
+                    "section_id": section_id,
+                    "metadata": {"title": section_title, "fallback": True},
+                },
+                timeout=20,
+            )
+        except Exception:
+            pass
+        for subsection in section.get("subsections", []) if isinstance(section.get("subsections"), list) else []:
+            if not isinstance(subsection, dict):
+                continue
+            subsection_id = str(subsection.get("id") or "")
+            subsection_title = str(subsection.get("title") or subsection_id or "Subsection")
+            cp = prompt_map.get(f"{section_id}::{subsection_id}", {})
+            try:
+                post_json_once(
+                    f"{OUTLINER_URL}/outline/save",
+                    {
+                        "document_id": document_id,
+                        "outline_content": str(subsection.get("description") or subsection_title),
+                        "outline_type": "subsection",
+                        "section_id": section_id,
+                        "subsection_id": subsection_id,
+                        "metadata": {
+                            "title": subsection_title,
+                            "content_prompt": cp.get("content_prompt", ""),
+                            "fallback": True,
+                        },
+                    },
+                    timeout=20,
+                )
+            except Exception:
+                pass
+
+
+def _build_local_outline_response(payload: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    """Build a deterministic emergency outline when Render rejects outliner task starts."""
+    document_id = str(payload.get("document_id") or f"fallback_{uuid4().hex[:8]}")
+    title = _extract_title_from_requirements(str(payload.get("user_requirements") or ""))
+    chapter_count = max(1, min(int(payload.get("max_sections") or 2), 10))
+    subsection_count = max(1, min(int(payload.get("max_subsections_per_section") or 2), 8))
+    structure, content_prompts, _, _ = ensure_exact_structure_and_prompts(
+        title=title,
+        structure={"title": title, "sections": []},
+        content_prompts=[],
+        chapter_count=chapter_count,
+        subsection_count=subsection_count,
+    )
+    _save_fallback_outline_bundle(document_id=document_id, title=title, structure=structure, content_prompts=content_prompts)
+    return {
+        "success": True,
+        "document_title": title,
+        "document_id": document_id,
+        "outline_saved": True,
+        "structure_outline_saved": True,
+        "section_count": len(structure.get("sections", [])),
+        "subsection_outlines_count": chapter_count * subsection_count,
+        "structure": structure,
+        "content_prompts": content_prompts,
+        "fallback_outline": True,
+        "fallback_reason": reason,
+    }
+
+
 def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
     """Start outline generation through the async task API and poll for completion.
 
@@ -676,14 +789,29 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
     poll_timeout = max(OUTLINER_DOWNSTREAM_MIN_TIMEOUT, int(timeout))
     task_resp: Dict[str, Any] = {}
 
-    try:
-        task_resp = post_json_once(url=task_url, payload=payload, timeout=min(30, poll_timeout))
-    except HTTPException as exc:
-        detail = str(exc.detail)
-        if "HTTP 404" in detail or "Not Found" in detail:
-            print("[Web] ⚠️ Outliner async task API unavailable, falling back to legacy blocking endpoint")
-            return post_json_once(url=legacy_url, payload=payload, timeout=poll_timeout)
-        raise
+    start_attempts = max(1, OUTLINER_TASK_START_RETRIES)
+    last_start_error = ""
+    for start_attempt in range(1, start_attempts + 1):
+        try:
+            task_resp = post_json_once(url=task_url, payload=payload, timeout=min(30, poll_timeout))
+            break
+        except HTTPException as exc:
+            detail = str(exc.detail)
+            last_start_error = detail
+            if "HTTP 404" in detail or "Not Found" in detail:
+                print("[Web] ⚠️ Outliner async task API unavailable, falling back to legacy blocking endpoint")
+                return post_json_once(url=legacy_url, payload=payload, timeout=poll_timeout)
+            if "HTTP 429" not in detail and "Too Many Requests" not in detail:
+                raise
+            if start_attempt >= start_attempts:
+                print("[Web] ⚠️ Outliner task start repeatedly hit 429; using local emergency outline")
+                return _build_local_outline_response(payload, reason=last_start_error[:240])
+            delay = min(
+                DOWNSTREAM_MAX_BACKOFF,
+                max(DOWNSTREAM_OUTLINER_MIN_DELAY_429, OUTLINER_TASK_START_BACKOFF * start_attempt),
+            )
+            print(f"[Web] ⏳ Outliner task start hit 429; retrying in {delay:.1f}s ({start_attempt}/{start_attempts})")
+            time.sleep(delay)
 
     if isinstance(task_resp, dict) and task_resp.get("status") == "completed" and isinstance(task_resp.get("result"), dict):
         return task_resp["result"]
