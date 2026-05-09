@@ -118,6 +118,10 @@ services:
         value: "true"
       - key: SERIALIZE_DOCUMENT_WAIT_TIMEOUT
         value: "180"
+      - key: DOCUMENT_TASK_HARD_TIMEOUT
+        value: "900"
+      - key: DOCUMENT_TASK_STALE_SECONDS
+        value: "1200"
       - key: DOC_RETRY_BASE_DELAY
         value: "2.0"
       - key: DOC_RETRY_MAX_DELAY

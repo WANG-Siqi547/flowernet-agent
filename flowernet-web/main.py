@@ -4188,6 +4188,12 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 detail = ""
                 if isinstance(gen_resp, dict):
                     detail = str(gen_resp.get("error") or gen_resp.get("message") or "").strip()
+                    if not detail:
+                        detail = str({
+                            "task_id": gen_resp.get("task_id"),
+                            "last_status": gen_resp.get("last_status"),
+                            "interrupted": gen_resp.get("interrupted"),
+                        })
                 message = "生成服务连接失败"
                 if detail:
                     message = f"{message}: {detail[:260]}"

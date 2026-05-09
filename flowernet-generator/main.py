@@ -143,6 +143,8 @@ document_task_queue: "queue.Queue[str]" = queue.Queue()
 document_tasks: Dict[str, Dict[str, Any]] = {}
 document_tasks_lock = threading.Lock()
 document_worker_started = False
+DOCUMENT_TASK_HARD_TIMEOUT = max(120, int(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT", "900")))
+DOCUMENT_TASK_STALE_SECONDS = max(120, int(os.getenv("DOCUMENT_TASK_STALE_SECONDS", "1200")))
 
 
 def ensure_generator_initialized():
@@ -167,7 +169,33 @@ def _set_document_task(task_id: str, **updates: Any) -> None:
         task["updated_at"] = datetime.now().isoformat()
 
 
+def _task_age_seconds(task: Dict[str, Any]) -> float:
+    raw = task.get("started_at") or task.get("created_at")
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, (datetime.now() - datetime.fromisoformat(str(raw))).total_seconds())
+    except ValueError:
+        return 0.0
+
+
+def _mark_stale_document_tasks() -> None:
+    now = datetime.now().isoformat()
+    with document_tasks_lock:
+        for task_id, task in document_tasks.items():
+            status = str(task.get("status") or "")
+            if status not in {"queued", "running"}:
+                continue
+            age = _task_age_seconds(task)
+            if age >= DOCUMENT_TASK_STALE_SECONDS:
+                task["status"] = "failed"
+                task["error"] = f"document_task_stale_after_{int(age)}s"
+                task["completed_at"] = now
+                task["updated_at"] = now
+
+
 def _find_document_task(document_id: str) -> Optional[str]:
+    _mark_stale_document_tasks()
     with document_tasks_lock:
         for task_id, task in document_tasks.items():
             if task.get("document_id") == document_id and task.get("status") in {"queued", "running", "completed"}:
@@ -175,7 +203,7 @@ def _find_document_task(document_id: str) -> Optional[str]:
     return None
 
 
-def _execute_generate_document(request: GenerateDocumentRequest) -> Dict[str, Any]:
+def _execute_generate_document(request: GenerateDocumentRequest, use_lock: bool = True) -> Dict[str, Any]:
     if generator is None:
         ensure_generator_initialized()
 
@@ -183,7 +211,7 @@ def _execute_generate_document(request: GenerateDocumentRequest) -> Dict[str, An
     if generator is not None:
         orch.set_local_generator(generator)
 
-    serialize_tasks = os.getenv("SERIALIZE_DOCUMENT_TASKS", "true").lower() == "true"
+    serialize_tasks = use_lock and os.getenv("SERIALIZE_DOCUMENT_TASKS", "true").lower() == "true"
     lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "900"))
 
     acquired = True
@@ -220,6 +248,7 @@ def _document_task_worker_loop() -> None:
     while True:
         task_id = document_task_queue.get()
         try:
+            _mark_stale_document_tasks()
             with document_tasks_lock:
                 task = document_tasks.get(task_id, {})
                 request = task.get("request")
@@ -227,7 +256,29 @@ def _document_task_worker_loop() -> None:
                 _set_document_task(task_id, status="failed", error="invalid_task_request")
                 continue
             _set_document_task(task_id, status="running", started_at=datetime.now().isoformat())
-            result = _execute_generate_document(request)
+
+            result_box: Dict[str, Any] = {}
+
+            def _run_task() -> None:
+                try:
+                    result_box["result"] = _execute_generate_document(request, use_lock=False)
+                except Exception as exc:
+                    result_box["exception"] = exc
+
+            runner = threading.Thread(target=_run_task, daemon=True, name=f"document-task-runner-{task_id}")
+            runner.start()
+            runner.join(timeout=DOCUMENT_TASK_HARD_TIMEOUT)
+            if runner.is_alive():
+                _set_document_task(
+                    task_id,
+                    status="failed",
+                    error=f"document_task_timeout_after_{DOCUMENT_TASK_HARD_TIMEOUT}s",
+                    completed_at=datetime.now().isoformat(),
+                )
+                continue
+            if result_box.get("exception") is not None:
+                raise result_box["exception"]
+            result = result_box.get("result")
             if isinstance(result, dict) and result.get("success"):
                 _set_document_task(task_id, status="completed", result=result, completed_at=datetime.now().isoformat())
             else:
@@ -615,6 +666,7 @@ def start_generate_document_task(request: GenerateDocumentRequest):
 
 
 def _document_task_status_payload(task_id: str) -> Dict[str, Any]:
+    _mark_stale_document_tasks()
     with document_tasks_lock:
         task = document_tasks.get(task_id)
         if not task:
@@ -632,6 +684,39 @@ def get_generate_document_task_status_get(task_id: str):
 @app.post("/generate_document_task/status")
 def get_generate_document_task_status_post(request: GenerateDocumentTaskStatusRequest):
     return _document_task_status_payload(request.task_id)
+
+
+@app.get("/generate_document_tasks/summary")
+def get_generate_document_tasks_summary():
+    """Return task queue diagnostics without exposing prompts or document content."""
+    _mark_stale_document_tasks()
+    with document_tasks_lock:
+        items = []
+        counts: Dict[str, int] = {}
+        for task_id, task in document_tasks.items():
+            status = str(task.get("status") or "unknown")
+            counts[status] = counts.get(status, 0) + 1
+            items.append({
+                "task_id": task_id,
+                "document_id": task.get("document_id"),
+                "status": status,
+                "age_seconds": round(_task_age_seconds(task), 1),
+                "created_at": task.get("created_at"),
+                "started_at": task.get("started_at"),
+                "completed_at": task.get("completed_at"),
+                "updated_at": task.get("updated_at"),
+                "error": str(task.get("error") or "")[:300],
+            })
+    items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {
+        "success": True,
+        "queue_size": document_task_queue.qsize(),
+        "worker_started": document_worker_started,
+        "hard_timeout_seconds": DOCUMENT_TASK_HARD_TIMEOUT,
+        "stale_seconds": DOCUMENT_TASK_STALE_SECONDS,
+        "counts": counts,
+        "tasks": items[:25],
+    }
 
 
 @app.post("/diagnostics/providers")
