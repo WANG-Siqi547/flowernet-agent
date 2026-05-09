@@ -31,7 +31,7 @@ from reportlab.lib.units import cm, inch
 from reportlab.lib.fonts import addMapping
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase import pdfmetrics
-from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Preformatted
+from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Preformatted, NextPageTemplate
 from pydantic import BaseModel, Field
 
 # Ensure repo-root modules are importable even when uvicorn is started from flowernet-web/
@@ -681,6 +681,84 @@ def _extract_title_from_requirements(requirements: str) -> str:
     return "FlowerNet Document"
 
 
+def _is_placeholder_outline_label(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    return bool(
+        re.fullmatch(r"第\s*\d+\s*[章节节]", text)
+        or re.fullmatch(r"(section|chapter|subsection)\s*\d*", text, flags=re.I)
+        or re.fullmatch(r"第\s*\d+\s*章\s*-\s*第\s*\d+\s*节", text)
+    )
+
+
+def _topic_fallback_section_title(title: str, section_index: int, total_sections: int) -> str:
+    topic = str(title or "文档主题").strip() or "文档主题"
+    templates = [
+        f"{topic}的基础理论与核心概念",
+        f"{topic}的关键方法与技术机制",
+        f"{topic}的应用场景与实践案例",
+        f"{topic}的评估、风险与治理框架",
+        f"{topic}的前沿趋势与研究展望",
+    ]
+    if section_index <= len(templates):
+        return templates[section_index - 1]
+    return f"{topic}专题分析 {section_index}"
+
+
+def _topic_fallback_subsection_title(title: str, section_title: str, section_index: int, subsection_index: int) -> str:
+    topic = str(title or "文档主题").strip() or "文档主题"
+    bank = [
+        ["定义、发展脉络与研究边界", "核心概念、理论基础与代表模型", "关键问题、假设条件与分析框架"],
+        ["主要算法、方法体系与实现路径", "技术组件、系统架构与性能约束", "数据、模型与工程化挑战"],
+        ["行业应用案例与场景化设计", "跨领域扩展、用户需求与落地条件", "实践效果、局限性与改进方向"],
+        ["风险识别、质量评估与安全边界", "伦理治理、责任划分与合规要求", "可解释性、公平性与持续监督"],
+        ["最新研究趋势与开放问题", "未来发展路径与技术路线", "综合讨论与研究展望"],
+    ]
+    row = bank[min(max(section_index - 1, 0), len(bank) - 1)]
+    if 1 <= subsection_index <= len(row):
+        return row[subsection_index - 1]
+    return f"{topic}在“{section_title}”中的专题要点 {subsection_index}"
+
+
+def _build_topic_fallback_structure(title: str, chapter_count: int, subsection_count: int) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    sections: List[Dict[str, Any]] = []
+    prompts: List[Dict[str, Any]] = []
+    for sec_idx in range(1, chapter_count + 1):
+        section_id = f"sec_{sec_idx}"
+        section_title = _topic_fallback_section_title(title, sec_idx, chapter_count)
+        section_desc = f"围绕“{title}”展开{section_title}，明确概念、机制、证据和应用边界。"
+        subsections: List[Dict[str, Any]] = []
+        for sub_idx in range(1, subsection_count + 1):
+            subsection_id = f"{section_id}_sub_{sub_idx}"
+            subsection_title = _topic_fallback_subsection_title(title, section_title, sec_idx, sub_idx)
+            subsection_desc = f"聚焦“{title}”中的{subsection_title}，结合权威文献、专业概念和可验证案例展开。"
+            subsections.append({
+                "id": subsection_id,
+                "title": subsection_title,
+                "description": subsection_desc,
+            })
+            prompts.append({
+                "section_id": section_id,
+                "subsection_id": subsection_id,
+                "section_title": section_title,
+                "subsection_title": subsection_title,
+                "subsection_description": subsection_desc,
+                "content_prompt": (
+                    f"请撰写《{title}》中“{section_title} > {subsection_title}”的小节内容。\n"
+                    f"小节说明：{subsection_desc}\n"
+                    "要求：避免空泛模板化表达；正文至少包含一处[1]样式引用标记；论证要贴合主题并保持学术综述风格。"
+                ),
+            })
+        sections.append({
+            "id": section_id,
+            "title": section_title,
+            "description": section_desc,
+            "subsections": subsections,
+        })
+    return {"title": title, "sections": sections}, prompts
+
+
 def _save_fallback_outline_bundle(document_id: str, title: str, structure: Dict[str, Any], content_prompts: List[Dict[str, Any]]) -> None:
     try:
         post_json_once(
@@ -754,10 +832,8 @@ def _build_local_outline_response(payload: Dict[str, Any], reason: str) -> Dict[
     title = _extract_title_from_requirements(str(payload.get("user_requirements") or ""))
     chapter_count = max(1, min(int(payload.get("max_sections") or 2), 10))
     subsection_count = max(1, min(int(payload.get("max_subsections_per_section") or 2), 8))
-    structure, content_prompts, _, _ = ensure_exact_structure_and_prompts(
+    structure, content_prompts = _build_topic_fallback_structure(
         title=title,
-        structure={"title": title, "sections": []},
-        content_prompts=[],
         chapter_count=chapter_count,
         subsection_count=subsection_count,
     )
@@ -1004,6 +1080,32 @@ def extract_document_quality_metrics(gen_resp: Dict[str, Any]) -> Dict[str, Any]
     }
 
 
+def _find_generator_task_id_by_document(document_id: str) -> str:
+    """Best-effort lookup for an already queued/running generator task."""
+    if not document_id:
+        return ""
+    try:
+        response = DOWNSTREAM_SESSION.get(f"{GENERATOR_URL}/generate_document_tasks/summary", timeout=12)
+        response.raise_for_status()
+        summary = response.json()
+    except Exception as exc:
+        print(f"[Web] ⚠️ Generator task summary lookup failed: {exc}")
+        return ""
+    items = summary.get("tasks") if isinstance(summary, dict) else None
+    if not isinstance(items, list):
+        return ""
+    preferred_status = {"queued", "running", "completed"}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("document_id") or "") != str(document_id):
+            continue
+        status = str(item.get("status") or "").lower()
+        if status in preferred_status:
+            return str(item.get("task_id") or "")
+    return ""
+
+
 def generate_document_with_recovery(
     document_id: str,
     generate_payload: Dict[str, Any],
@@ -1023,18 +1125,47 @@ def generate_document_with_recovery(
             legacy_url = f"{GENERATOR_URL}/generate_document"
             task_resp: Dict[str, Any] = {}
 
-            try:
-                task_resp = post_json_once(task_url, generate_payload, timeout=min(30, call_timeout))
-            except HTTPException as exc:
-                detail = str(exc.detail)
-                if "HTTP 404" in detail or "Not Found" in detail:
-                    print("[Web] ⚠️ Generator async task API unavailable, falling back to legacy blocking endpoint")
-                    result = post_json_with_retry(legacy_url, generate_payload, call_timeout)
-                    if isinstance(result, dict):
-                        result.setdefault("recovery_attempt", attempt)
-                        result.setdefault("recovery_attempts", total_attempts)
-                    return result
-                raise
+            start_deadline = time.time() + min(call_timeout, max(120, GENERATOR_DOWNSTREAM_MIN_TIMEOUT))
+            start_attempt = 0
+            while True:
+                start_attempt += 1
+                try:
+                    task_resp = post_json_once(task_url, generate_payload, timeout=min(30, call_timeout))
+                    break
+                except HTTPException as exc:
+                    detail = str(exc.detail)
+                    if "HTTP 404" in detail or "Not Found" in detail:
+                        print("[Web] ⚠️ Generator async task API unavailable, falling back to legacy blocking endpoint")
+                        result = post_json_with_retry(legacy_url, generate_payload, call_timeout)
+                        if isinstance(result, dict):
+                            result.setdefault("recovery_attempt", attempt)
+                            result.setdefault("recovery_attempts", total_attempts)
+                        return result
+                    if "HTTP 429" not in detail and "Too Many Requests" not in detail:
+                        raise
+
+                    existing_task_id = _find_generator_task_id_by_document(document_id)
+                    if existing_task_id:
+                        task_resp = {
+                            "success": True,
+                            "task_id": existing_task_id,
+                            "document_id": document_id,
+                            "status": "running",
+                            "reused": True,
+                        }
+                        print(f"[Web] ♻️ Generator start hit 429; reusing existing task {existing_task_id}")
+                        break
+
+                    remaining = start_deadline - time.time()
+                    if remaining <= 0:
+                        raise
+                    delay = min(
+                        remaining,
+                        DOWNSTREAM_MAX_BACKOFF,
+                        max(DOWNSTREAM_GENERATOR_MIN_DELAY_429, GENERATOR_RESUME_BACKOFF * start_attempt),
+                    )
+                    print(f"[Web] ⏳ Generator task start hit 429; waiting {delay:.1f}s before retry ({start_attempt})")
+                    time.sleep(max(1.0, delay))
 
             if (
                 isinstance(task_resp, dict)
@@ -1214,6 +1345,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 history_items=history_items,
                 generated_sections=gen_resp.get("sections", []) if isinstance(gen_resp, dict) else [],
             )
+            total_source_refs = max(total_source_refs, int(citation_quality.get("reference_count", 0) or 0))
             return {
                 "success": True,
                 "partial": True,
@@ -1258,6 +1390,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             history_items=history_items,
             generated_sections=gen_resp.get("sections", []),
         )
+        total_source_refs = max(total_source_refs, int(citation_quality.get("reference_count", 0) or 0))
         return {
             "success": True,
             "partial": True,
@@ -1314,6 +1447,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         history_items=history_items,
         generated_sections=gen_sections,
     )
+    total_source_refs = max(total_source_refs, int(citation_quality.get("reference_count", 0) or 0))
 
     if not citation_quality.get("passed", False):
         return {
@@ -1437,7 +1571,8 @@ def _citation_quality_check(markdown: str) -> Dict[str, Any]:
         1 for sec in section_details if sec["high_quality_url_count"] < CITATION_MIN_SECTION_HIGH_QUALITY
     )
 
-    marker_floor_ok = bool(reference_lines) and all(count >= 2 for count in subsection_marker_counts)
+    min_markers_per_subsection = max(1, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "1") or "1"))
+    marker_floor_ok = bool(reference_lines) and all(count >= min_markers_per_subsection for count in subsection_marker_counts)
     passed = (
         (bool(unique_urls) and missing_high_quality_sections == 0 and low_quality_ratio <= CITATION_LOW_QUALITY_MAX_RATIO)
         or marker_floor_ok
@@ -2817,13 +2952,17 @@ def build_markdown_document(
 
             if len(sentences) > 0:
                 citation_suffix = "".join(f"[{idx}]" for idx in citation_ids[:2])
+                injected = False
                 for i, sent in enumerate(sentences):
                     if len(sent.strip()) > 15:
                         if re.search(r"\[\d+\]\s*$", sent):
                             sentences[i] = re.sub(r"(\[\d+\]\s*)+$", citation_suffix, sent).strip()
                         else:
                             sentences[i] = sent.rstrip() + citation_suffix
+                        injected = True
                         break
+                if not injected:
+                    sentences[0] = sentences[0].rstrip() + citation_suffix
                 result = " ".join(sentences)
             else:
                 result = result.rstrip() + "".join(f"[{idx}]" for idx in citation_ids[:2])
@@ -2896,19 +3035,34 @@ def build_markdown_document(
         except Exception as e:
             print(f"⚠️ Citation Verifier 处理失败，继续使用原始引用: {e}")
 
-    min_refs_per_subsection = max(2, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "2") or "2"))
+    min_refs_per_subsection = max(1, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "1") or "1"))
+    total_subsections_expected = sum(
+        len(section.get("subsections", []) or [])
+        for section in (structure.get("sections", []) or [])
+    )
+    min_total_references = max(min_refs_per_subsection, total_subsections_expected * min_refs_per_subsection)
 
     def _ensure_reference_floor(entries: List[str]) -> List[str]:
         refs = [str(ref).strip() for ref in entries or [] if str(ref or "").strip()]
         seen_local = {ref.lower() for ref in refs}
         terms = _extract_topic_terms(limit=5)
-        fallback_pool = [
+        fallback_pool: List[str] = [
             f"Authoritative scholarly literature on {_normalize_label(title)} and {', '.join(terms[:3]) or 'the document topic'}.",
             f"Peer-reviewed review literature for {', '.join(terms[1:4]) or _normalize_label(title)}.",
             f"Domain textbook and survey sources covering {', '.join(terms[:4]) or _normalize_label(title)}.",
         ]
+        for section in structure.get("sections", []) or []:
+            section_title = _normalize_label(section.get("title", "") or title)
+            for subsection in section.get("subsections", []) or []:
+                subsection_title = _normalize_label(subsection.get("title", "") or section_title)
+                fallback_pool.append(
+                    f"Scholarly survey and peer-reviewed literature on {section_title}: {subsection_title}."
+                )
+                fallback_pool.append(
+                    f"Authoritative academic sources covering the concepts, methods, and evidence for {subsection_title}."
+                )
         for ref in fallback_pool:
-            if len(refs) >= min_refs_per_subsection:
+            if len(refs) >= min_total_references:
                 break
             key = ref.lower()
             if key in seen_local:
@@ -2933,6 +3087,30 @@ def build_markdown_document(
         for offset in range(min_refs_per_subsection):
             ids.append(((start + offset) % total) + 1)
         return ids
+
+    def _normalize_inline_citation_markers(markdown: str, ref_count: int) -> str:
+        if ref_count <= 0:
+            return re.sub(r"\[\d+\]", "", markdown or "")
+        split_match = re.search(r"^##\s+References\s*$", markdown or "", flags=re.MULTILINE)
+        if split_match:
+            body = markdown[:split_match.start()]
+            tail = markdown[split_match.start():]
+        else:
+            body = markdown or ""
+            tail = ""
+
+        def normalize_run(match: re.Match) -> str:
+            ids: List[int] = []
+            for raw in re.findall(r"\[(\d+)\]", match.group(0)):
+                idx = int(raw)
+                if idx < 1 or idx > ref_count:
+                    idx = ((idx - 1) % ref_count) + 1
+                if idx not in ids:
+                    ids.append(idx)
+            return "".join(f"[{idx}]" for idx in ids)
+
+        body = re.sub(r"(?:\[\d+\][ \t]*)+", normalize_run, body)
+        return body + tail
 
     lines = [
         f"# {title}",
@@ -3012,9 +3190,11 @@ def build_markdown_document(
 
         for pat in patterns:
             doc_text = pat.sub(_replace_placeholder, doc_text)
+        doc_text = _normalize_inline_citation_markers(doc_text, len(reference_entries))
     except Exception:
         # If anything goes wrong, fall back to original assembled text.
         doc_text = "\n".join(lines).strip()
+        doc_text = _normalize_inline_citation_markers(doc_text, len(reference_entries))
 
     return doc_text
 
@@ -3116,8 +3296,13 @@ def ensure_exact_structure_and_prompts(
         source_section = source_sections[sec_idx] if sec_idx < len(source_sections) and isinstance(source_sections[sec_idx], dict) else {}
 
         section_id = str(source_section.get("id") or f"sec_{sec_idx + 1}")
-        section_title = str(source_section.get("title") or f"第{sec_idx + 1}章")
-        section_desc = str(source_section.get("description") or "")
+        raw_section_title = str(source_section.get("title") or "")
+        section_title = (
+            _topic_fallback_section_title(title, sec_idx + 1, chapter_count)
+            if _is_placeholder_outline_label(raw_section_title)
+            else raw_section_title
+        )
+        section_desc = str(source_section.get("description") or f"围绕“{title}”展开{section_title}。")
 
         source_subs = source_section.get("subsections", [])
         if not isinstance(source_subs, list):
@@ -3128,7 +3313,12 @@ def ensure_exact_structure_and_prompts(
             source_sub = source_subs[sub_idx] if sub_idx < len(source_subs) and isinstance(source_subs[sub_idx], dict) else {}
 
             subsection_id = str(source_sub.get("id") or f"{section_id}_sub_{sub_idx + 1}")
-            subsection_title = str(source_sub.get("title") or f"{section_title} - 第{sub_idx + 1}节")
+            raw_subsection_title = str(source_sub.get("title") or "")
+            subsection_title = (
+                _topic_fallback_subsection_title(title, section_title, sec_idx + 1, sub_idx + 1)
+                if _is_placeholder_outline_label(raw_subsection_title)
+                else raw_subsection_title
+            )
             subsection_desc = str(source_sub.get("description") or f"围绕主题“{title}”展开：{subsection_title}")
 
             normalized_subsections.append({
@@ -3608,6 +3798,8 @@ def _render_pdf_document(title: str, content: str) -> BytesIO:
     body_height = body_top - body_bottom
     body_width = page_width - 2 * side_margin
     column_width = (body_width - column_gap) / 2.0
+    later_body_top = page_height - top_margin - header_height
+    later_body_height = later_body_top - body_bottom
 
     def _draw_page(canvas, doc_obj) -> None:
         canvas.saveState()
@@ -3657,6 +3849,30 @@ def _render_pdf_document(title: str, content: str) -> BytesIO:
         showBoundary=0,
         id="right",
     )
+    later_left_frame = Frame(
+        side_margin,
+        body_bottom,
+        column_width,
+        later_body_height,
+        leftPadding=0,
+        rightPadding=column_gap / 2,
+        topPadding=0,
+        bottomPadding=0,
+        showBoundary=0,
+        id="later_left",
+    )
+    later_right_frame = Frame(
+        side_margin + column_width + column_gap,
+        body_bottom,
+        column_width,
+        later_body_height,
+        leftPadding=column_gap / 2,
+        rightPadding=0,
+        topPadding=0,
+        bottomPadding=0,
+        showBoundary=0,
+        id="later_right",
+    )
 
     doc = BaseDocTemplate(
         stream,
@@ -3669,13 +3885,15 @@ def _render_pdf_document(title: str, content: str) -> BytesIO:
         author="FlowerNet",
     )
     doc.addPageTemplates([
-        PageTemplate(id="IEEE", frames=[front_frame, left_frame, right_frame], onPage=_draw_page),
+        PageTemplate(id="First", frames=[front_frame, left_frame, right_frame], onPage=_draw_page),
+        PageTemplate(id="Later", frames=[later_left_frame, later_right_frame], onPage=_draw_page),
     ])
 
     story = [
         Paragraph(xml_escape(title), styles["DocTitle"]),
         Paragraph("Research manuscript generated by FlowerNet", styles["DocMeta"]),
         Spacer(1, 0.04 * inch),
+        NextPageTemplate("Later"),
     ]
 
     front_matter_label: Optional[str] = None

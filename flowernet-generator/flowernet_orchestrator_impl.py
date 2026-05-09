@@ -1788,7 +1788,13 @@ class DocumentGenerationOrchestrator:
             semantic_dimensions = verify_result.get("quality_dimensions", {}) if isinstance(verify_result.get("quality_dimensions"), dict) else {}
             dimension_check = verify_result.get("quality_dimensions_check", {}) if isinstance(verify_result.get("quality_dimensions_check"), dict) else {}
             failed_dimensions = verify_result.get("quality_dimensions_failed", []) if isinstance(verify_result.get("quality_dimensions_failed"), list) else []
-            source_check_full = source_check if isinstance(source_check, dict) else {}
+            source_check_full = dict(source_check) if isinstance(source_check, dict) else {}
+            available_source_reference_count = len(rag_search_result.get("results", []) or [])
+            source_reference_count = max(
+                int(source_check_full.get("reference_count", 0) or 0),
+                available_source_reference_count,
+            )
+            source_check_full["reference_count"] = source_reference_count
             self._emit_progress_event(
                 document_id=document_id,
                 section_id=section_id,
@@ -1813,7 +1819,7 @@ class DocumentGenerationOrchestrator:
                     "dimension_thresholds": verify_result.get("dimension_thresholds", {}),
                     "source_check": source_check_full,
                     "source_check_passed": bool(source_check_full.get("passed", False)),
-                    "source_reference_count": int(source_check_full.get("reference_count", 0) or 0),
+                    "source_reference_count": source_reference_count,
                 },
             )
 
@@ -1911,11 +1917,31 @@ class DocumentGenerationOrchestrator:
             if best_candidate is None:
                 best_candidate = current_candidate
             else:
-                best_rel = float(best_candidate.get("verification", {}).get("relevancy_index", 0) or 0)
-                best_red = float(best_candidate.get("verification", {}).get("redundancy_index", 1) or 1)
-                best_gap = max(0.0, rel_threshold - best_rel) + max(0.0, best_red - red_threshold)
-                current_gap = max(0.0, rel_threshold - rel_score) + max(0.0, red_score - red_threshold)
-                if current_gap < best_gap or (abs(current_gap - best_gap) < 1e-6 and rel_score > best_rel):
+                def candidate_gap(candidate: Dict[str, Any]) -> float:
+                    verification = candidate.get("verification", {}) if isinstance(candidate, dict) else {}
+                    cand_rel = float(verification.get("relevancy_index", 0) or 0)
+                    cand_red = float(verification.get("redundancy_index", 1) or 1)
+                    cand_quality = float(verification.get("quality_score", 0) or 0)
+                    cand_quality_threshold = float(verification.get("quality_threshold", quality_threshold) or quality_threshold or 0)
+                    cand_failed_dims = verification.get("quality_dimensions_failed", [])
+                    failed_dim_count = len(cand_failed_dims) if isinstance(cand_failed_dims, list) else 0
+                    return (
+                        max(0.0, rel_threshold - cand_rel) * 1.25
+                        + max(0.0, cand_red - red_threshold)
+                        + max(0.0, cand_quality_threshold - cand_quality) * 0.85
+                        + failed_dim_count * 0.08
+                    )
+
+                best_gap = candidate_gap(best_candidate)
+                current_gap = candidate_gap(current_candidate)
+                best_quality = float(best_candidate.get("verification", {}).get("quality_score", 0) or 0)
+                if (
+                    current_gap < best_gap
+                    or (
+                        abs(current_gap - best_gap) < 1e-6
+                        and (quality_score, rel_score) > (best_quality, float(best_candidate.get("verification", {}).get("relevancy_index", 0) or 0))
+                    )
+                ):
                     best_candidate = current_candidate
 
             print(f"         🔧 调用 Controller...")
