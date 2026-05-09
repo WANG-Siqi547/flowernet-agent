@@ -143,7 +143,8 @@ class FlowerNetGenerator:
             "timeout", "timed out", "temporarily", "500", "502", "503", "504", "408", "connection",
             "connection reset", "remote disconnected", "temporarily unavailable", "service unavailable",
             "read timed out", "ssl", "tls", "econnreset", "broken pipe", "network is unreachable",
-            "name or service not known", "temporary failure in name resolution"
+            "name or service not known", "temporary failure in name resolution",
+            "empty response", "empty content", "空响应", "空内容", "返回空",
         ]
         return any(token in text for token in transient_tokens)
 
@@ -223,7 +224,7 @@ class FlowerNetGenerator:
                     errors.append(f"{provider}: skipped (cooldown {remain:.1f}s)")
                     continue
 
-                attempt_limit = self.provider_retries if has_fallback_provider else min(self.provider_retries, 2)
+                attempt_limit = self.provider_retries if has_fallback_provider else max(3, self.provider_retries)
                 for attempt in range(1, attempt_limit + 1):
                     self._wait_for_provider_slot(provider)
 

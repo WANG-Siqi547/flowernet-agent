@@ -505,7 +505,8 @@ class FlowerNetOutliner:
             "timeout", "timed out", "temporarily", "500", "502", "503", "504", "408", "connection",
             "connection reset", "remote disconnected", "temporarily unavailable", "service unavailable",
             "read timed out", "ssl", "tls", "econnreset", "broken pipe", "network is unreachable",
-            "name or service not known", "temporary failure in name resolution"
+            "name or service not known", "temporary failure in name resolution",
+            "empty response", "empty content", "空响应", "空内容", "返回空",
         ]
         return any(token in text for token in transient_tokens)
 
@@ -574,7 +575,7 @@ class FlowerNetOutliner:
                 errors.append(f"{provider}: skipped (cooldown {remain:.1f}s)")
                 continue
 
-            attempt_limit = self.provider_retries if has_fallback_provider else max(2, self.provider_retries)
+            attempt_limit = self.provider_retries if has_fallback_provider else max(3, self.provider_retries)
             for attempt in range(1, attempt_limit + 1):
                 try:
                     self._wait_for_provider_slot(provider)
@@ -800,7 +801,12 @@ class FlowerNetOutliner:
                             content = "".join(parts)
                         text = str(content).strip()
                         if not text:
-                            raise Exception("SenseNova 返回空响应")
+                            last_error = "SenseNova 返回空响应"
+                            if transport_attempt < self.sensenova_transport_retries:
+                                delay = min(self.sensenova_transport_backoff * transport_attempt, self.provider_max_backoff)
+                                time.sleep(delay)
+                                continue
+                            break
                         usage = container.get("usage") if isinstance(container, dict) else {}
                         usage = usage or {}
                         return text, {
@@ -838,6 +844,10 @@ class FlowerNetOutliner:
                             continue
                     except Exception as exc:
                         last_error = f"SenseNova API Error: {str(exc)}"
+                        if self._is_transient_provider_error(last_error) and transport_attempt < self.sensenova_transport_retries:
+                            delay = min(self.sensenova_transport_backoff * transport_attempt, self.provider_max_backoff)
+                            time.sleep(delay)
+                            continue
                         break
 
             raise Exception(last_error)
