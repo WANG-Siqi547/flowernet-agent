@@ -67,9 +67,9 @@ services:
       - key: OPENROUTER_APP_NAME
         value: FlowerNet
       - key: PROVIDER_RETRIES
-        value: "3"
+        value: "1"
       - key: GENERATOR_PROVIDER_CHAIN
-        value: "sensenova,azure,gemini,dashscope,openrouter"
+        value: "sensenova"
       - key: PROVIDER_BACKOFF
         value: "2.0"
       - key: PROVIDER_MAX_BACKOFF

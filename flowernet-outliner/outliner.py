@@ -97,7 +97,7 @@ class FlowerNetOutliner:
         self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
         self.ollama_backoff = float(os.getenv('OLLAMA_BACKOFF', '2.0'))
         self.ollama_max_backoff = float(os.getenv('OLLAMA_MAX_BACKOFF', '45.0'))
-        self.provider_retries = int(os.getenv('OUTLINER_PROVIDER_RETRIES', os.getenv('PROVIDER_RETRIES', '2')))
+        self.provider_retries = max(1, int(os.getenv('OUTLINER_PROVIDER_RETRIES', os.getenv('PROVIDER_RETRIES', '2'))))
         self.provider_backoff = float(os.getenv('PROVIDER_BACKOFF', '2.0'))
         self.provider_max_backoff = float(os.getenv('PROVIDER_MAX_BACKOFF', '90.0'))
         self.provider_jitter = float(os.getenv('PROVIDER_JITTER', '0.35'))

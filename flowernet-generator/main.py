@@ -10,7 +10,10 @@ import uvicorn
 import os
 import sys
 import threading
+import queue
+import time
 import importlib.util
+from datetime import datetime
 
 
 def load_dotenv_file(path):
@@ -90,6 +93,16 @@ class GenerateDocumentRequest(BaseModel):
     red_threshold: float = 0.70
 
 
+class GenerateDocumentTaskStatusRequest(BaseModel):
+    task_id: str
+
+
+class ProviderDiagnosticRequest(BaseModel):
+    providers: Optional[List[str]] = None
+    prompt: str = "Write one concise sentence about game theory."
+    max_tokens: int = 80
+
+
 # ============ 全局对象 ============
 
 app = FastAPI(title="FlowerNet Generator API")
@@ -126,6 +139,10 @@ document_orchestrator = None
 history_manager = None
 document_generation_lock = threading.Lock()
 generator_init_lock = threading.Lock()
+document_task_queue: "queue.Queue[str]" = queue.Queue()
+document_tasks: Dict[str, Dict[str, Any]] = {}
+document_tasks_lock = threading.Lock()
+document_worker_started = False
 
 
 def ensure_generator_initialized():
@@ -141,6 +158,102 @@ def ensure_generator_initialized():
             provider=os.getenv("GENERATOR_PROVIDER", "sensenova"),
             model=os.getenv("GENERATOR_MODEL", None),
         )
+
+
+def _set_document_task(task_id: str, **updates: Any) -> None:
+    with document_tasks_lock:
+        task = document_tasks.setdefault(task_id, {})
+        task.update(updates)
+        task["updated_at"] = datetime.now().isoformat()
+
+
+def _find_document_task(document_id: str) -> Optional[str]:
+    with document_tasks_lock:
+        for task_id, task in document_tasks.items():
+            if task.get("document_id") == document_id and task.get("status") in {"queued", "running", "completed"}:
+                return task_id
+    return None
+
+
+def _execute_generate_document(request: GenerateDocumentRequest) -> Dict[str, Any]:
+    if generator is None:
+        ensure_generator_initialized()
+
+    orch = get_document_generation_orchestrator()
+    if generator is not None:
+        orch.set_local_generator(generator)
+
+    serialize_tasks = os.getenv("SERIALIZE_DOCUMENT_TASKS", "true").lower() == "true"
+    lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "900"))
+
+    acquired = True
+    if serialize_tasks:
+        if lock_wait_timeout > 0:
+            acquired = document_generation_lock.acquire(timeout=lock_wait_timeout)
+        else:
+            document_generation_lock.acquire()
+
+        if not acquired:
+            raise HTTPException(
+                status_code=429,
+                detail=f"已有文档生成任务正在运行，请稍后重试（等待上限 {lock_wait_timeout:.0f}s）",
+                headers={"Retry-After": str(max(5, int(min(lock_wait_timeout, 30))))},
+            )
+
+    try:
+        return orch.generate_document(
+            document_id=request.document_id,
+            title=request.title,
+            structure=request.structure,
+            content_prompts=request.content_prompts,
+            user_background=request.user_background,
+            user_requirements=request.user_requirements,
+            rel_threshold=request.rel_threshold,
+            red_threshold=request.red_threshold,
+        )
+    finally:
+        if serialize_tasks and acquired:
+            document_generation_lock.release()
+
+
+def _document_task_worker_loop() -> None:
+    while True:
+        task_id = document_task_queue.get()
+        try:
+            with document_tasks_lock:
+                task = document_tasks.get(task_id, {})
+                request = task.get("request")
+            if not isinstance(request, GenerateDocumentRequest):
+                _set_document_task(task_id, status="failed", error="invalid_task_request")
+                continue
+            _set_document_task(task_id, status="running", started_at=datetime.now().isoformat())
+            result = _execute_generate_document(request)
+            if isinstance(result, dict) and result.get("success"):
+                _set_document_task(task_id, status="completed", result=result, completed_at=datetime.now().isoformat())
+            else:
+                _set_document_task(
+                    task_id,
+                    status="failed",
+                    result=result if isinstance(result, dict) else None,
+                    error=str((result or {}).get("error") if isinstance(result, dict) else result),
+                    completed_at=datetime.now().isoformat(),
+                )
+        except Exception as e:
+            _set_document_task(task_id, status="failed", error=str(e), completed_at=datetime.now().isoformat())
+        finally:
+            document_task_queue.task_done()
+
+
+def _ensure_document_worker_started() -> None:
+    global document_worker_started
+    if document_worker_started:
+        return
+    with document_tasks_lock:
+        if document_worker_started:
+            return
+        worker = threading.Thread(target=_document_task_worker_loop, daemon=True, name="document-task-worker")
+        worker.start()
+        document_worker_started = True
 
 
 def get_history_manager(outliner_url: str):
@@ -269,6 +382,9 @@ async def startup_event():
             print(f"✅ Generator 预加载成功: {type(result).__name__}")
     else:
         print("ℹ️  启用惰性初始化：启动阶段不阻塞，首次请求时再初始化 Generator")
+
+    _ensure_document_worker_started()
+    print("✅ 文档生成后台任务 worker 已启动")
     
     sys.stdout.flush()
 
@@ -323,7 +439,9 @@ def read_root():
             "/generate": "Simple draft generation",
             "/generate_with_context": "Draft generation with context",
             "/generate_section": "Generate section with verification loop",
-            "/generate_document": "Generate complete document"
+            "/generate_document": "Generate complete document",
+            "/generate_document_task": "Start complete document generation in background",
+            "/diagnostics/providers": "Check configured LLM provider availability"
         }
     }
 
@@ -448,47 +566,7 @@ def generate_document(request: GenerateDocumentRequest):
     - 可选全局串行：同一时刻只允许一个文档任务执行（默认开启）
     """
     try:
-        if generator is None:
-            ensure_generator_initialized()
-
-        orchestrator = get_document_generation_orchestrator()
-        if generator is not None:
-            orchestrator.set_local_generator(generator)
-
-        serialize_tasks = os.getenv("SERIALIZE_DOCUMENT_TASKS", "true").lower() == "true"
-        lock_wait_timeout = float(os.getenv("SERIALIZE_DOCUMENT_WAIT_TIMEOUT", "900"))
-
-        acquired = True
-        if serialize_tasks:
-            if lock_wait_timeout > 0:
-                acquired = document_generation_lock.acquire(timeout=lock_wait_timeout)
-            else:
-                document_generation_lock.acquire()
-
-            if not acquired:
-                raise HTTPException(
-                    status_code=429,
-                    detail=(
-                        f"已有文档生成任务正在运行，请稍后重试（等待上限 {lock_wait_timeout:.0f}s）"
-                    ),
-                    headers={"Retry-After": str(max(5, int(min(lock_wait_timeout, 30))))},
-                )
-
-        try:
-            result = orchestrator.generate_document(
-                document_id=request.document_id,
-                title=request.title,
-                structure=request.structure,
-                content_prompts=request.content_prompts,
-                user_background=request.user_background,
-                user_requirements=request.user_requirements,
-                rel_threshold=request.rel_threshold,
-                red_threshold=request.red_threshold
-            )
-            return result
-        finally:
-            if serialize_tasks and acquired:
-                document_generation_lock.release()
+        return _execute_generate_document(request)
         
     except HTTPException:
         raise
@@ -496,6 +574,109 @@ def generate_document(request: GenerateDocumentRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/generate_document_task")
+def start_generate_document_task(request: GenerateDocumentRequest):
+    """启动完整文档生成后台任务，避免 Render/浏览器长连接超时。"""
+    _ensure_document_worker_started()
+
+    existing_task_id = _find_document_task(request.document_id)
+    if existing_task_id:
+        with document_tasks_lock:
+            existing = dict(document_tasks.get(existing_task_id, {}))
+        return {
+            "success": True,
+            "task_id": existing_task_id,
+            "document_id": request.document_id,
+            "status": existing.get("status", "queued"),
+            "reused": True,
+        }
+
+    task_id = f"doc_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(document_tasks) + 1}"
+    now = datetime.now().isoformat()
+    with document_tasks_lock:
+        document_tasks[task_id] = {
+            "task_id": task_id,
+            "document_id": request.document_id,
+            "status": "queued",
+            "request": request,
+            "created_at": now,
+            "updated_at": now,
+        }
+    document_task_queue.put(task_id)
+    return {
+        "success": True,
+        "task_id": task_id,
+        "document_id": request.document_id,
+        "status": "queued",
+        "reused": False,
+    }
+
+
+def _document_task_status_payload(task_id: str) -> Dict[str, Any]:
+    with document_tasks_lock:
+        task = document_tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"未知文档生成任务: {task_id}")
+        payload = {k: v for k, v in task.items() if k != "request"}
+    payload["success"] = True
+    return payload
+
+
+@app.get("/generate_document_task/{task_id}")
+def get_generate_document_task_status_get(task_id: str):
+    return _document_task_status_payload(task_id)
+
+
+@app.post("/generate_document_task/status")
+def get_generate_document_task_status_post(request: GenerateDocumentTaskStatusRequest):
+    return _document_task_status_payload(request.task_id)
+
+
+@app.post("/diagnostics/providers")
+def diagnose_providers(request: ProviderDiagnosticRequest):
+    """轻量检测远端 LLM provider 是否可用，不返回密钥或敏感配置。"""
+    configured_chain = [
+        item.strip()
+        for item in (os.getenv("GENERATOR_PROVIDER_CHAIN", "") or os.getenv("GENERATOR_PROVIDER", "sensenova")).split(",")
+        if item.strip()
+    ]
+    providers = request.providers or configured_chain or ["sensenova"]
+    max_tokens = max(1, min(int(request.max_tokens or 80), 200))
+    results: Dict[str, Any] = {}
+
+    for provider_name in providers:
+        started = time.time()
+        try:
+            probe = FlowerNetGenerator(provider=provider_name, model=os.getenv("GENERATOR_MODEL", None))
+            # FlowerNetGenerator honors GENERATOR_PROVIDER_CHAIN globally; force
+            # diagnostics to test the requested provider in isolation.
+            probe.provider_chain = [provider_name]
+            result = probe.generate_draft(request.prompt, max_tokens=max_tokens)
+            draft = str((result or {}).get("draft", "") or (result or {}).get("content", ""))
+            results[provider_name] = {
+                "success": bool(isinstance(result, dict) and result.get("success")),
+                "latency_seconds": round(time.time() - started, 3),
+                "draft_chars": len(draft),
+                "error_summary": str((result or {}).get("error", ""))[:300] if isinstance(result, dict) else "",
+                "selected_provider": (result or {}).get("provider") if isinstance(result, dict) else provider_name,
+            }
+        except Exception as exc:
+            results[provider_name] = {
+                "success": False,
+                "latency_seconds": round(time.time() - started, 3),
+                "draft_chars": 0,
+                "error_summary": f"{type(exc).__name__}: {str(exc)[:260]}",
+                "selected_provider": provider_name,
+            }
+
+    return {"success": True, "providers": providers, "results": results}
+
+
+@app.get("/diagnostics/providers")
+def diagnose_providers_get():
+    return diagnose_providers(ProviderDiagnosticRequest())
 
 
 # ============ 本地测试 ============

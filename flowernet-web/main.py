@@ -891,11 +891,82 @@ def generate_document_with_recovery(
             # Use a larger floor here than the general stream budget so SSE validation does
             # not fail just because the orchestrator needs more time than the adaptive web budget.
             call_timeout = max(GENERATOR_DOWNSTREAM_MIN_TIMEOUT, int(timeout_seconds))
-            result = post_json_with_retry(
-                f"{GENERATOR_URL}/generate_document",
-                generate_payload,
-                call_timeout,
-            )
+            task_url = f"{GENERATOR_URL}/generate_document_task"
+            legacy_url = f"{GENERATOR_URL}/generate_document"
+            task_resp: Dict[str, Any] = {}
+
+            try:
+                task_resp = post_json_once(task_url, generate_payload, timeout=min(30, call_timeout))
+            except HTTPException as exc:
+                detail = str(exc.detail)
+                if "HTTP 404" in detail or "Not Found" in detail:
+                    print("[Web] ⚠️ Generator async task API unavailable, falling back to legacy blocking endpoint")
+                    result = post_json_with_retry(legacy_url, generate_payload, call_timeout)
+                    if isinstance(result, dict):
+                        result.setdefault("recovery_attempt", attempt)
+                        result.setdefault("recovery_attempts", total_attempts)
+                    return result
+                raise
+
+            if (
+                isinstance(task_resp, dict)
+                and task_resp.get("status") == "completed"
+                and isinstance(task_resp.get("result"), dict)
+            ):
+                result = task_resp["result"]
+                result.setdefault("recovery_attempt", attempt)
+                result.setdefault("recovery_attempts", total_attempts)
+                return result
+
+            task_id = str(task_resp.get("task_id") or "").strip() if isinstance(task_resp, dict) else ""
+            if not task_id:
+                raise HTTPException(status_code=502, detail=f"Generator task API returned no task_id: {task_resp}")
+
+            deadline = time.time() + call_timeout
+            sleep_seconds = 2.0
+            status_url = f"{GENERATOR_URL}/generate_document_task/{task_id}"
+            last_status: Dict[str, Any] = {}
+
+            while time.time() < deadline:
+                try:
+                    response = DOWNSTREAM_SESSION.get(status_url, timeout=15)
+                    response.raise_for_status()
+                    status_body = response.json()
+                    if isinstance(status_body, dict):
+                        last_status = status_body
+                        status = str(status_body.get("status") or "").lower()
+                        if status == "completed" and isinstance(status_body.get("result"), dict):
+                            result = status_body["result"]
+                            result.setdefault("recovery_attempt", attempt)
+                            result.setdefault("recovery_attempts", total_attempts)
+                            result.setdefault("generator_task_id", task_id)
+                            return result
+                        if status == "failed":
+                            result = status_body.get("result")
+                            if isinstance(result, dict):
+                                result.setdefault("recovery_attempt", attempt)
+                                result.setdefault("recovery_attempts", total_attempts)
+                                result.setdefault("generator_task_id", task_id)
+                                return result
+                            raise HTTPException(
+                                status_code=502,
+                                detail=status_body.get("error") or f"generator_task_failed: {task_id}",
+                            )
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    last_status = {"error": str(exc), "task_id": task_id}
+
+                time.sleep(min(8.0, sleep_seconds))
+                sleep_seconds = min(8.0, sleep_seconds * 1.3)
+
+            result = {
+                "success": False,
+                "error": f"generator_task_timeout after {call_timeout}s",
+                "task_id": task_id,
+                "last_status": last_status,
+                "interrupted": True,
+            }
             if isinstance(result, dict):
                 result.setdefault("recovery_attempt", attempt)
                 result.setdefault("recovery_attempts", total_attempts)
