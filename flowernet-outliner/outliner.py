@@ -279,6 +279,73 @@ class FlowerNetOutliner:
             stage_name="outline_quality_repair",
         )
         return repaired, metadata
+
+    @staticmethod
+    def _extract_requirement_field(user_requirements: str, labels: List[str], default: str = "") -> str:
+        text = str(user_requirements or "")
+        for label in labels:
+            pattern = rf"{re.escape(label)}\s*[:：]\s*(.+)"
+            matched = re.search(pattern, text)
+            if matched:
+                value = matched.group(1).strip()
+                if value:
+                    return value[:120]
+        first_line = text.strip().splitlines()[0].strip() if text.strip() else ""
+        return (first_line or default).strip()[:120]
+
+    def _generate_compact_document_structure(
+        self,
+        user_background: str,
+        user_requirements: str,
+        max_sections: int,
+        max_subsections_per_section: int,
+        reason: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+        topic = self._extract_requirement_field(user_requirements, ["文档主题", "主题", "Document topic"], "文档主题")
+        audience = self._extract_requirement_field(user_requirements, ["目标读者/用户背景", "用户背景", "User background"], user_background)
+        compact_prompt = f"""
+只输出一个合法 JSON 对象，为专业长文档生成大纲。
+
+主题：{topic}
+目标读者：{audience or user_background}
+补充需求：{user_requirements[:600]}
+上一次失败原因：{reason[:240]}
+
+硬性要求：
+- title 是主题相关的专业文档标题。
+- sections 必须恰好 {max_sections} 个。
+- 每个 section 的 subsections 必须恰好 {max_subsections_per_section} 个。
+- 标题必须是专业学术标题，禁止复制用户请求句，禁止“第1章/第1节/Section/Subsection”等占位标题。
+- description 用 1 句说明该节写什么。
+
+JSON 结构：
+{{
+  "title": "文档标题",
+  "sections": [
+    {{
+      "id": "section_1",
+      "title": "章节标题",
+      "description": "章节说明",
+      "subsections": [
+        {{
+          "id": "subsection_1_1",
+          "title": "小节标题",
+          "description": "小节说明"
+        }}
+      ]
+    }}
+  ]
+}}
+"""
+        compact_tokens = max(
+            900,
+            min(self.structure_max_tokens, 900 + max_sections * max_subsections_per_section * 160),
+        )
+        return self._generate_json_with_repair(
+            compact_prompt,
+            max_tokens=compact_tokens,
+            stage_name="document_structure_compact",
+        )
     
     def generate_document_structure(
         self,
@@ -363,11 +430,21 @@ class FlowerNetOutliner:
 """
         
         try:
-            structure, llm_metadata, structure_text = self._generate_json_with_repair(
-                structure_prompt,
-                max_tokens=self.structure_max_tokens,
-                stage_name="document_structure",
-            )
+            try:
+                structure, llm_metadata, structure_text = self._generate_json_with_repair(
+                    structure_prompt,
+                    max_tokens=self.structure_max_tokens,
+                    stage_name="document_structure",
+                )
+            except Exception as exc:
+                print(f"⚠️ 标准大纲生成失败，尝试短提示 LLM 大纲: {exc}")
+                structure, llm_metadata, structure_text = self._generate_compact_document_structure(
+                    user_background=user_background,
+                    user_requirements=user_requirements,
+                    max_sections=max_sections,
+                    max_subsections_per_section=max_subsections_per_section,
+                    reason=str(exc),
+                )
 
             issues = self._outline_quality_issues(structure)
             if issues:
@@ -1019,11 +1096,22 @@ class FlowerNetOutliner:
     
     请直接输出 JSON，不要输出额外解释，不要修改任何 id。
     """
-            detailed, llm_metadata, detailed_text = self._generate_json_with_repair(
-                detailed_prompt,
-                max_tokens=self.detailed_max_tokens,
-                stage_name="detailed_section_outlines",
-            )
+            try:
+                detailed, llm_metadata, detailed_text = self._generate_json_with_repair(
+                    detailed_prompt,
+                    max_tokens=self.detailed_max_tokens,
+                    stage_name="detailed_section_outlines",
+                )
+            except Exception as exc:
+                print(f"⚠️ 详细大纲生成失败，使用基础结构继续: {exc}")
+                detailed = {}
+                llm_metadata = {
+                    "provider": self.last_provider_used,
+                    "model": self.model,
+                    "error": str(exc),
+                    "fallback_to_base_structure": True,
+                }
+                detailed_text = ""
             detailed.setdefault("title", structure.get("title", ""))
     
             base_sections = structure.get("sections", []) if isinstance(structure.get("sections", []), list) else []
