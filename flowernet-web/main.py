@@ -120,6 +120,7 @@ GENERATOR_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("GENERATOR_DOWNSTREAM_MIN_TIMEO
 GENERATOR_TASK_POLL_MAX_TIMEOUT = int(os.getenv("GENERATOR_TASK_POLL_MAX_TIMEOUT", "960"))
 GENERATOR_STATUS_MISS_LIMIT = int(os.getenv("GENERATOR_STATUS_MISS_LIMIT", "6"))
 GENERATOR_PREFLIGHT_ENABLED = os.getenv("GENERATOR_PREFLIGHT_ENABLED", "true").lower() == "true"
+GENERATOR_PREFLIGHT_STRICT = os.getenv("GENERATOR_PREFLIGHT_STRICT", "false").lower() == "true"
 OUTLINER_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("OUTLINER_DOWNSTREAM_MIN_TIMEOUT", "600"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
 DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
@@ -1022,9 +1023,9 @@ def _generator_task_exists(document_id: str, task_id: str = "") -> bool:
     return False
 
 
-def preflight_generator_or_raise(topic: str) -> None:
+def preflight_generator_warning(topic: str) -> str:
     if not GENERATOR_PREFLIGHT_ENABLED:
-        return
+        return ""
     probe_prompt = f"请用一句中文确认你可以为主题“{topic}”生成专业长文档内容。"
     try:
         response = DOWNSTREAM_SESSION.post(
@@ -1032,16 +1033,29 @@ def preflight_generator_or_raise(topic: str) -> None:
             json={"providers": ["sensenova"], "prompt": probe_prompt, "max_tokens": 40},
             timeout=90,
         )
+        if response.status_code == 429:
+            warning = "生成模型预检被限流，已跳过预检并继续正式生成"
+            print(f"[Web] ⚠️ {warning}: {response.text[:180]}")
+            return warning
         response.raise_for_status()
         body = response.json()
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"生成模型预检失败: {exc}")
+        warning = f"生成模型预检失败，已跳过预检并继续正式生成: {exc}"
+        print(f"[Web] ⚠️ {warning}")
+        if GENERATOR_PREFLIGHT_STRICT:
+            raise HTTPException(status_code=503, detail=f"生成模型预检失败: {exc}")
+        return warning
 
     results = body.get("results") if isinstance(body, dict) else {}
     sensenova = results.get("sensenova") if isinstance(results, dict) else {}
     if not isinstance(sensenova, dict) or not sensenova.get("success"):
         error_summary = str((sensenova or {}).get("error_summary") or "unknown generator provider error")
-        raise HTTPException(status_code=503, detail=f"生成模型暂不可用: {error_summary[:360]}")
+        warning = f"生成模型预检未通过，已继续正式生成: {error_summary[:360]}"
+        print(f"[Web] ⚠️ {warning}")
+        if GENERATOR_PREFLIGHT_STRICT:
+            raise HTTPException(status_code=503, detail=f"生成模型暂不可用: {error_summary[:360]}")
+        return warning
+    return ""
 
 
 def generate_document_with_recovery(
@@ -1277,7 +1291,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "rel_threshold": req.rel_threshold,
         "red_threshold": req.red_threshold,
     }
-    preflight_generator_or_raise(req.topic)
+    preflight_generator_warning(req.topic)
     gen_resp = generate_document_with_recovery(
         document_id=document_id,
         generate_payload=generate_payload,
@@ -4233,12 +4247,10 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             "rel_threshold": req.rel_threshold,
             "red_threshold": req.red_threshold,
         }
-        try:
-            preflight_generator_or_raise(req.topic)
-        except HTTPException as exc:
-            msg = json.dumps({'type': 'error', 'message': str(exc.detail)})
+        preflight_warning = preflight_generator_warning(req.topic)
+        if preflight_warning:
+            msg = json.dumps({'type': 'warning', 'message': preflight_warning})
             yield f"data: {msg}\n\n"
-            return
 
         # 在后台线程中启动生成，同时主线程推送进度
         gen_resp = None
