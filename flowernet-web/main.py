@@ -117,6 +117,9 @@ DOWNSTREAM_GENERATOR_MIN_RETRIES = int(os.getenv("DOWNSTREAM_GENERATOR_MIN_RETRI
 DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_DELAY_429", "10.0"))
 GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "0"))
 GENERATOR_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("GENERATOR_DOWNSTREAM_MIN_TIMEOUT", "600"))
+GENERATOR_TASK_POLL_MAX_TIMEOUT = int(os.getenv("GENERATOR_TASK_POLL_MAX_TIMEOUT", "960"))
+GENERATOR_STATUS_MISS_LIMIT = int(os.getenv("GENERATOR_STATUS_MISS_LIMIT", "6"))
+GENERATOR_PREFLIGHT_ENABLED = os.getenv("GENERATOR_PREFLIGHT_ENABLED", "true").lower() == "true"
 OUTLINER_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("OUTLINER_DOWNSTREAM_MIN_TIMEOUT", "600"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
 DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
@@ -998,6 +1001,49 @@ def _find_generator_task_id_by_document(document_id: str) -> str:
     return ""
 
 
+def _generator_task_exists(document_id: str, task_id: str = "") -> bool:
+    try:
+        response = DOWNSTREAM_SESSION.get(f"{GENERATOR_URL}/generate_document_tasks/summary", timeout=12)
+        response.raise_for_status()
+        summary = response.json()
+    except Exception as exc:
+        print(f"[Web] ⚠️ Generator task existence lookup failed: {exc}")
+        return True
+    items = summary.get("tasks") if isinstance(summary, dict) else None
+    if not isinstance(items, list):
+        return True
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if task_id and str(item.get("task_id") or "") == str(task_id):
+            return True
+        if document_id and str(item.get("document_id") or "") == str(document_id):
+            return True
+    return False
+
+
+def preflight_generator_or_raise(topic: str) -> None:
+    if not GENERATOR_PREFLIGHT_ENABLED:
+        return
+    probe_prompt = f"请用一句中文确认你可以为主题“{topic}”生成专业长文档内容。"
+    try:
+        response = DOWNSTREAM_SESSION.post(
+            f"{GENERATOR_URL}/diagnostics/providers",
+            json={"providers": ["sensenova"], "prompt": probe_prompt, "max_tokens": 40},
+            timeout=90,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"生成模型预检失败: {exc}")
+
+    results = body.get("results") if isinstance(body, dict) else {}
+    sensenova = results.get("sensenova") if isinstance(results, dict) else {}
+    if not isinstance(sensenova, dict) or not sensenova.get("success"):
+        error_summary = str((sensenova or {}).get("error_summary") or "unknown generator provider error")
+        raise HTTPException(status_code=503, detail=f"生成模型暂不可用: {error_summary[:360]}")
+
+
 def generate_document_with_recovery(
     document_id: str,
     generate_payload: Dict[str, Any],
@@ -1012,7 +1058,10 @@ def generate_document_with_recovery(
             # The generator is the slowest hop and has to survive the full subsection loop.
             # Use a larger floor here than the general stream budget so SSE validation does
             # not fail just because the orchestrator needs more time than the adaptive web budget.
-            call_timeout = max(GENERATOR_DOWNSTREAM_MIN_TIMEOUT, int(timeout_seconds))
+            call_timeout = min(
+                GENERATOR_TASK_POLL_MAX_TIMEOUT,
+                max(GENERATOR_DOWNSTREAM_MIN_TIMEOUT, int(timeout_seconds)),
+            )
             task_url = f"{GENERATOR_URL}/generate_document_task"
             legacy_url = f"{GENERATOR_URL}/generate_document"
             task_resp: Dict[str, Any] = {}
@@ -1077,12 +1126,14 @@ def generate_document_with_recovery(
             sleep_seconds = 2.0
             status_url = f"{GENERATOR_URL}/generate_document_task/{task_id}"
             last_status: Dict[str, Any] = {}
+            consecutive_status_misses = 0
 
             while time.time() < deadline:
                 try:
                     response = DOWNSTREAM_SESSION.get(status_url, timeout=15)
                     response.raise_for_status()
                     status_body = response.json()
+                    consecutive_status_misses = 0
                     if isinstance(status_body, dict):
                         last_status = status_body
                         status = str(status_body.get("status") or "").lower()
@@ -1116,6 +1167,17 @@ def generate_document_with_recovery(
                     raise
                 except Exception as exc:
                     last_status = {"error": str(exc), "task_id": task_id}
+                    consecutive_status_misses += 1
+                    if consecutive_status_misses >= GENERATOR_STATUS_MISS_LIMIT and not _generator_task_exists(document_id, task_id):
+                        return {
+                            "success": False,
+                            "error": "generator_task_lost_or_service_restarted",
+                            "task_id": task_id,
+                            "last_status": last_status,
+                            "interrupted": True,
+                            "recovery_attempt": attempt,
+                            "recovery_attempts": total_attempts,
+                        }
 
                 time.sleep(min(8.0, sleep_seconds))
                 sleep_seconds = min(8.0, sleep_seconds * 1.3)
@@ -1215,6 +1277,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "rel_threshold": req.rel_threshold,
         "red_threshold": req.red_threshold,
     }
+    preflight_generator_or_raise(req.topic)
     gen_resp = generate_document_with_recovery(
         document_id=document_id,
         generate_payload=generate_payload,
@@ -4170,6 +4233,12 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             "rel_threshold": req.rel_threshold,
             "red_threshold": req.red_threshold,
         }
+        try:
+            preflight_generator_or_raise(req.topic)
+        except HTTPException as exc:
+            msg = json.dumps({'type': 'error', 'message': str(exc.detail)})
+            yield f"data: {msg}\n\n"
+            return
 
         # 在后台线程中启动生成，同时主线程推送进度
         gen_resp = None

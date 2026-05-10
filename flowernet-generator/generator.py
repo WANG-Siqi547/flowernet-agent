@@ -113,6 +113,10 @@ class FlowerNetGenerator:
         self.dashscope_http_timeout = float(os.getenv('DASHSCOPE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.compact_fallback_enabled = os.getenv("GENERATOR_COMPACT_FALLBACK_ENABLED", "true").lower() == "true"
+        self.compact_prompt_trigger_chars = max(800, int(os.getenv("GENERATOR_COMPACT_PROMPT_TRIGGER_CHARS", "2500")))
+        self.compact_prompt_max_chars = max(700, int(os.getenv("GENERATOR_COMPACT_PROMPT_MAX_CHARS", "1800")))
+        self.compact_max_tokens = max(400, int(os.getenv("GENERATOR_COMPACT_MAX_TOKENS", "1200")))
         self.session = requests.Session()
         self.session.trust_env = False
         self._provider_next_allowed: Dict[str, float] = {}
@@ -193,6 +197,64 @@ class FlowerNetGenerator:
                     continue
         return None
 
+    @staticmethod
+    def _extract_prompt_field(prompt: str, labels: List[str], default: str = "") -> str:
+        text = str(prompt or "")
+        for label in labels:
+            heading_pattern = rf"【[^\n】]*{re.escape(label)}[^\n】]*】\s*\n+(.+?)(?=\n\s*【|\Z)"
+            heading_matched = re.search(heading_pattern, text, flags=re.S)
+            if heading_matched:
+                value = heading_matched.group(1).strip()
+                if value:
+                    return value[:600]
+            pattern = rf"{re.escape(label)}\s*[:：]\s*(.+)"
+            matched = re.search(pattern, text)
+            if matched:
+                value = matched.group(1).strip()
+                if value:
+                    return value[:180]
+        return default
+
+    def _should_try_compact_fallback(self, prompt: str, errors: List[str]) -> bool:
+        if not self.compact_fallback_enabled:
+            return False
+        if len(str(prompt or "")) >= self.compact_prompt_trigger_chars:
+            return True
+        error_text = " | ".join(errors)
+        return self._is_transient_provider_error(error_text)
+
+    def _build_compact_generation_prompt(self, prompt: str) -> str:
+        source = str(prompt or "")
+        document_title = self._extract_prompt_field(source, ["文档", "document_title"], "")
+        section_title = self._extract_prompt_field(source, ["当前章节", "Section"], "")
+        subsection_title = self._extract_prompt_field(source, ["当前小节", "Subsection"], "")
+        outline = self._extract_prompt_field(source, ["当前小节的详细大纲", "该小节详细大纲", "段落主题", "outline"], "")
+        topic_hint = subsection_title or section_title or document_title or source[:120]
+        clipped_source = source[: self.compact_prompt_max_chars]
+        citation_requirement = (
+            "正文中至少保留 [1][2] 形式的引用标记；如果没有外部资料，可使用权威教材、经典论文或公认理论来源作为参考对象。"
+            if re.search(r"\[\d+\]|引用|reference|citation", source, flags=re.I)
+            else "如涉及理论、模型或事实判断，请在正文中加入 [1] 形式的引用标记。"
+        )
+        return f"""
+你是专业学术写作者。上一次完整长提示生成失败，请用更短提示直接生成当前小节正文。
+
+文档标题：{document_title or "未指定"}
+章节：{section_title or "未指定"}
+小节：{subsection_title or topic_hint}
+小节大纲/要点：{outline or clipped_source[:500]}
+
+写作要求：
+1. 只输出正文，不要解释生成过程。
+2. 内容必须紧扣“小节”和“大纲/要点”，不要复述提示词。
+3. 写成专业、连贯、可发表风格的中文段落，约 500-800 字。
+4. {citation_requirement}
+5. 不要输出大纲列表，不要输出“以下是正文”等引导语。
+
+必要上下文摘录：
+{clipped_source}
+""".strip()
+
     def _wait_for_provider_slot(self, provider: str):
         next_allowed_at = self._provider_next_allowed.get(provider, 0.0)
         now = time.time()
@@ -202,7 +264,7 @@ class FlowerNetGenerator:
     def _mark_provider_slot(self, provider: str, extra_delay: float = 0.0):
         self._provider_next_allowed[provider] = time.time() + max(self.provider_min_interval, extra_delay)
 
-    def generate_draft(self, prompt: str, max_tokens: int = 2000) -> Dict[str, Any]:
+    def generate_draft(self, prompt: str, max_tokens: int = 2000, allow_compact_fallback: bool = True) -> Dict[str, Any]:
         """
         使用 LLM 根据 prompt 生成 draft
         
@@ -278,9 +340,28 @@ class FlowerNetGenerator:
 
                 errors.append(f"{provider}: {' | '.join(provider_errors)}")
 
+            final_error = "All providers failed: " + " | ".join(errors)
+            if allow_compact_fallback and self._should_try_compact_fallback(prompt, errors):
+                compact_prompt = self._build_compact_generation_prompt(prompt)
+                compact_tokens = min(max_tokens, self.compact_max_tokens)
+                compact_result = self.generate_draft(
+                    compact_prompt,
+                    max_tokens=compact_tokens,
+                    allow_compact_fallback=False,
+                )
+                if isinstance(compact_result, dict) and compact_result.get("success"):
+                    meta = compact_result.get("metadata") or {}
+                    meta["compact_fallback"] = True
+                    meta["original_prompt_chars"] = len(str(prompt or ""))
+                    meta["compact_prompt_chars"] = len(compact_prompt)
+                    compact_result["metadata"] = meta
+                    return compact_result
+                compact_error = str((compact_result or {}).get("error") or "compact fallback failed")
+                final_error = f"{final_error} | compact_fallback_failed: {compact_error}"
+
             return {
                 "success": False,
-                "error": "All providers failed: " + " | ".join(errors),
+                "error": final_error,
                 "draft": ""
             }
         except Exception as e:
@@ -693,8 +774,12 @@ class FlowerNetGenerator:
                         ):
                             timeout_abort = True
                             break
+                        transient_response = self._is_transient_provider_error(f"{last_error} {response_text}")
+                        if transient_response and transport_attempt < self.sensenova_transport_retries:
+                            time.sleep(min(self.sensenova_transport_backoff * transport_attempt, self.provider_max_backoff))
+                            continue
                         # 仅在看起来是格式/参数兼容问题时切换备用 payload
-                        if status_code and status_code < 500:
+                        if status_code and status_code < 500 and not transient_response:
                             break
                         if transport_attempt < self.sensenova_transport_retries:
                             time.sleep(min(self.sensenova_transport_backoff * transport_attempt, self.provider_max_backoff))

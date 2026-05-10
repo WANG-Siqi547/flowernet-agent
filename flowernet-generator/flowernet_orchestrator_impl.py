@@ -98,6 +98,9 @@ class DocumentGenerationOrchestrator:
         self.orch_generator_backoff = max(0.2, float(os.getenv("ORCH_GENERATOR_BACKOFF", "1.0")))
         self.orch_generator_max_backoff = max(1.0, float(os.getenv("ORCH_GENERATOR_MAX_BACKOFF", "10.0")))
         self.generator_http_timeout = max(30, int(os.getenv("GENERATOR_HTTP_TIMEOUT", "60")))
+        self.orch_compact_generation_enabled = os.getenv("ORCH_COMPACT_GENERATION_ENABLED", "true").lower() == "true"
+        self.orch_compact_prompt_trigger_chars = max(1200, int(os.getenv("ORCH_COMPACT_PROMPT_TRIGGER_CHARS", "3500")))
+        self.orch_compact_max_tokens = max(400, int(os.getenv("ORCH_COMPACT_MAX_TOKENS", "900")))
         self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "60")))
         self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "3")))
         self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "3.0")))
@@ -2419,9 +2422,31 @@ class DocumentGenerationOrchestrator:
             try:
                 print(f"      [_call_generator] Calling local generator.generate_draft...")
                 start = time.time()
-                result = self._local_generator.generate_draft(prompt=prompt, max_tokens=self.generator_max_tokens)
+                call_prompt = prompt
+                call_tokens = self.generator_max_tokens
+                used_compact_prompt = False
+                if (
+                    self.orch_compact_generation_enabled
+                    and len(str(prompt or "")) >= self.orch_compact_prompt_trigger_chars
+                    and hasattr(self._local_generator, "_build_compact_generation_prompt")
+                ):
+                    call_prompt = self._local_generator._build_compact_generation_prompt(prompt)
+                    call_tokens = min(self.generator_max_tokens, self.orch_compact_max_tokens)
+                    used_compact_prompt = True
+                    print(
+                        "      [_call_generator] Using compact prompt "
+                        f"({len(str(prompt or ''))} -> {len(str(call_prompt or ''))} chars)"
+                    )
+
+                result = self._local_generator.generate_draft(prompt=call_prompt, max_tokens=call_tokens)
                 elapsed = time.time() - start
                 print(f"      [_call_generator] Local call returned in {elapsed:.1f}s: success={result.get('success')}")
+                if used_compact_prompt and isinstance(result, dict):
+                    metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+                    metadata["orchestrator_compact_prompt"] = True
+                    metadata["original_prompt_chars"] = len(str(prompt or ""))
+                    metadata["compact_prompt_chars"] = len(str(call_prompt or ""))
+                    result["metadata"] = metadata
                 return result
             except Exception as e:
                 print(f"⚠️ 本地Generator调用失败: {e}，回退到HTTP调用")
