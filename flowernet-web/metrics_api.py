@@ -5,6 +5,8 @@ FlowerNet 指标展示 API 端点
 
 from fastapi import APIRouter, Header, HTTPException
 from typing import Dict, Any, List
+import os
+import requests
 
 try:
     from metrics_definition import (
@@ -23,6 +25,20 @@ except ImportError:
     FLOWERNET_FEATURES = {}
 
 router = APIRouter(prefix="/api/metrics", tags=["metrics"])
+
+
+def _generator_url() -> str:
+    return os.getenv("GENERATOR_URL", "http://localhost:8002").rstrip("/")
+
+
+def _safe_generator_get(path: str) -> Dict[str, Any]:
+    try:
+        resp = requests.get(f"{_generator_url()}{path}", timeout=8)
+        if resp.ok:
+            return resp.json()
+        return {"success": False, "error": f"HTTP {resp.status_code}"}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)[:240]}
 
 
 @router.get("/all")
@@ -194,6 +210,37 @@ def get_dashboard_summary_endpoint() -> Dict[str, Any]:
             "categories_list": list(categories.keys()),
             "top_features": list(FLOWERNET_FEATURES.keys())[:3],
         },
+    }
+
+
+@router.get("/agent-stack")
+def get_agent_stack_endpoint() -> Dict[str, Any]:
+    """
+    获取 FlowerNet Agent 工程化能力概览：
+    - LangGraph-style 编排
+    - Vector DB/RAG/reranker
+    - MCP/tool-use 工具目录
+    - Redis/task checkpoint 降级状态
+    - LLM evaluation 自动评测摘要
+    """
+    data = _safe_generator_get("/agent/capabilities")
+    return {
+        "success": bool(data.get("success", False)),
+        "generator_url": _generator_url(),
+        "capabilities": data.get("capabilities", {}),
+        "error": data.get("error", ""),
+    }
+
+
+@router.get("/evaluation-dashboard")
+def get_evaluation_dashboard_endpoint() -> Dict[str, Any]:
+    """LLM evaluation dashboard summary backed by generator evaluation store."""
+    data = _safe_generator_get("/evaluation/summary")
+    return {
+        "success": bool(data.get("success", False)),
+        "generator_url": _generator_url(),
+        "summary": data.get("summary", {}),
+        "error": data.get("error", ""),
     }
 
 

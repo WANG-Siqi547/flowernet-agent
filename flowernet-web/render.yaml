@@ -10,10 +10,16 @@ services:
         value: https://flowernet-outliner.onrender.com
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
+      - key: GENERATOR_PREFLIGHT_PROVIDERS
+        value: deepseek,sensenova
       - key: PUBLIC_BASE_URL
         value: https://flowernet-web.onrender.com
       - key: REQUEST_TIMEOUT
-        value: "600"
+        value: "7200"
+      - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
+        value: "2400"
+      - key: GENERATOR_DOWNSTREAM_MIN_TIMEOUT
+        value: "900"
       - key: DOWNSTREAM_RETRIES
         value: "1"
       - key: DOWNSTREAM_BACKOFF
@@ -33,9 +39,9 @@ services:
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
       - key: WEB_DEFAULT_REL_THRESHOLD
-        value: "0.72"
+        value: "0.77"
       - key: WEB_DEFAULT_RED_THRESHOLD
-        value: "0.60"
+        value: "0.52"
       - key: NO_PROXY
         value: "localhost,127.0.0.1"
     healthCheckPath: /health

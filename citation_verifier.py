@@ -34,7 +34,7 @@ except ImportError:
 CITATION_VERIFIER_ENABLED = os.getenv("CITATION_VERIFIER_ENABLED", "true").lower() == "true"
 CITATION_SEMANTIC_THRESHOLD = float(os.getenv("CITATION_SEMANTIC_THRESHOLD", "0.35"))
 CITATION_STRICT_MODE = os.getenv("CITATION_STRICT_MODE", "false").lower() == "true"
-CITATION_MIN_REFERENCES = int(os.getenv("CITATION_MIN_REFERENCES", "2"))
+CITATION_MIN_REFERENCES = int(os.getenv("CITATION_MIN_REFERENCES", "4"))
 SEMANTIC_MODEL = os.getenv("CITATION_SEMANTIC_MODEL", "sentence-transformers/paraphrase-MiniLM-L6-v2")
 
 # Domain-to-keywords mapping for cross-domain drift detection
@@ -194,7 +194,11 @@ class CitationSemanticScorer:
         # If external CROSS_DOMAIN_RED_FLAGS present, check title and context for them
         try:
             if CROSS_DOMAIN_RED_FLAGS:
-                text_for_check = f"{title_lower} {context_text}"
+                # Red flags must be tied to the citation itself. Checking the
+                # whole generated document here can incorrectly mark every
+                # reference as cross-domain when the body mentions unrelated
+                # contrast examples or prior filtered terms.
+                text_for_check = f"{title_lower} {str(ref_url or '').lower()}"
                 for rf in CROSS_DOMAIN_RED_FLAGS:
                     if rf and rf in text_for_check:
                         cross_domain_risk = 1.0

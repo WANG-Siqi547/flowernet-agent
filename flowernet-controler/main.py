@@ -1160,21 +1160,28 @@ async def improve_outline(req: ImproveOutlineRequest):
                 ]
             )
         )
+        baseline_outline = working_outline or original_outline
+        topic_anchor_tokens: List[str] = []
+        for _token in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_-]{2,}", baseline_outline or original_outline or ""):
+            if _token not in topic_anchor_tokens:
+                topic_anchor_tokens.append(_token)
+            if len(topic_anchor_tokens) >= 8:
+                break
         defect_structure_outline = _sanitize_outline_text(
             "\n".join(
                 [
-                    "【结构化修复】",
-                    "1) 核心结论（1-2句）",
-                    "2) 要点A：问题界定与边界",
-                    "3) 要点B：执行机制与步骤",
-                    "4) 要点C：风险与保障",
-                    "5) 小结：新增信息与与前文区分",
-                    "原始约束：" + (original_outline[:240] if original_outline else "保持主题一致"),
+                    baseline_outline,
+                    "",
+                    "【结构化修复约束】",
+                    "- 保留并强化上方原小节主题，不得改写为通用模板。",
+                    "- 第一段给出本小节的核心论点，并直接回应原大纲标题。",
+                    "- 中间段按“概念/机制 -> 证据或案例 -> 分析推理 -> 局限或边界”展开。",
+                    "- 每个段落至少包含一个与原主题强相关的关键词、事实或可验证论据。",
+                    "- 结尾只做本小节范围内的小结，并说明与前后小节的信息增量。",
+                    "- 主题锚点：" + ("、".join(topic_anchor_tokens) if topic_anchor_tokens else "保持原主题关键词"),
                 ]
             )
         )
-
-        baseline_outline = working_outline or original_outline
         baseline_score = _score_outline_candidate(
             candidate_outline=baseline_outline,
             original_outline=original_outline,
@@ -1317,6 +1324,8 @@ async def improve_outline(req: ImproveOutlineRequest):
             changed = True
         else:
             improved_outline = baseline_outline
+        if chosen_source and not bandit_debug.get("selected_arm"):
+            bandit_debug["selected_arm"] = chosen_source
 
         # 线上稳定性优先：只要输出确实发生变化，且不是明显退化，就允许进入下一轮。
         # 这样避免 Controller 因阈值过严而反复返回原纲，导致 Generator/Controller 死循环。
@@ -1426,6 +1435,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                 "error": "controller_outline_not_effective",
                 "improved_outline": baseline_outline,
                 "source": chosen_source,
+                "selected_arm": chosen_source,
                 "changed": False,
                 "effective": False,
                 "baseline_score": baseline_score,
@@ -1467,6 +1477,7 @@ async def improve_outline(req: ImproveOutlineRequest):
             "success": True,
             "improved_outline": improved_outline,
             "source": chosen_source,
+            "selected_arm": chosen_source,
             "changed": changed,
             "effective": True,
             "baseline_score": baseline_score,

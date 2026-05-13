@@ -37,6 +37,15 @@ sys.path.insert(0, project_root)
 load_dotenv_file(os.path.join(project_root, ".env"))
 
 from generator import FlowerNetGenerator, FlowerNetOrchestrator
+from flowernet_agent_stack import (
+    agent_stack_capabilities,
+    get_checkpoint_store,
+    get_eval_store,
+    get_langgraph_adapter,
+    get_task_queue,
+    get_tool_registry,
+    get_vector_store,
+)
 
 _local_orchestrator_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flowernet_orchestrator_impl.py")
 _local_orchestrator_spec = importlib.util.spec_from_file_location("_flowernet_orchestrator_impl_local", _local_orchestrator_path)
@@ -143,8 +152,13 @@ document_task_queue: "queue.Queue[str]" = queue.Queue()
 document_tasks: Dict[str, Dict[str, Any]] = {}
 document_tasks_lock = threading.Lock()
 document_worker_started = False
-DOCUMENT_TASK_HARD_TIMEOUT = max(120, int(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT", "900")))
-DOCUMENT_TASK_STALE_SECONDS = max(120, int(os.getenv("DOCUMENT_TASK_STALE_SECONDS", "1200")))
+DOCUMENT_TASK_HARD_TIMEOUT = max(120, int(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT", "2400")))
+DOCUMENT_TASK_STALE_SECONDS = max(120, int(os.getenv("DOCUMENT_TASK_STALE_SECONDS", "3000")))
+checkpoint_store = get_checkpoint_store()
+agent_task_queue = get_task_queue("flowernet:generator:tasks")
+vector_store = get_vector_store()
+eval_store = get_eval_store()
+tool_registry = get_tool_registry()
 
 
 def ensure_generator_initialized():
@@ -167,6 +181,11 @@ def _set_document_task(task_id: str, **updates: Any) -> None:
         task = document_tasks.setdefault(task_id, {})
         task.update(updates)
         task["updated_at"] = datetime.now().isoformat()
+        checkpoint_payload = {k: v for k, v in task.items() if k != "request"}
+    try:
+        checkpoint_store.set(f"generator_task:{task_id}", checkpoint_payload, ttl_seconds=7 * 24 * 3600)
+    except Exception:
+        pass
 
 
 def _task_age_seconds(task: Dict[str, Any]) -> float:
@@ -229,7 +248,7 @@ def _execute_generate_document(request: GenerateDocumentRequest, use_lock: bool 
             )
 
     try:
-        return orch.generate_document(
+        result = orch.generate_document(
             document_id=request.document_id,
             title=request.title,
             structure=request.structure,
@@ -239,6 +258,24 @@ def _execute_generate_document(request: GenerateDocumentRequest, use_lock: bool 
             rel_threshold=request.rel_threshold,
             red_threshold=request.red_threshold,
         )
+        if isinstance(result, dict):
+            try:
+                eval_store.record({
+                    "document_id": request.document_id,
+                    "title": request.title,
+                    "success": bool(result.get("success")),
+                    "passed_subsections": int(result.get("passed_subsections", 0) or 0),
+                    "failed_subsections": len(result.get("failed_subsections", [])) if isinstance(result.get("failed_subsections"), list) else int(result.get("failed_subsections", 0) or 0),
+                    "forced_subsections": len(result.get("forced_subsections", [])) if isinstance(result.get("forced_subsections"), list) else int(result.get("forced_subsections", 0) or 0),
+                    "quality_score_avg": float(result.get("quality_score_avg", 0.0) or 0.0),
+                    "prompt_cache_hit_rate": float(result.get("prompt_cache_hit_rate", 0.0) or 0.0),
+                    "controller_triggered_subsections": int(result.get("controller_triggered_subsections", 0) or 0),
+                    "controller_effective_subsections": int(result.get("controller_effective_subsections", 0) or 0),
+                    "rag_used_subsections": int(result.get("rag_used_subsections", 0) or 0),
+                })
+            except Exception:
+                pass
+        return result
     finally:
         if serialize_tasks and acquired:
             document_generation_lock.release()
@@ -655,6 +692,21 @@ def start_generate_document_task(request: GenerateDocumentRequest):
             "created_at": now,
             "updated_at": now,
         }
+    try:
+        checkpoint_store.set(
+            f"generator_task:{task_id}",
+            {
+                "task_id": task_id,
+                "document_id": request.document_id,
+                "status": "queued",
+                "created_at": now,
+                "updated_at": now,
+            },
+            ttl_seconds=7 * 24 * 3600,
+        )
+        agent_task_queue.put({"type": "generate_document", "task_id": task_id, "document_id": request.document_id, "created_at": now})
+    except Exception:
+        pass
     document_task_queue.put(task_id)
     return {
         "success": True,
@@ -670,6 +722,12 @@ def _document_task_status_payload(task_id: str) -> Dict[str, Any]:
     with document_tasks_lock:
         task = document_tasks.get(task_id)
         if not task:
+            checkpoint = checkpoint_store.get(f"generator_task:{task_id}")
+            if checkpoint:
+                payload = dict(checkpoint)
+                payload["success"] = True
+                payload["restored_from_checkpoint"] = True
+                return payload
             raise HTTPException(status_code=404, detail=f"未知文档生成任务: {task_id}")
         payload = {k: v for k, v in task.items() if k != "request"}
     payload["success"] = True
@@ -711,12 +769,85 @@ def get_generate_document_tasks_summary():
     return {
         "success": True,
         "queue_size": document_task_queue.qsize(),
+        "agent_queue": agent_task_queue.capabilities(),
+        "checkpoint_store": checkpoint_store.capabilities(),
         "worker_started": document_worker_started,
         "hard_timeout_seconds": DOCUMENT_TASK_HARD_TIMEOUT,
         "stale_seconds": DOCUMENT_TASK_STALE_SECONDS,
         "counts": counts,
         "tasks": items[:25],
     }
+
+
+@app.get("/agent/capabilities")
+def get_agent_capabilities():
+    """Return optional AI-agent stack capabilities without requiring external services."""
+    caps = agent_stack_capabilities()
+    caps["generator_service"] = {
+        "document_worker_started": document_worker_started,
+        "document_queue_size": document_task_queue.qsize(),
+        "provider_chain": os.getenv("GENERATOR_PROVIDER_CHAIN", os.getenv("GENERATOR_PROVIDER", "")),
+    }
+    return {"success": True, "capabilities": caps}
+
+
+@app.get("/workflow/graph")
+def get_workflow_graph():
+    """LangGraph-style workflow spec. Uses real LangGraph when installed, spec fallback otherwise."""
+    return {"success": True, "workflow": get_langgraph_adapter().graph_spec()}
+
+
+@app.get("/tools/list")
+def list_tools():
+    return {"success": True, "tools": tool_registry.list_tools()}
+
+
+class ToolCallRequest(BaseModel):
+    name: str
+    arguments: Dict[str, Any] = {}
+
+
+@app.post("/tools/call")
+def call_tool(request: ToolCallRequest):
+    return tool_registry.call(request.name, request.arguments)
+
+
+class RAGIndexRequest(BaseModel):
+    query: str
+    results: List[Dict[str, Any]]
+    namespace: str = "global"
+
+
+class RAGQueryRequest(BaseModel):
+    query: str
+    top_k: int = 8
+    namespace: Optional[str] = None
+
+
+@app.post("/rag/index")
+def rag_index(request: RAGIndexRequest):
+    count = vector_store.index_rag_results(request.query, request.results, namespace=request.namespace)
+    return {"success": True, "indexed": count, "vector_store": vector_store.capabilities()}
+
+
+@app.post("/rag/query")
+def rag_query(request: RAGQueryRequest):
+    results = vector_store.query(request.query, top_k=request.top_k, namespace=request.namespace)
+    return {"success": True, "results": results, "vector_store": vector_store.capabilities()}
+
+
+class EvaluationRecordRequest(BaseModel):
+    payload: Dict[str, Any]
+
+
+@app.post("/evaluation/record")
+def record_evaluation(request: EvaluationRecordRequest):
+    return {"success": True, "record": eval_store.record(request.payload)}
+
+
+@app.get("/evaluation/summary")
+def evaluation_summary():
+    return {"success": True, "summary": eval_store.summary()}
 
 
 @app.post("/diagnostics/providers")
@@ -740,12 +871,16 @@ def diagnose_providers(request: ProviderDiagnosticRequest):
             probe.provider_chain = [provider_name]
             result = probe.generate_draft(request.prompt, max_tokens=max_tokens)
             draft = str((result or {}).get("draft", "") or (result or {}).get("content", ""))
+            metadata = (result or {}).get("metadata") if isinstance(result, dict) else {}
+            metadata = metadata if isinstance(metadata, dict) else {}
             results[provider_name] = {
                 "success": bool(isinstance(result, dict) and result.get("success")),
                 "latency_seconds": round(time.time() - started, 3),
                 "draft_chars": len(draft),
                 "error_summary": str((result or {}).get("error", ""))[:300] if isinstance(result, dict) else "",
                 "selected_provider": (result or {}).get("provider") if isinstance(result, dict) else provider_name,
+                "prompt_cache_hit_tokens": int(metadata.get("prompt_cache_hit_tokens", 0) or 0),
+                "prompt_cache_miss_tokens": int(metadata.get("prompt_cache_miss_tokens", 0) or 0),
             }
         except Exception as exc:
             results[provider_name] = {

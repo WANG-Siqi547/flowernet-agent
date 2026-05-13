@@ -110,17 +110,23 @@ DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
 DOWNSTREAM_JITTER = float(os.getenv("DOWNSTREAM_JITTER", "0.35"))
 DOWNSTREAM_OUTLINER_MIN_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MIN_RETRIES", "1"))
 DOWNSTREAM_OUTLINER_MAX_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MAX_RETRIES", "2"))
-OUTLINER_TASK_START_RETRIES = int(os.getenv("OUTLINER_TASK_START_RETRIES", "8"))
+OUTLINER_TASK_START_RETRIES = int(os.getenv("OUTLINER_TASK_START_RETRIES", "20"))
 OUTLINER_TASK_START_BACKOFF = float(os.getenv("OUTLINER_TASK_START_BACKOFF", "8.0"))
+OUTLINER_TASK_START_MAX_WAIT = int(os.getenv("OUTLINER_TASK_START_MAX_WAIT", "900"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_503 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_503", "8.0"))
 DOWNSTREAM_GENERATOR_MIN_RETRIES = int(os.getenv("DOWNSTREAM_GENERATOR_MIN_RETRIES", "1"))
 DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_DELAY_429", "10.0"))
 GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "0"))
 GENERATOR_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("GENERATOR_DOWNSTREAM_MIN_TIMEOUT", "600"))
-GENERATOR_TASK_POLL_MAX_TIMEOUT = int(os.getenv("GENERATOR_TASK_POLL_MAX_TIMEOUT", "960"))
+GENERATOR_TASK_POLL_MAX_TIMEOUT = int(os.getenv("GENERATOR_TASK_POLL_MAX_TIMEOUT", "2400"))
 GENERATOR_STATUS_MISS_LIMIT = int(os.getenv("GENERATOR_STATUS_MISS_LIMIT", "6"))
 GENERATOR_PREFLIGHT_ENABLED = os.getenv("GENERATOR_PREFLIGHT_ENABLED", "true").lower() == "true"
 GENERATOR_PREFLIGHT_STRICT = os.getenv("GENERATOR_PREFLIGHT_STRICT", "false").lower() == "true"
+GENERATOR_PREFLIGHT_PROVIDERS = [
+    item.strip()
+    for item in os.getenv("GENERATOR_PREFLIGHT_PROVIDERS", "deepseek,sensenova").split(",")
+    if item.strip()
+]
 OUTLINER_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("OUTLINER_DOWNSTREAM_MIN_TIMEOUT", "600"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
 DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
@@ -762,6 +768,10 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
     task_resp: Dict[str, Any] = {}
 
     start_attempts = max(1, OUTLINER_TASK_START_RETRIES)
+    start_deadline = time.time() + max(
+        60,
+        min(OUTLINER_TASK_START_MAX_WAIT, max(60, poll_timeout - 30)),
+    )
     last_start_error = ""
     for start_attempt in range(1, start_attempts + 1):
         try:
@@ -775,13 +785,14 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
                 return post_json_once(url=legacy_url, payload=payload, timeout=poll_timeout)
             if "HTTP 429" not in detail and "Too Many Requests" not in detail:
                 raise
-            if start_attempt >= start_attempts:
+            if start_attempt >= start_attempts or time.time() >= start_deadline:
                 print("[Web] ⚠️ Outliner task start repeatedly hit 429; refusing to fabricate an outline")
                 return _build_local_outline_response(payload, reason=last_start_error[:240])
             delay = min(
                 DOWNSTREAM_MAX_BACKOFF,
                 max(DOWNSTREAM_OUTLINER_MIN_DELAY_429, OUTLINER_TASK_START_BACKOFF * start_attempt),
             )
+            delay = min(delay, max(1.0, start_deadline - time.time()))
             print(f"[Web] ⏳ Outliner task start hit 429; retrying in {delay:.1f}s ({start_attempt}/{start_attempts})")
             time.sleep(delay)
 
@@ -1030,7 +1041,7 @@ def preflight_generator_warning(topic: str) -> str:
     try:
         response = DOWNSTREAM_SESSION.post(
             f"{GENERATOR_URL}/diagnostics/providers",
-            json={"providers": ["sensenova"], "prompt": probe_prompt, "max_tokens": 40},
+            json={"providers": GENERATOR_PREFLIGHT_PROVIDERS, "prompt": probe_prompt, "max_tokens": 40},
             timeout=90,
         )
         if response.status_code == 429:
@@ -1047,9 +1058,11 @@ def preflight_generator_warning(topic: str) -> str:
         return warning
 
     results = body.get("results") if isinstance(body, dict) else {}
-    sensenova = results.get("sensenova") if isinstance(results, dict) else {}
-    if not isinstance(sensenova, dict) or not sensenova.get("success"):
-        error_summary = str((sensenova or {}).get("error_summary") or "unknown generator provider error")
+    if not isinstance(results, dict) or not any(isinstance(item, dict) and item.get("success") for item in results.values()):
+        error_summary = " | ".join(
+            f"{name}: {str((item or {}).get('error_summary') or 'failed')[:160]}"
+            for name, item in (results.items() if isinstance(results, dict) else [])
+        ) or "unknown generator provider error"
         warning = f"生成模型预检未通过，已继续正式生成: {error_summary[:360]}"
         print(f"[Web] ⚠️ {warning}")
         if GENERATOR_PREFLIGHT_STRICT:
@@ -1247,7 +1260,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "max_sections": req.chapter_count,
         "max_subsections_per_section": req.subsection_count,
     }
-    _wait_for_service_ready(OUTLINER_URL, "outliner", max_wait_seconds=min(60.0, max(20.0, timeout_seconds / 10.0)))
+    _wait_for_service_ready(OUTLINER_URL, "outliner", max_wait_seconds=min(180.0, max(45.0, timeout_seconds / 10.0)))
     outline_resp = call_outliner_generate_and_save(
         outline_payload,
         _remaining_timeout(min_seconds=30),
@@ -1350,6 +1363,10 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                     "total_source_references": total_source_refs,
                     "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0) if isinstance(gen_resp, dict) else 0,
                     "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0) if isinstance(gen_resp, dict) else 0,
+                    "controller_effective_subsections": int(gen_resp.get("controller_effective_subsections", 0) or 0) if isinstance(gen_resp, dict) else 0,
+                    "token_usage": gen_resp.get("token_usage", {}) if isinstance(gen_resp, dict) else {},
+                    "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0) if isinstance(gen_resp, dict) else 0.0,
+                    "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0) if isinstance(gen_resp, dict) else 0,
                     **orchestration_metrics,
                     **document_quality_metrics,
                 },
@@ -1395,6 +1412,10 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 "total_source_references": total_source_refs,
                 "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
                 "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
+                "controller_effective_subsections": int(gen_resp.get("controller_effective_subsections", 0) or 0),
+                "token_usage": gen_resp.get("token_usage", {}),
+                "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0),
+                "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0),
                 **orchestration_metrics,
                 **document_quality_metrics,
             },
@@ -1454,6 +1475,10 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
                 "total_source_references": total_source_refs,
                 "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
                 "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
+                "controller_effective_subsections": int(gen_resp.get("controller_effective_subsections", 0) or 0),
+                "token_usage": gen_resp.get("token_usage", {}),
+                "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0),
+                "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0),
                 **orchestration_metrics,
                 **document_quality_metrics,
             },
@@ -1476,6 +1501,10 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             "total_source_references": total_source_refs,
             "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
             "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
+            "controller_effective_subsections": int(gen_resp.get("controller_effective_subsections", 0) or 0),
+            "token_usage": gen_resp.get("token_usage", {}),
+            "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0),
+            "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0),
             **orchestration_metrics,
             **document_quality_metrics,
         },
@@ -1557,13 +1586,11 @@ def _citation_quality_check(markdown: str) -> Dict[str, Any]:
 
     min_markers_per_subsection = max(1, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "1") or "1"))
     marker_floor_ok = bool(reference_lines) and all(count >= min_markers_per_subsection for count in subsection_marker_counts)
-    passed = (
-        (bool(unique_urls) and missing_high_quality_sections == 0 and low_quality_ratio <= CITATION_LOW_QUALITY_MAX_RATIO)
-        or marker_floor_ok
-    )
+    url_quality_ok = bool(unique_urls) and missing_high_quality_sections == 0 and low_quality_ratio <= CITATION_LOW_QUALITY_MAX_RATIO
+    passed = url_quality_ok or marker_floor_ok
     reason = "ok"
-    if marker_floor_ok and not unique_urls:
-        reason = "textual_references_ok"
+    if marker_floor_ok and not url_quality_ok:
+        reason = "marker_floor_ok"
     elif not unique_urls:
         reason = "no_citation_urls"
     elif missing_high_quality_sections > 0:
@@ -1897,6 +1924,10 @@ def build_markdown_document(
     def _clean_subsection_text(text: str) -> str:
         seen_headings: set[tuple[int, str]] = set()
         cleaned_lines: List[str] = []
+        reference_heading_pattern = re.compile(
+            r"^\s*(?:#{1,6}\s*)?(?:references?|bibliography|参考文献)\s*[:：]?\s*$",
+            re.IGNORECASE,
+        )
 
         for raw_line in text.splitlines():
             stripped = raw_line.strip()
@@ -1905,10 +1936,18 @@ def build_markdown_document(
                     cleaned_lines.append("")
                 continue
 
+            # Subsection generators sometimes emit their own local References
+            # block. The final document owns one consolidated reference list at
+            # the end, so strip any subsection-level reference block here.
+            if reference_heading_pattern.match(stripped):
+                break
+
             heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
             if heading_match:
                 heading_level = max(len(heading_match.group(1)), 4)
                 heading_text = heading_match.group(2).strip()
+                if reference_heading_pattern.match(heading_text):
+                    break
                 heading_key = (heading_level, heading_text)
                 if heading_key in seen_headings:
                     continue
@@ -1921,7 +1960,16 @@ def build_markdown_document(
         while cleaned_lines and cleaned_lines[-1] == "":
             cleaned_lines.pop()
 
-        return "\n".join(cleaned_lines).strip()
+        cleaned = "\n".join(cleaned_lines).strip()
+        # Also handle compact single-line tails such as
+        # "References [1] Author... [2] Author..." that are not formatted as a
+        # separate heading line.
+        cleaned = re.sub(
+            r"(?is)\n\s*(?:references?|bibliography|参考文献)\s*[:：]?\s*(?:\[\d+\].*)$",
+            "",
+            cleaned,
+        ).strip()
+        return cleaned
 
     def _section_link(section_index: int, section_title: str) -> str:
         roman = _to_roman(section_index)
@@ -3033,6 +3081,50 @@ def build_markdown_document(
     def _ensure_reference_floor(entries: List[str]) -> List[str]:
         refs = [str(ref).strip() for ref in entries or [] if str(ref or "").strip()]
         seen_local = {ref.lower() for ref in refs}
+
+        def _candidate_to_reference(candidate: Dict[str, Any]) -> str:
+            if not isinstance(candidate, dict):
+                return ""
+            url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").strip()
+            title_text = str(candidate.get("title") or candidate.get("source_name") or candidate.get("source_type") or "").strip()
+            snippet = str(candidate.get("body") or candidate.get("abstract") or candidate.get("description") or candidate.get("summary") or "").strip()
+            if not (url or title_text or snippet):
+                return ""
+            label = title_text or urlparse(url).netloc or "source"
+            if snippet and url:
+                return f"{label}: {url} — {snippet[:220]}"
+            if snippet:
+                return f"{label} — {snippet[:260]}"
+            return f"{label}: {url}" if url else label
+
+        real_candidate_pool: List[str] = []
+        for section in generated_sections or []:
+            for subsection in (section.get("subsections") or []):
+                for candidate in subsection.get("source_results", []) or []:
+                    ref = _candidate_to_reference(candidate if isinstance(candidate, dict) else {})
+                    if ref:
+                        real_candidate_pool.append(ref)
+        for item in history or []:
+            metadata = item.get("metadata", {}) if isinstance(item, dict) else {}
+            for candidate in metadata.get("source_results", []) or []:
+                ref = _candidate_to_reference(candidate if isinstance(candidate, dict) else {})
+                if ref:
+                    real_candidate_pool.append(ref)
+
+        for ref in real_candidate_pool:
+            if len(refs) >= min_total_references:
+                break
+            key = ref.lower()
+            if key in seen_local:
+                continue
+            seen_local.add(key)
+            refs.append(ref)
+
+        if refs:
+            return refs
+
+        # Last resort only: never mix placeholder references with real references,
+        # because that creates citation-number drift in exported DOCX/PDF files.
         terms = _extract_topic_terms(limit=5)
         fallback_pool: List[str] = [
             f"Authoritative scholarly literature on {_normalize_label(title)} and {', '.join(terms[:3]) or 'the document topic'}.",
@@ -4306,26 +4398,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                     # 只有当生成器真正返回最终结果后，才发送这些事件。
                     # （参考下面的"最后一轮小节完成补发"部分）
 
-                    next_start_idx = current_count
-                    if next_start_idx < len(ordered_subsections) and next_start_idx not in emitted_start_indices:
-                        item = ordered_subsections[next_start_idx]
-                        start_msg = f"开始处理小节: {item['section_title']} > {item['subsection_title']}"
-                        msg = json.dumps({
-                            'type': 'detail',
-                            'message': start_msg,
-                            'stage': 'subsection_start',
-                            'metadata': {
-                                'section_id': item['section_id'],
-                                'subsection_id': item['subsection_id'],
-                                'section_title': item['section_title'],
-                                'subsection_title': item['subsection_title'],
-                                'subsection_order': next_start_idx + 1,
-                                'section_subsection_total': total_subsections,
-                                'synthetic': True,
-                            },
-                        })
-                        yield f"data: {msg}\n\n"
-                        emitted_start_indices.add(next_start_idx)
+                    # Do not synthesize later subsection_start events from
+                    # saved-history counts. The generator emits real
+                    # subsection_start/progress events; synthetic starts can
+                    # make the UI show multiple Drafting items while the real
+                    # pipeline is still working on the first active subsection.
 
                     # 每次进度变化或30秒都推送一次进度（但不要做implicit的完成判断）
                     if current_count > last_count or time.time() - last_progress_update > 30:
@@ -4336,6 +4413,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         msg = json.dumps({
                             'type': 'progress',
                             'message': f'进度: {current_count}/{total_subsections} 小节已处理 ({progress}%)',
+                            'metadata': {
+                                'completed': current_count,
+                                'total': total_subsections,
+                                'percent': progress,
+                            },
                             'note': '进度反映已保存的内容，部分可能是强制通过的临时结果',
                         })
                         yield f"data: {msg}\n\n"
@@ -4615,6 +4697,9 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 "rag_used_subsections": gen_resp.get("rag_used_subsections", 0),
                 "rag_search_success_subsections": gen_resp.get("rag_search_success_subsections", 0),
                 "total_source_references": total_source_refs,
+                "token_usage": gen_resp.get("token_usage", {}),
+                "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0),
+                "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0),
                 **extract_document_quality_metrics(gen_resp if isinstance(gen_resp, dict) else {}),
             },
         }

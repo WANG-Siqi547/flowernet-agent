@@ -47,6 +47,11 @@ try:
 except Exception:
     CITATION_DRIFT_PREVENTION_PROMPT = ""
 
+try:
+    from flowernet_agent_stack import get_vector_store
+except Exception:
+    get_vector_store = None  # type: ignore
+
 
 class DocumentGenerationOrchestrator:
     """
@@ -80,7 +85,7 @@ class DocumentGenerationOrchestrator:
         # 默认轮次收敛到 5，给 Controller 更多改纲次数以提升质量
         self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "5")))
         # 单个小节最长处理时长（秒），超过后按最佳努力通过，避免长时间卡住。
-        self.subsection_max_seconds = max(120, int(os.getenv("SUBSECTION_MAX_SECONDS", "600")))
+        self.subsection_max_seconds = max(120, int(os.getenv("SUBSECTION_MAX_SECONDS", "900")))
         # 当 Generator 连续失败时，优先按该阈值触发兜底，避免单小节长时间阻塞。
         self.max_generator_failures_per_subsection = max(
             1,
@@ -92,24 +97,34 @@ class DocumentGenerationOrchestrator:
         self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)
         # 默认采用宽松模式：只要 Controller 给出有效改纲且发生变更，就允许继续下一轮。
         self.strict_controller_effective = os.getenv("STRICT_CONTROLLER_EFFECTIVE", "false").lower() == "true"
+        self.controller_guard_enabled = os.getenv("CONTROLLER_GUARD_ENABLED", "true").lower() == "true"
+        self.controller_min_outline_retention = max(
+            0.15,
+            min(0.95, float(os.getenv("CONTROLLER_MIN_OUTLINE_RETENTION", "0.45"))),
+        )
+        self.local_outline_fallback_enabled = os.getenv("LOCAL_OUTLINE_FALLBACK_ENABLED", "false").lower() == "true"
         self.max_pass_rel_margin = max(0.0, float(os.getenv("MAX_PASS_REL_MARGIN", "0.25")))
         self.max_pass_red_margin = max(0.0, float(os.getenv("MAX_PASS_RED_MARGIN", "0.30")))
         self.orch_generator_retries = max(1, int(os.getenv("ORCH_GENERATOR_RETRIES", "1")))
         self.orch_generator_backoff = max(0.2, float(os.getenv("ORCH_GENERATOR_BACKOFF", "1.0")))
         self.orch_generator_max_backoff = max(1.0, float(os.getenv("ORCH_GENERATOR_MAX_BACKOFF", "10.0")))
         self.generator_http_timeout = max(30, int(os.getenv("GENERATOR_HTTP_TIMEOUT", "60")))
-        self.orch_compact_generation_enabled = os.getenv("ORCH_COMPACT_GENERATION_ENABLED", "true").lower() == "true"
-        self.orch_compact_prompt_trigger_chars = max(1200, int(os.getenv("ORCH_COMPACT_PROMPT_TRIGGER_CHARS", "3500")))
-        self.orch_compact_max_tokens = max(400, int(os.getenv("ORCH_COMPACT_MAX_TOKENS", "900")))
+        # Compact prompts are only useful as provider-failure fallbacks. Using them on
+        # normal controller retries drops outline/evidence detail and can make quality worse.
+        self.orch_compact_generation_enabled = os.getenv("ORCH_COMPACT_GENERATION_ENABLED", "false").lower() == "true"
+        self.orch_compact_prompt_trigger_chars = max(1200, int(os.getenv("ORCH_COMPACT_PROMPT_TRIGGER_CHARS", "7000")))
+        self.orch_compact_max_tokens = max(400, int(os.getenv("ORCH_COMPACT_MAX_TOKENS", "1800")))
         self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "60")))
         self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "3")))
         self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "3.0")))
-        self.generator_max_tokens = max(400, int(os.getenv("ORCH_GENERATOR_MAX_TOKENS", "600")))
+        self.generator_max_tokens = max(400, int(os.getenv("ORCH_GENERATOR_MAX_TOKENS", "2000")))
+        self.min_draft_chars = max(200, int(os.getenv("ORCH_MIN_DRAFT_CHARS", "800")))
         self.session = requests.Session()
         self.session.trust_env = False
         
         # 用于本地 HTTP 调用优化
         self._local_generator = None
+        self.vector_store = get_vector_store() if get_vector_store is not None else None
         self._local_verifier = None
         self._local_controller = None
         
@@ -701,6 +716,14 @@ class DocumentGenerationOrchestrator:
             "controller_ineffective_total": 0,
             "controller_fallback_outline_total": 0,
             "controller_exhausted_total": 0,
+            "generator_short_draft_total": 0,
+            "token_usage": {
+                "prompt_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "prompt_cache_hit_tokens": 0,
+                "prompt_cache_miss_tokens": 0,
+            },
             "quality_score_sum": 0.0,
             "quality_score_count": 0,
             "quality_overall_uncertainty_sum": 0.0,
@@ -883,6 +906,15 @@ class DocumentGenerationOrchestrator:
                             document_result["controller_ineffective_total"] += int(metrics.get("controller_ineffective", 0) or 0)
                             document_result["controller_fallback_outline_total"] += int(metrics.get("controller_fallback_outline", 0) or 0)
                             document_result["controller_exhausted_total"] += int(metrics.get("controller_exhausted", 0) or 0)
+                            document_result["generator_short_draft_total"] += int(metrics.get("generator_short_draft", 0) or 0)
+                            for token_key in [
+                                "prompt_tokens",
+                                "output_tokens",
+                                "total_tokens",
+                                "prompt_cache_hit_tokens",
+                                "prompt_cache_miss_tokens",
+                            ]:
+                                document_result["token_usage"][token_key] += int(metrics.get(token_key, 0) or 0)
                             
                             if self.history_manager and (not forced_should_fail):
                                 self.history_manager.add_entry(
@@ -972,6 +1004,13 @@ class DocumentGenerationOrchestrator:
                                 "rag_search_success": rag_search_success,
                                 "controller_effective": controller_effective,
                                 "source_results": subsection_gen_result.get("source_results", []),
+                                "token_usage": {
+                                    "prompt_tokens": int(metrics.get("prompt_tokens", 0) or 0),
+                                    "output_tokens": int(metrics.get("output_tokens", 0) or 0),
+                                    "total_tokens": int(metrics.get("total_tokens", 0) or 0),
+                                    "prompt_cache_hit_tokens": int(metrics.get("prompt_cache_hit_tokens", 0) or 0),
+                                    "prompt_cache_miss_tokens": int(metrics.get("prompt_cache_miss_tokens", 0) or 0),
+                                },
                                 "length": len(generated_content)
                             })
                             
@@ -1122,6 +1161,9 @@ class DocumentGenerationOrchestrator:
                 float(document_result.get("bandit_drift_triggered_subsections", 0) or 0) / max(1, total_subsections_generated),
                 4,
             )
+            cache_hits = int(document_result.get("token_usage", {}).get("prompt_cache_hit_tokens", 0) or 0)
+            cache_misses = int(document_result.get("token_usage", {}).get("prompt_cache_miss_tokens", 0) or 0)
+            document_result["prompt_cache_hit_rate"] = round(cache_hits / max(1, cache_hits + cache_misses), 4)
 
             # 文档级成功判定：存在失败小节则返回 partial/failed，避免掩盖真实质量问题
             document_result["success"] = len(document_result["failed_subsections"]) == 0
@@ -1138,6 +1180,9 @@ class DocumentGenerationOrchestrator:
             print(f"   - Controller 有效: {document_result['controller_effective_subsections']}/{len(content_prompts)}")
             print(f"   - Controller 触发小节: {document_result['controller_triggered_subsections']}/{len(content_prompts)}")
             print(f"   - Controller 调用总数: {document_result['controller_calls_total']}")
+            print(f"   - 短草稿重写: {document_result['generator_short_draft_total']}")
+            print(f"   - Token usage: {document_result['token_usage']}")
+            print(f"   - Prompt cache hit rate: {document_result['prompt_cache_hit_rate']}")
             print(f"   - 总迭代: {document_result['total_iterations']} 次")
             print(f"   - UniEval 平均分: {document_result['quality_score_avg']}")
             print(f"   - Bandit 平均奖励: {document_result['bandit_reward_avg']}")
@@ -1157,6 +1202,9 @@ class DocumentGenerationOrchestrator:
                     "forced_subsections": len(document_result["forced_subsections"]),
                     "total_iterations": document_result["total_iterations"],
                     "controller_calls_total": document_result["controller_calls_total"],
+                    "generator_short_draft_total": document_result["generator_short_draft_total"],
+                    "token_usage": document_result["token_usage"],
+                    "prompt_cache_hit_rate": document_result["prompt_cache_hit_rate"],
                     "controller_triggered_subsections": document_result["controller_triggered_subsections"],
                     "verifier_failed_total": document_result["verifier_failed_total"],
                 },
@@ -1191,6 +1239,9 @@ class DocumentGenerationOrchestrator:
                 "controller_ineffective_total": document_result.get("controller_ineffective_total", 0),
                 "controller_fallback_outline_total": document_result.get("controller_fallback_outline_total", 0),
                 "controller_exhausted_total": document_result.get("controller_exhausted_total", 0),
+                "generator_short_draft_total": document_result.get("generator_short_draft_total", 0),
+                "token_usage": document_result.get("token_usage", {}),
+                "prompt_cache_hit_rate": document_result.get("prompt_cache_hit_rate", 0.0),
                 # Include quality metrics fields to avoid zero defaults on frontend
                 "quality_score_avg": float(document_result.get("quality_score_avg", 0.0) or 0.0),
                 "quality_overall_uncertainty_avg": float(document_result.get("quality_overall_uncertainty_avg", 0.0) or 0.0),
@@ -1256,6 +1307,12 @@ class DocumentGenerationOrchestrator:
             "controller_fallback_outline": 0,
             "controller_exhausted": 0,
             "generator_degraded_mode": 0,
+            "generator_short_draft": 0,
+            "prompt_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0,
         }
         
         # 应用历史窗口：只使用最近N个小节（避免历史过长导致冗余度计算失真）
@@ -1297,8 +1354,29 @@ class DocumentGenerationOrchestrator:
                 rag_error = str(rag_search_result.get("error", "unknown"))
 
             if selected_query:
+                    try:
+                        if self.vector_store is not None:
+                            reranked = self.vector_store.reranker.rerank(
+                                selected_query,
+                                rag_search_result.get("results", []),
+                                top_k=max(3, len(rag_search_result.get("results", []))),
+                            )
+                            if reranked:
+                                rag_search_result["results"] = reranked
+                                rag_search_result["reranker"] = "flowernet_vector_reranker"
+                            indexed = self.vector_store.index_rag_results(
+                                selected_query,
+                                rag_search_result.get("results", []),
+                                namespace=str(document_id or "global"),
+                            )
+                            rag_search_result["vector_indexed"] = indexed
+                            rag_search_result["vector_backend"] = self.vector_store.active_backend
+                    except Exception as _e:
+                        rag_search_result["vector_index_error"] = str(_e)[:180]
                     rag_context = self.search_engine.format_search_context(rag_search_result, max_items=3)
-                    require_source_citations = self.rag_force_citation
+                    # If RAG returned usable sources, citations must be used even when an
+                    # old deployment env accidentally left RAG_FORCE_CITATION=false.
+                    require_source_citations = True
                     print(f"   🌐 RAG检索成功: {len(rag_search_result.get('results', []))} 条来源")
                     self._emit_progress_event(
                         document_id=document_id,
@@ -1311,22 +1389,69 @@ class DocumentGenerationOrchestrator:
                             "tried_queries": rag_query_candidates,
                             "result_count": len(rag_search_result.get("results", [])),
                             "require_source_citations": require_source_citations,
+                            "vector_indexed": rag_search_result.get("vector_indexed", 0),
+                            "vector_backend": rag_search_result.get("vector_backend", ""),
                         },
                     )
             else:
-                print("   ⚠️ RAG检索未返回可用来源，降级为常规生成")
-                self._emit_progress_event(
-                    document_id=document_id,
-                    section_id=section_id,
-                    subsection_id=subsection_id,
-                    stage="rag_search_failed",
-                    message="RAG 搜索失败，降级为常规生成",
-                    metadata={
-                        "query": rag_query_candidates[0] if rag_query_candidates else "",
-                        "tried_queries": rag_query_candidates,
-                        "error": rag_error,
-                    },
-                )
+                vector_hits: List[Dict[str, Any]] = []
+                if self.vector_store is not None:
+                    try:
+                        vector_query = rag_query_candidates[0] if rag_query_candidates else current_outline
+                        vector_hits = self.vector_store.query(vector_query, top_k=3, namespace=str(document_id or "global"))
+                        if not vector_hits:
+                            vector_hits = self.vector_store.query(vector_query, top_k=3)
+                    except Exception:
+                        vector_hits = []
+                if vector_hits:
+                    rag_search_result = {
+                        "success": True,
+                        "query": rag_query_candidates[0] if rag_query_candidates else current_outline,
+                        "results": [
+                            {
+                                "title": hit.get("metadata", {}).get("title") or hit.get("text", "")[:80],
+                                "body": hit.get("text", ""),
+                                "url": hit.get("metadata", {}).get("url", ""),
+                                "quality_score": hit.get("rerank_score", 0.0),
+                                "source": "vector_db",
+                            }
+                            for hit in vector_hits
+                        ],
+                        "source_type": "vector_db",
+                        "vector_backend": getattr(self.vector_store, "active_backend", "memory"),
+                    }
+                    rag_context = self.search_engine.format_search_context(rag_search_result, max_items=3)
+                    require_source_citations = True
+                    rag_used = True
+                    rag_selected_query = str(rag_search_result.get("query") or "")
+                    print(f"   🧠 Vector DB RAG 命中: {len(vector_hits)} 条来源")
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="rag_vector_success",
+                        message="Vector DB RAG 命中，已注入历史来源上下文",
+                        metadata={
+                            "query": rag_selected_query,
+                            "result_count": len(vector_hits),
+                            "vector_backend": getattr(self.vector_store, "active_backend", "memory"),
+                            "require_source_citations": require_source_citations,
+                        },
+                    )
+                else:
+                    print("   ⚠️ RAG检索未返回可用来源，降级为常规生成")
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="rag_search_failed",
+                        message="RAG 搜索失败，降级为常规生成",
+                        metadata={
+                            "query": rag_query_candidates[0] if rag_query_candidates else "",
+                            "tried_queries": rag_query_candidates,
+                            "error": rag_error,
+                        },
+                    )
             source_citation_required = require_source_citations
 
         effective_attempt_cap = self.max_subsection_attempts if self.max_subsection_attempts > 0 else self.max_iterations
@@ -1707,6 +1832,17 @@ class DocumentGenerationOrchestrator:
             draft = gen_result.get("draft", "")
             all_drafts.append(draft)
             print(f"         ✅ 生成 {len(draft)} 字符")
+            generator_metadata = gen_result.get("metadata") if isinstance(gen_result.get("metadata"), dict) else {}
+            prompt_tokens = int(generator_metadata.get("prompt_tokens", 0) or 0)
+            output_tokens = int(generator_metadata.get("output_tokens", 0) or generator_metadata.get("completion_tokens", 0) or 0)
+            total_tokens = int(generator_metadata.get("total_tokens", 0) or (prompt_tokens + output_tokens))
+            prompt_cache_hit_tokens = int(generator_metadata.get("prompt_cache_hit_tokens", 0) or 0)
+            prompt_cache_miss_tokens = int(generator_metadata.get("prompt_cache_miss_tokens", 0) or 0)
+            metrics["prompt_tokens"] += prompt_tokens
+            metrics["output_tokens"] += output_tokens
+            metrics["total_tokens"] += total_tokens
+            metrics["prompt_cache_hit_tokens"] += prompt_cache_hit_tokens
+            metrics["prompt_cache_miss_tokens"] += prompt_cache_miss_tokens
             self._emit_progress_event(
                 document_id=document_id,
                 section_id=section_id,
@@ -1716,12 +1852,51 @@ class DocumentGenerationOrchestrator:
                 metadata={
                     "iteration": iterations,
                     "draft_chars": len(draft),
-                    "provider": str((gen_result.get("metadata") or {}).get("provider", "") or ""),
+                    "provider": str(generator_metadata.get("provider", "") or ""),
+                    "prompt_tokens": prompt_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                    "prompt_cache_hit_tokens": prompt_cache_hit_tokens,
+                    "prompt_cache_miss_tokens": prompt_cache_miss_tokens,
                     "generator_degraded_mode": generator_degraded_mode,
                 },
             )
 
-            provider_name = str((gen_result.get("metadata") or {}).get("provider", "")).strip().lower()
+            if len(str(draft or "").strip()) < self.min_draft_chars:
+                metrics["generator_short_draft"] += 1
+                last_negative_constraints = {
+                    "feedback": (
+                        f"Generator 上轮草稿只有 {len(str(draft or '').strip())} 字符，"
+                        f"低于最低要求 {self.min_draft_chars} 字符。必须扩展为完整小节正文。"
+                    ),
+                    "quality_dimensions_failed": [
+                        "coverage_completeness",
+                        "evidence_grounding",
+                        "logical_coherence",
+                    ],
+                    "short_draft_chars": len(str(draft or "").strip()),
+                    "min_draft_chars": self.min_draft_chars,
+                }
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="generator_short_draft",
+                    message=(
+                        f"第 {iterations} 轮：草稿过短 ({len(str(draft or '').strip())}/{self.min_draft_chars})，"
+                        "跳过 Verifier 并重新生成"
+                    ),
+                    metadata={
+                        "iteration": iterations,
+                        "draft_chars": len(str(draft or "").strip()),
+                        "min_draft_chars": self.min_draft_chars,
+                        "provider": str(generator_metadata.get("provider", "") or ""),
+                    },
+                )
+                time.sleep(self._compute_retry_delay(iterations))
+                continue
+
+            provider_name = str(generator_metadata.get("provider", "")).strip().lower()
             if self.source_citation_relaxation_enabled and source_citation_required and provider_name == "ollama":
                 source_citation_required = False
                 self._emit_progress_event(
@@ -2048,6 +2223,48 @@ class DocumentGenerationOrchestrator:
                 if controller_changed and not real_outline_changed:
                     controller_changed = False
 
+                def _outline_terms(text: str) -> set:
+                    raw = str(text or "").lower()
+                    tokens = re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z][a-zA-Z0-9_-]{2,}", raw)
+                    stop = {
+                        "section", "subsection", "outline", "draft", "content", "please",
+                        "generate", "analysis", "example", "examples", "reference",
+                        "references", "research", "academic", "chapter",
+                        "小节", "章节", "大纲", "内容", "生成", "请帮", "高质量",
+                        "长文档", "参考文献", "研究", "分析",
+                    }
+                    return {tok for tok in tokens if tok not in stop}
+
+                def _outline_guard(old_text: str, new_text: str) -> tuple[bool, str, float]:
+                    if not self.controller_guard_enabled:
+                        return True, "guard_disabled", 1.0
+                    old = str(old_text or "").strip()
+                    new = str(new_text or "").strip()
+                    if not new:
+                        return False, "empty_outline", 0.0
+                    if len(old) >= 80 and len(new) < max(80, int(len(old) * 0.55)):
+                        return False, "outline_too_short", 0.0
+                    prompt_like_patterns = [
+                        "请帮我生成", "帮我生成", "please generate", "as an ai",
+                        "下面是", "以下是", "高质量长文档", "document topic",
+                    ]
+                    lowered = new.lower()
+                    if any(pat in lowered for pat in prompt_like_patterns):
+                        return False, "prompt_like_outline", 0.0
+                    old_terms = _outline_terms(old)
+                    new_terms = _outline_terms(new)
+                    if old_terms:
+                        retention = len(old_terms & new_terms) / max(1, len(old_terms))
+                        if retention < self.controller_min_outline_retention:
+                            return False, f"low_topic_retention:{retention:.2f}", retention
+                        return True, "accepted", retention
+                    return True, "accepted_no_old_terms", 1.0
+
+                outline_guard_ok, outline_guard_reason, outline_retention = _outline_guard(current_outline, improved_outline)
+                if controller_changed and not outline_guard_ok:
+                    controller_changed = False
+                    controller_effective = False
+
                 # 提取 bandit 信息：优先从 Controller 响应，否则从最新 bandit 事件读取
                 _selected_arm = str(controller_result.get("selected_arm", "") or "")
                 _reward_val = float(controller_result.get("reward", 0.0) or 0.0)
@@ -2086,6 +2303,9 @@ class DocumentGenerationOrchestrator:
                         "effective": controller_effective,
                         "changed": controller_changed,
                         "changed_real": real_outline_changed,
+                        "outline_guard_ok": outline_guard_ok,
+                        "outline_guard_reason": outline_guard_reason,
+                        "outline_term_retention": outline_retention,
                         "selected_arm": _selected_arm,
                         "reward": float(_reward_val or 0.0),
                         "selection_mode": _selection_mode,
@@ -2129,6 +2349,9 @@ class DocumentGenerationOrchestrator:
                             "effective": controller_effective,
                             "changed": controller_changed,
                             "strict_controller_effective": self.strict_controller_effective,
+                            "outline_guard_ok": outline_guard_ok,
+                            "outline_guard_reason": outline_guard_reason,
+                            "outline_term_retention": outline_retention,
                         },
                     )
                     metrics["controller_success"] += 1
@@ -2165,6 +2388,9 @@ class DocumentGenerationOrchestrator:
                             "controller_retry": controller_retry,
                             "effective": controller_effective,
                             "changed": controller_changed,
+                            "outline_guard_ok": outline_guard_ok,
+                            "outline_guard_reason": outline_guard_reason,
+                            "outline_term_retention": outline_retention,
                             "error": controller_error_text[:260],
                             "improved_outline_chars": len(improved_outline),
                         },
@@ -2218,15 +2444,18 @@ class DocumentGenerationOrchestrator:
                 time.sleep(self._compute_retry_delay(controller_retry))
 
             if not controller_updated:
-                # 允许进入下一轮并继续放宽阈值，避免因控制层短时不可用导致整节失败
-                current_outline = self._build_local_outline_fallback(
-                    current_outline=current_outline,
-                    original_outline=outline,
-                    feedback=verify_result,
-                    rel_threshold=effective_rel_threshold,
-                    red_threshold=effective_red_threshold,
-                    iteration=iterations,
-                )
+                if self.local_outline_fallback_enabled:
+                    # Optional fallback only. It is disabled by default because
+                    # heuristic outline rewrites can drift from the topic and
+                    # make later verifier snapshots worse.
+                    current_outline = self._build_local_outline_fallback(
+                        current_outline=current_outline,
+                        original_outline=outline,
+                        feedback=verify_result,
+                        rel_threshold=effective_rel_threshold,
+                        red_threshold=effective_red_threshold,
+                        iteration=iterations,
+                    )
             
             # Controller改纲完成，继续回到外层循环尝试下一轮生成
             continue
@@ -2264,8 +2493,64 @@ class DocumentGenerationOrchestrator:
         original_prompt = _clip(original_prompt, self.prompt_original_max_chars, "original_prompt")
         rag_context = _clip(rag_context, self.prompt_rag_max_chars, "rag_context")
         history_text = _clip(history_text, self.prompt_history_max_chars, "history")
+        if original_prompt and outline:
+            compact_original = " ".join(original_prompt.split())
+            compact_outline = " ".join(outline.split())
+            if compact_outline and compact_outline in compact_original:
+                original_prompt = compact_original.replace(compact_outline, "[同当前小节详细大纲，已省略重复文本]")
 
-        enhanced = f"""你正在撰写一篇文档的某个小节。
+        enhanced = """你正在撰写一篇文档的某个小节。
+
+【FlowerNet稳定写作协议（跨主题、跨小节复用，用于提高DeepSeek prompt cache 命中）】
+以下规则是固定协议。无论主题、章节、大纲、用户背景和参考资料如何变化，都必须优先遵守。
+
+一、写作边界
+1. 严格围绕当前小节大纲写作，不复述提示词，不输出生成过程。
+2. 当前小节只完成当前大纲要求的内容，不扩写到其他小节，不提前总结全文。
+3. 直接输出小节正文，不添加“以下是正文”“下面开始”等前言。
+4. 输出必须是完整、可发表长文档的小节正文，不允许只写提纲、摘要、列表标题或任务复述。
+
+二、学术质量
+1. 采用专业中文学术文体，段落之间逻辑清晰、证据明确、过渡自然。
+2. 每个核心段落采用 Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）的论证链。
+3. 对理论概念、技术机制、实证结果、历史事实、政策判断和强结论给出可验证支撑。
+4. 避免空泛套话、泛化结论、重复定义、无来源数据、跨主题案例和不必要的背景铺垫。
+5. 避免复制前文，避免换词复述，确保每一段都贡献新的信息或新的分析角度。
+
+三、引用与证据
+1. 如果提供了参考资料，必须优先使用与当前小节主题高度匹配、专业且可信的来源。
+2. 正文引用必须使用紧凑 IEEE 标记，如 [1][2]；正文标记必须和 References 中的编号一致。
+3. 引用标记必须出现在真正被来源支撑的句子旁边，不能只在段末或 References 中堆积。
+4. 禁止虚构论文、虚构 DOI、虚构 URL、虚构作者、虚构出版物。
+5. 没有 URL 时也可以引用真实书籍、经典论文、权威综述、标准、报告或高可信机构资料。
+6. 若某来源与当前小节不属于同一问题域，即使看起来学术，也不得强行引用。
+
+四、引用使用的三步证据对齐工作流
+第1步 - 提取摘要：
+  读取来源的标题、摘要、关键词和可见内容，提取核心问题、方法、对象和结论。
+第2步 - 判定匹配：
+  判断该来源是否能直接支撑当前小节大纲中的某个核心要点。
+  允许：同领域理论、同问题方法、同对象实证、同主题权威综述。
+  禁止：关键词偶然相同但学科/对象/问题不一致，或只能泛泛关联的来源。
+第3步 - 条件引用：
+  通过匹配后才在正文中使用 [序号]；未通过则跳过该来源。
+
+五、格式与可读性
+1. 不要使用 Markdown 标题符号（例如 #、##、####）。
+2. 如需分层，用自然段或“1.”“2.”编号句，并保持每个编号单独成段。
+3. 公式必须用清楚的线性数学表达或 LaTeX 风格表达，不能输出乱码。
+4. 段落长度适中，避免整页单段；术语第一次出现时给出必要解释。
+5. 结尾应自然过渡到下一小节或回扣当前小节目标，不做全文结论。
+"""
+
+        if CITATION_DRIFT_PREVENTION_PROMPT:
+            enhanced += f"""
+
+【引用漂移防护（固定协议补充，必须遵守）】
+{CITATION_DRIFT_PREVENTION_PROMPT}
+"""
+
+        enhanced += f"""
 
 【当前小节的详细大纲（这是内容的完整范围和边界，必须100%严格遵循）】
 {outline}
@@ -2285,39 +2570,8 @@ class DocumentGenerationOrchestrator:
 
 """
 
-        if CITATION_DRIFT_PREVENTION_PROMPT:
-            enhanced += f"""【引用漂移防护（必须遵守）】
-{CITATION_DRIFT_PREVENTION_PROMPT}
-
-"""
-
         if rag_context:
-            # 【优化2.0 - 3-Step Evidence Check】
-            # 在RAG上下文后加入严格的3步引用验证工作流
             enhanced += f"""{rag_context}
-
-【优化2.0 - 引用使用的三步证据对齐工作流（必须严格遵循）】
-当你使用上方"参考资料"中的任何来源时，必须执行以下三步检查：
-
-第1步 - 提取摘要：
-  → 读一遍该参考资料的标题、摘要和关键内容
-  → 提取该资料的"核心主题关键词"（例如：概念、方法、应用领域）
-
-第2步 - 判定匹配：
-  问自己："这篇资料的核心主题和我正在写的小节主题是否属于同一个大领域？"
-  例如：
-    ✓ 如果小节是"博弈论视角下的谈判"，资料是"策略互动模型"→ 同领域 ✓
-    ✗ 如果小节是"谈判策略"，资料是"多维随机变量的性质"→ 跨学科错配 ✗
-    ✗ 如果小节是"商业谈判"，资料是"汉语作为第二语言"→ 完全无关 ✗
-  判定标准：该资料是否能回答或支撑小节大纲中的某个核心要点？
-
-第3步 - 条件引用：
-  ✓ 如果判定为"同领域" → 允许在正文中使用 [序号] 引用
-  ✗ 如果判定为"跨领域或无关" → 绝不使用该资料，宁可不引用，也不强行塞入
-
-【严格执行】
-禁止为了"凑引用数量"而使用不相关的资料！宁可少引用，也不引用不匹配的来源。
-参考资料中的每一个引用都必须通过上述三步检查。如果某个资料不符合要求，请跳过它。
 
 """
 
@@ -2338,11 +2592,12 @@ class DocumentGenerationOrchestrator:
    
 3. 质量要求：
    - 与前面小节保持逻辑连贯，但展开全新的视角和信息
-   - 字数控制在 500～800 字
+   - 字数控制在 900～1300 字；低于 800 字会被系统视为短草稿并要求重写
+   - 不要使用 Markdown 标题符号（例如 #、##、####）；如需分层，用自然段或“1.”“2.”编号句，并保持每个编号单独成段
    - 表述专业、准确、避免空洞内容
-    - 必须采用论证链结构：Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）
-    - 至少使用 1 个显式过渡词（例如：因此、然而、此外、总之 / therefore, however, moreover, in conclusion）
-    - 若出现强结论（如“必须”“证明了”“it is clear”），必须附带可验证事实或引用
+   - 必须采用论证链结构：Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）
+   - 至少使用 1 个显式过渡词（例如：因此、然而、此外、总之 / therefore, however, moreover, in conclusion）
+   - 若出现强结论（如“必须”“证明了”“it is clear”），必须附带可验证事实或引用
 
 """
         else:
@@ -2353,11 +2608,12 @@ class DocumentGenerationOrchestrator:
    - 确保段落标题直接来自或对应大纲的标题
 
 2. 质量要求：
-   - 字数控制在 500～800 字
+   - 字数控制在 900～1300 字；低于 800 字会被系统视为短草稿并要求重写
+   - 不要使用 Markdown 标题符号（例如 #、##、####）；如需分层，用自然段或“1.”“2.”编号句，并保持每个编号单独成段
    - 表述专业、准确、避免空洞内容
-    - 必须采用论证链结构：Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）
-    - 至少使用 1 个显式过渡词（例如：因此、然而、此外、总之 / therefore, however, moreover, in conclusion）
-    - 若出现强结论（如“必须”“证明了”“it is clear”），必须附带可验证事实或引用
+   - 必须采用论证链结构：Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）
+   - 至少使用 1 个显式过渡词（例如：因此、然而、此外、总之 / therefore, however, moreover, in conclusion）
+   - 若出现强结论（如“必须”“证明了”“it is clear”），必须附带可验证事实或引用
 
 """
 
@@ -2398,6 +2654,7 @@ class DocumentGenerationOrchestrator:
 - 至少提供 2+ 处事实句 + [序号] 内联引用（不是末尾列表！）
 - 若原文已包含 [1] [2]，本轮必须加强到 [3] [4] 等更多引用
 - 改进逻辑连贯性：确保每个段落都能直接回答大纲中的某个要点
+- 若上一轮短于 {self.min_draft_chars} 字符，本轮必须扩展为 900～1300 字的完整正文
 """
 
         enhanced += """【原始生成指令】

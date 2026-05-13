@@ -719,6 +719,7 @@
         structure_clarity: 0,
         quality_score: 0
       });
+      const [qualityPeak, setQualityPeak] = useState(0);
       const [verifierDetail, setVerifierDetail] = useState(() => createEmptyVerifierDetail());
       const [qualitySummary, setQualitySummary] = useState({
         quality_score_avg: 0,
@@ -872,6 +873,7 @@
         setSubsections([]);
         setDoc({ title: "", content: "" });
         setMetrics({ topic_alignment: 0, coverage_completeness: 0, logical_coherence: 0, evidence_grounding: 0, novelty: 0, structure_clarity: 0, quality_score: 0 });
+        setQualityPeak(0);
         setVerifierDetail(createEmptyVerifierDetail());
         setQualitySummary({ quality_score_avg: 0, quality_score_count: 0, unieval_available_subsections: 0, unieval_fallback_subsections: 0 });
         setBanditSeries({ llm: [], rule: [], rule_structured: [], defect_topic: [], defect_evidence: [], defect_structure: [] });
@@ -931,6 +933,15 @@
 
             if (stage === "verifier_result") {
               const q = meta.quality_dimensions || {};
+              const currentQuality = (
+                Number(q.topic_alignment ?? 0) +
+                Number(q.coverage_completeness ?? 0) +
+                Number(q.logical_coherence ?? 0) +
+                Number(q.evidence_grounding ?? 0) +
+                Number(q.novelty ?? 0) +
+                Number(q.structure_clarity ?? 0)
+              ) / 6;
+              setQualityPeak((prev) => Math.max(Number(prev || 0), currentQuality, Number(meta.quality_score ?? 0)));
               setMetrics({
                 topic_alignment: Number(q.topic_alignment ?? 0),
                 coverage_completeness: Number(q.coverage_completeness ?? 0),
@@ -1100,6 +1111,7 @@
               unieval_available_subsections: Number(stats.unieval_available_subsections || 0),
               unieval_fallback_subsections: Number(stats.unieval_fallback_subsections || 0),
             });
+            setQualityPeak((prev) => Math.max(Number(prev || 0), Number(stats.quality_score_avg || 0)));
             setBanditSummary((prev) => ({
               ...prev,
               bandit_selected_arm_counts: stats.bandit_selected_arm_counts || prev.bandit_selected_arm_counts || {},
@@ -1248,9 +1260,18 @@
 
       useEffect(() => () => closeSse(), []);
 
-      const qualityMean = (metrics.topic_alignment + metrics.coverage_completeness + metrics.logical_coherence + metrics.evidence_grounding + metrics.novelty + metrics.structure_clarity) / 6;
+      const currentQualityMean = (metrics.topic_alignment + metrics.coverage_completeness + metrics.logical_coherence + metrics.evidence_grounding + metrics.novelty + metrics.structure_clarity) / 6;
+      const qualityMean = running
+        ? Math.max(qualityPeak, currentQualityMean, Number(qualitySummary.quality_score_avg || 0))
+        : Math.max(currentQualityMean, Number(qualitySummary.quality_score_avg || 0));
+      const activeSubsectionIndex = subsections.findIndex((item) => ["Drafting", "Evaluating via UniEval", "Repairing"].includes(item.stage));
+      const activeOrdinal = activeSubsectionIndex >= 0 ? activeSubsectionIndex + 1 : progress.current;
+      const displayCurrent = running ? Math.max(progress.current, activeOrdinal) : progress.current;
+      const displayPercent = running && progress.total > 0 && displayCurrent > 0
+        ? Math.max(progress.percent, Math.min(99, Math.round(((Math.max(displayCurrent, 1) - 0.33) / progress.total) * 100)))
+        : progress.percent;
       const normalizedStatusText = running
-        ? `进度: ${progress.current}/${progress.total || 0} 小节已处理 (${progress.percent}%)`
+        ? `进度: 正在处理 ${displayCurrent}/${progress.total || 0}；已验证/处理 ${progress.current}/${progress.total || 0} (${displayPercent}%)`
         : statusText;
 
       return (
@@ -1317,9 +1338,9 @@
                         <input type="number" min="1" max="8" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={subCount} onChange={(e) => setSubCount(Number(e.target.value))} />
                       </div>
                       <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
-                        <motion.div animate={{ width: `${progress.percent}%` }} className="h-full bg-gradient-to-r from-coral to-peach" />
+                        <motion.div animate={{ width: `${displayPercent}%` }} className="h-full bg-gradient-to-r from-coral to-peach" />
                       </div>
-                      <div className="text-xs text-slate-600">{progress.current}/{progress.total || 0} subsections · {progress.percent}%</div>
+                      <div className="text-xs text-slate-600">{running ? `processing ${displayCurrent}/${progress.total || 0} · verified ${progress.current}/${progress.total || 0}` : `${progress.current}/${progress.total || 0} subsections`} · {displayPercent}%</div>
                       <div className="grid grid-cols-2 gap-2">
                         <button onClick={handleStart} disabled={running} className="col-span-2 min-h-12 rounded-xl bg-slate-900 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap">{running ? "Running..." : "Start"}</button>
                         <button onClick={handleDownload} disabled={!doc.content} className="min-h-11 rounded-xl bg-emerald-600 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap leading-tight">DOCX</button>

@@ -10,12 +10,14 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: GENERATOR_PROVIDER
-        value: sensenova
+        value: deepseek
       - key: GENERATOR_MODEL
-        value: glm-5
+        value: deepseek-v4-flash
       - key: GENERATOR_OPENROUTER_MODEL
         value: qwen/qwen3-coder:free
       - key: GENERATOR_GEMINI_MODEL
@@ -48,6 +50,28 @@ services:
         value: https://api.sensenova.cn/v1/llm/chat-completions
       - key: GENERATOR_SENSENOVA_API_KEY
         sync: false
+      - key: GENERATOR_DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: GENERATOR_DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: GENERATOR_DEEPSEEK_API_URL
+        value: https://api.deepseek.com/chat/completions
+      - key: GENERATOR_DEEPSEEK_ANTHROPIC_BASE_URL
+        value: https://api.deepseek.com/anthropic
+      - key: GENERATOR_DEEPSEEK_API_KEY
+        sync: false
+      - key: GENERATOR_DEEPSEEK_THINKING_ENABLED
+        value: "false"
+      - key: DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: DEEPSEEK_API_URL
+        value: https://api.deepseek.com/chat/completions
+      - key: DEEPSEEK_ANTHROPIC_BASE_URL
+        value: https://api.deepseek.com/anthropic
+      - key: DEEPSEEK_THINKING_ENABLED
+        value: "false"
       - key: SENSENOVA_MODEL
         value: SenseNova-V6-5-Turbo
       - key: SENSENOVA_API_URL
@@ -69,7 +93,7 @@ services:
       - key: PROVIDER_RETRIES
         value: "1"
       - key: GENERATOR_PROVIDER_CHAIN
-        value: "sensenova"
+        value: "deepseek,sensenova"
       - key: PROVIDER_BACKOFF
         value: "2.0"
       - key: PROVIDER_MAX_BACKOFF
@@ -80,6 +104,8 @@ services:
         value: "30"
       - key: PROVIDER_HTTP_TIMEOUT
         value: "45"
+      - key: DEEPSEEK_HTTP_TIMEOUT
+        value: "60"
       - key: GENERATOR_SENSENOVA_CONNECT_TIMEOUT
         value: "8"
       - key: GENERATOR_SENSENOVA_READ_TIMEOUT
@@ -114,14 +140,26 @@ services:
         value: "1.5"
       - key: ORCH_GENERATOR_MAX_BACKOFF
         value: "20.0"
+      - key: ORCH_GENERATOR_MAX_TOKENS
+        value: "2000"
+      - key: ORCH_COMPACT_GENERATION_ENABLED
+        value: "false"
+      - key: ORCH_COMPACT_PROMPT_TRIGGER_CHARS
+        value: "7000"
+      - key: ORCH_COMPACT_MAX_TOKENS
+        value: "1800"
+      - key: ORCH_MIN_DRAFT_CHARS
+        value: "800"
+      - key: RAG_FORCE_CITATION
+        value: "true"
       - key: SERIALIZE_DOCUMENT_TASKS
         value: "true"
       - key: SERIALIZE_DOCUMENT_WAIT_TIMEOUT
-        value: "180"
-      - key: DOCUMENT_TASK_HARD_TIMEOUT
-        value: "900"
-      - key: DOCUMENT_TASK_STALE_SECONDS
         value: "1200"
+      - key: DOCUMENT_TASK_HARD_TIMEOUT
+        value: "2400"
+      - key: DOCUMENT_TASK_STALE_SECONDS
+        value: "3000"
       - key: DOC_RETRY_BASE_DELAY
         value: "2.0"
       - key: DOC_RETRY_MAX_DELAY
@@ -131,9 +169,9 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: SUBSECTION_MAX_SECONDS
-        value: "180"
+        value: "900"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "3"
+        value: "5"
       - key: MAX_PASS_REL_MARGIN
         value: "0.15"
       - key: MAX_PASS_RED_MARGIN

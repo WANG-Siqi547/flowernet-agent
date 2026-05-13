@@ -387,6 +387,8 @@
                 <button class="btn btn-secondary" onclick="loadAllMetrics()">📋 所有指标</button>
                 <button class="btn btn-secondary" onclick="loadFeatures()">⭐ 核心特性</button>
                 <button class="btn btn-secondary" onclick="loadComparison()">🔍 指标对比</button>
+                <button class="btn btn-secondary" onclick="loadAgentStack()">🤖 Agent Stack</button>
+                <button class="btn btn-secondary" onclick="loadEvaluationDashboard()">🧪 自动评测</button>
             </div>
 
             <!-- 标签页 -->
@@ -438,6 +440,61 @@
 
             currentData = data;
             displayDashboard(data);
+        }
+
+        async function loadAgentStack() {
+            document.querySelectorAll('.controls .btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('tabs').style.display = 'none';
+            const data = await fetchAPI('/agent-stack');
+            if (!data) return;
+            const caps = data.capabilities || {};
+            const vector = caps.vector_store || {};
+            const checkpoint = caps.checkpoint_store || {};
+            const queue = caps.task_queue || {};
+            const workflow = caps.langgraph || {};
+            const tools = caps.tools || [];
+            document.getElementById('stats').innerHTML = `
+                <div class="stat-card"><div class="stat-value">${vector.active_backend || 'n/a'}</div><div class="stat-label">Vector DB</div></div>
+                <div class="stat-card"><div class="stat-value">${checkpoint.active_backend || 'n/a'}</div><div class="stat-label">Checkpoint</div></div>
+                <div class="stat-card"><div class="stat-value">${tools.length}</div><div class="stat-label">Tool-use Tools</div></div>
+            `;
+            let html = '<div class="section"><h2>🤖 Agent 工程化能力</h2><div class="metrics-grid">';
+            html += `<div class="metric-card"><h3>LangGraph 编排</h3><p>模式：${workflow.mode || 'unknown'}；节点：${(workflow.nodes || []).map(n => n.id).join(' → ')}</p></div>`;
+            html += `<div class="metric-card"><h3>Vector DB / RAG</h3><p>后端：${vector.active_backend || 'memory'}；集合：${vector.collection || 'flowernet_rag'}；记录：${vector.records || 0}</p></div>`;
+            html += `<div class="metric-card"><h3>Redis / Queue / Checkpoint</h3><p>队列：${queue.active_backend || 'memory'}；checkpoint：${checkpoint.active_backend || 'file'}；queue size：${queue.size || 0}</p></div>`;
+            html += `<div class="metric-card"><h3>MCP / Tool-use</h3><p>${tools.map(t => `<span class="badge badge-category">${t.name}</span>`).join(' ')}</p></div>`;
+            html += '</div></div>';
+            document.getElementById('main-content').innerHTML = html;
+        }
+
+        async function loadEvaluationDashboard() {
+            document.querySelectorAll('.controls .btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('tabs').style.display = 'none';
+            const data = await fetchAPI('/evaluation-dashboard');
+            if (!data) return;
+            const summary = data.summary || {};
+            const recent = summary.recent || [];
+            document.getElementById('stats').innerHTML = `
+                <div class="stat-card"><div class="stat-value">${summary.count || 0}</div><div class="stat-label">评测记录</div></div>
+                <div class="stat-card"><div class="stat-value">${Number(summary.quality_score_avg || 0).toFixed(3)}</div><div class="stat-label">平均质量分</div></div>
+                <div class="stat-card"><div class="stat-value">${Math.round(Number(summary.pass_rate || 0) * 100)}%</div><div class="stat-label">通过率</div></div>
+            `;
+            let html = '<div class="section"><h2>🧪 LLM Evaluation 自动评测</h2><div class="metrics-grid">';
+            for (const item of recent.slice().reverse()) {
+                html += `<div class="metric-card">
+                    <h3>${item.title || item.document_id || 'evaluation'}</h3>
+                    <p>quality=${Number(item.quality_score_avg || item.quality_score || 0).toFixed(3)} · success=${Boolean(item.success || item.passed)}</p>
+                    <div class="metric-details">
+                        <span class="badge badge-threshold">RAG ${item.rag_used_subsections || 0}</span>
+                        <span class="badge badge-category">Controller ${item.controller_triggered_subsections || 0}</span>
+                        <span class="badge badge-importance-medium">Cache ${Number(item.prompt_cache_hit_rate || 0).toFixed(2)}</span>
+                    </div>
+                </div>`;
+            }
+            html += '</div></div>';
+            document.getElementById('main-content').innerHTML = html;
         }
 
         function displayDashboard(data) {

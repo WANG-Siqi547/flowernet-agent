@@ -20,8 +20,8 @@ def main() -> int:
         "subsection_count": 2,
         "user_background": "大一新生，想建立学习和作息体系",
         "extra_requirements": "内容要可执行，包含具体方法与示例",
-        "rel_threshold": 0.72,
-        "red_threshold": 0.60,
+        "rel_threshold": 0.77,
+        "red_threshold": 0.52,
         "timeout_seconds": 7200,
     }
 

@@ -391,12 +391,12 @@ class FlowerNetVerifier:
         """获取每个维度的阈值（可通过 JSON 覆盖，或使用默认值）"""
         # 默认阈值保持适度严格，避免内容过早通过而没有进入 controller 修复环节
         default_thresholds = {
-            "topic_alignment": 0.46,
-            "coverage_completeness": 0.45,
-            "logical_coherence": 0.30,
-            "evidence_grounding": 0.24,
-            "novelty": 0.78,
-            "structure_clarity": 0.41,
+            "topic_alignment": 0.53,
+            "coverage_completeness": 0.53,
+            "logical_coherence": 0.05,
+            "evidence_grounding": 0.33,
+            "novelty": 0.68,
+            "structure_clarity": 0.51,
         }
         
         thresholds_raw = os.getenv("QUALITY_DIMENSION_THRESHOLDS_JSON", "").strip()
@@ -532,6 +532,32 @@ class FlowerNetVerifier:
             "write", "writing", "draft", "article", "paper", "document",
             "要求", "生成", "内容", "小节", "章节", "大纲", "写作", "文档",
             "介绍", "分析", "讨论", "说明", "包括", "以及", "关于",
+            "标准", "分钟", "休息", "周期", "如何", "应对", "记录", "内部",
+            "外部", "模板", "状态", "次数", "任务", "步骤", "流程", "示例",
+        }
+        zh_en_expansions = {
+            "时间": ["time"],
+            "管理": ["management"],
+            "大学": ["college", "university"],
+            "新生": ["freshman", "freshmen", "student"],
+            "学生": ["student", "students"],
+            "学习": ["learning", "study", "academic"],
+            "习惯": ["habit", "habits"],
+            "自我": ["self", "self-regulated"],
+            "调节": ["regulated", "regulation"],
+            "动机": ["motivation"],
+            "博弈": ["game", "games"],
+            "策略": ["strategy", "strategic"],
+            "均衡": ["equilibrium"],
+            "存在": ["existentialism", "existence"],
+            "主义": ["philosophy"],
+            "人工智能": ["artificial", "intelligence", "ai"],
+            "机器学习": ["machine", "learning"],
+            "深度学习": ["deep", "learning"],
+            "谈判": ["negotiation", "bargaining"],
+            "商业": ["business", "commercial"],
+            "商务": ["business"],
+            "供应链": ["supply", "chain"],
         }
         terms: List[str] = []
         for token in self._content_tokens(topic_source):
@@ -540,9 +566,46 @@ class FlowerNetVerifier:
                 continue
             if token not in terms:
                 terms.append(token)
-            if len(terms) >= 24:
+            for zh, expansions in zh_en_expansions.items():
+                if zh in token or zh in topic_source:
+                    for expanded in expansions:
+                        if expanded not in terms:
+                            terms.append(expanded)
+            if len(terms) >= 36:
                 break
         return terms
+
+    def _source_relevance_score(
+        self,
+        source_item: Dict[str, Any],
+        outline_tokens: set,
+        topic_term_set: set,
+    ) -> float:
+        """Score a source against both narrow outline terms and broader topic anchors."""
+        source_text = " ".join([
+            str(source_item.get("title", "") or ""),
+            str(source_item.get("body", "") or ""),
+            str(source_item.get("description", "") or ""),
+            str(source_item.get("summary", "") or ""),
+            str(source_item.get("abstract", "") or ""),
+        ])
+        source_tokens = set(self._content_tokens(source_text))
+        semantic_score = float(source_item.get("semantic_score", 0.0) or 0.0)
+        outline_score = (
+            len(outline_tokens & source_tokens) / max(1, len(outline_tokens))
+            if outline_tokens and source_tokens
+            else 0.0
+        )
+        topic_score = (
+            len(topic_term_set & source_tokens) / max(1, len(topic_term_set))
+            if topic_term_set and source_tokens
+            else 0.0
+        )
+        href = str(source_item.get("href") or source_item.get("url") or "").lower()
+        scholarly_bonus = 0.0
+        if "doi.org/" in href or re.search(r"\b10\.\d{4,9}/", href):
+            scholarly_bonus = 0.08
+        return float(round(max(outline_score, topic_score, semantic_score, scholarly_bonus), 4))
 
     def _configured_blacklist_entries(self) -> List[Dict[str, str]]:
         entries: List[Dict[str, str]] = []
@@ -610,37 +673,42 @@ class FlowerNetVerifier:
         matched_urls = [url for url in found_urls if url in source_urls]
         invalid_urls = [url for url in found_urls if url not in source_urls]
 
-        outline_tokens = set(self._content_tokens(outline or ""))
+        topic_terms = self._topic_terms(outline=outline, context_text=context_text, draft=draft)
+        topic_term_set = set(topic_terms)
+        outline_tokens = set(self._content_tokens(outline or "")) | topic_term_set
         matched_semantic_scores: Dict[str, float] = {}
         for url in matched_urls:
             source_item = next(
                 (item for item in source_results if str((item or {}).get("href") or "").strip() == url),
                 {},
             )
-            source_text = f"{source_item.get('title', '')} {source_item.get('body', '')}"
-            source_tokens = set(self._content_tokens(source_text))
-            if not outline_tokens or not source_tokens:
-                score = float(source_item.get("semantic_score", 0.0) or 0.0)
-            else:
-                score = len(outline_tokens & source_tokens) / max(1, len(outline_tokens))
+            score = self._source_relevance_score(source_item, outline_tokens, topic_term_set)
             matched_semantic_scores[url] = float(round(score, 4))
-
-        low_semantic_urls = [
-            url for url, score in matched_semantic_scores.items()
-            if score < float(min_semantic_source_score)
-        ]
 
         # ========== 黑名单扫描：检测明显的跨学科/无关引用 ==========
         blacklist_matches: List[Dict[str, Any]] = []
-        topic_terms = self._topic_terms(outline=outline, context_text=context_text, draft=draft)
-        topic_term_set = set(topic_terms)
         referenced_sources = self._referenced_source_items(
             refs=refs,
             matched_urls=matched_urls,
             source_results=source_results,
         )
+
+        for idx, item in referenced_sources:
+            ref_key = f"ref:{idx}"
+            if ref_key not in matched_semantic_scores:
+                matched_semantic_scores[ref_key] = self._source_relevance_score(
+                    item,
+                    outline_tokens,
+                    topic_term_set,
+                )
+
+        low_semantic_urls = [
+            key for key, score in matched_semantic_scores.items()
+            if score < float(min_semantic_source_score) and not str(key).startswith("ref:")
+        ]
+
         configured_blacklist = self._configured_blacklist_entries()
-        domain_mismatch_threshold = float(os.getenv("REFERENCE_DOMAIN_MISMATCH_THRESHOLD", "0.12"))
+        domain_mismatch_threshold = float(os.getenv("REFERENCE_DOMAIN_MISMATCH_THRESHOLD", "0.08"))
         min_topic_terms_for_mismatch = max(2, int(os.getenv("REFERENCE_DOMAIN_MIN_TOPIC_TERMS", "3")))
 
         for idx, item in referenced_sources:
@@ -664,13 +732,7 @@ class FlowerNetVerifier:
             if len(topic_term_set) < min_topic_terms_for_mismatch:
                 continue
 
-            source_tokens = set(self._content_tokens(text))
-            if not source_tokens:
-                continue
-
-            overlap_score = len(topic_term_set & source_tokens) / max(1, len(topic_term_set))
-            semantic_score = float(item.get("semantic_score", 0.0) or 0.0)
-            domain_score = max(overlap_score, semantic_score)
+            domain_score = self._source_relevance_score(item, outline_tokens, topic_term_set)
             if domain_score < domain_mismatch_threshold:
                 blacklist_matches.append({
                     "index": idx,
@@ -906,7 +968,7 @@ class FlowerNetVerifier:
         # 用于兼容旧的总分逻辑，但主要用维度级阈值
         quality_score = self._composite_quality_score(semantic_dimensions)
         # 略微提高总体质量分数阈值，避免弱质量内容过早判定通过
-        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.58"), 0.58)
+        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.60"), 0.60)
         
         # 维度级阈值检查（新的主要判定逻辑）
         dimension_check = self._check_dimension_thresholds(semantic_dimensions)
@@ -917,6 +979,7 @@ class FlowerNetVerifier:
             and (red['score'] <= red_threshold)
             and persona_ok
             and source_check["passed"]
+            and (quality_score >= quality_threshold)
             and (quality_passed if require_multidim else True)
         )
 

@@ -46,6 +46,14 @@ class FlowerNetOutliner:
     - 第二阶段：为每个 subsection 生成 Content Prompt
     - 支持 Azure OpenAI、Ollama (本地)、Google Gemini、OpenRouter
     """
+
+    DEEPSEEK_SYSTEM_PREFIX = (
+        "You are FlowerNet Outliner, a strict academic document-structure planner. "
+        "When JSON is requested, output only a valid JSON object matching the requested schema. "
+        "Use professional section and subsection titles, never copy the user's raw instruction as a title, "
+        "and keep the outline topic-specific. This stable prefix is intentionally reused across FlowerNet "
+        "outline calls to improve DeepSeek context-cache hits."
+    )
     
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "sensenova"):
         """
@@ -65,7 +73,8 @@ class FlowerNetOutliner:
             or os.getenv("OUTLINER_PROVIDER", "sensenova")
         )
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
-        self.provider_chain = parsed_chain or ["sensenova"]
+        allowed_providers = {"azure", "gemini", "dashscope", "sensenova", "deepseek", "openrouter", "ollama"}
+        self.provider_chain = [p for p in parsed_chain if p in allowed_providers] or ["deepseek", "sensenova"]
 
         self.model = model
         self.azure_model = os.getenv("OUTLINER_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -86,6 +95,21 @@ class FlowerNetOutliner:
             "OUTLINER_SENSENOVA_API_URL",
             os.getenv("SENSENOVA_API_URL", "https://api.sensenova.cn/v1/llm/chat-completions")
         ).rstrip("/")
+        self.deepseek_model = os.getenv("OUTLINER_DEEPSEEK_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"))
+        self.deepseek_api_key = os.getenv("OUTLINER_DEEPSEEK_API_KEY", os.getenv("DEEPSEEK_API_KEY", "")).strip()
+        self.deepseek_base_url = os.getenv(
+            "OUTLINER_DEEPSEEK_BASE_URL",
+            os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        ).rstrip("/")
+        self.deepseek_api_url = os.getenv(
+            "OUTLINER_DEEPSEEK_API_URL",
+            os.getenv("DEEPSEEK_API_URL", f"{self.deepseek_base_url}/chat/completions")
+        ).rstrip("/")
+        self.deepseek_anthropic_base_url = os.getenv(
+            "OUTLINER_DEEPSEEK_ANTHROPIC_BASE_URL",
+            os.getenv("DEEPSEEK_ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic")
+        ).rstrip("/")
+        self.deepseek_thinking_enabled = os.getenv("OUTLINER_DEEPSEEK_THINKING_ENABLED", os.getenv("DEEPSEEK_THINKING_ENABLED", "false")).lower() == "true"
         self.openrouter_model = os.getenv("OUTLINER_OPENROUTER_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen3-coder:free"))
         self.ollama_model = os.getenv("OUTLINER_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -114,6 +138,7 @@ class FlowerNetOutliner:
         self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.dashscope_http_timeout = float(os.getenv('DASHSCOPE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.deepseek_http_timeout = float(os.getenv('DEEPSEEK_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.http_session = requests.Session()
         self.http_session.trust_env = False
         self._provider_next_allowed: Dict[str, float] = {}
@@ -131,6 +156,7 @@ class FlowerNetOutliner:
         print(f"  - Gemini model: {self.gemini_model}")
         print(f"  - DashScope model: {self.dashscope_model}")
         print(f"  - SenseNova model: {self.sensenova_model}")
+        print(f"  - DeepSeek model: {self.deepseek_model}")
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
         print(f"  - Ollama URL: {self.ollama_url}")
@@ -829,6 +855,61 @@ JSON 结构：
                 raise Exception(f"DashScope HTTP {status}: {str(exc)}{suffix}")
             except requests.RequestException as exc:
                 raise Exception(f"DashScope request error: {str(exc)}")
+
+        if provider == "deepseek":
+            if not self.deepseek_api_key:
+                raise Exception("DEEPSEEK_API_KEY 未配置")
+            try:
+                payload = {
+                    "model": self.deepseek_model,
+                    "messages": [
+                        {"role": "system", "content": self.DEEPSEEK_SYSTEM_PREFIX},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                }
+                if expect_json:
+                    payload["response_format"] = {"type": "json_object"}
+                if self.deepseek_thinking_enabled:
+                    payload["thinking"] = {"type": "enabled"}
+                headers = {
+                    "Authorization": f"Bearer {self.deepseek_api_key}",
+                    "Content-Type": "application/json",
+                }
+                response = self.http_session.post(self.deepseek_api_url, json=payload, headers=headers, timeout=self.deepseek_http_timeout)
+                response.raise_for_status()
+                data = response.json()
+                choice = ((data.get("choices") or [{}])[0] or {})
+                msg = choice.get("message") or {}
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
+                    content = "".join(parts)
+                text = str(content).strip()
+                if not text:
+                    raise Exception("DeepSeek 返回空响应")
+                usage = data.get("usage") or {}
+                return text, {
+                    "provider": "deepseek",
+                    "model": self.deepseek_model,
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                    "prompt_cache_hit_tokens": usage.get("prompt_cache_hit_tokens", 0),
+                    "prompt_cache_miss_tokens": usage.get("prompt_cache_miss_tokens", 0),
+                }
+            except requests.HTTPError as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                response_text = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
+                retry_after_raw = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
+                retry_after = self._parse_retry_after_seconds(retry_after_raw)
+                suffix = f" | response={response_text[:500]}" if response_text else ""
+                if retry_after is not None:
+                    raise Exception(f"DeepSeek HTTP {status}, retry_after={retry_after}{suffix}")
+                raise Exception(f"DeepSeek HTTP {status}: {str(exc)}{suffix}")
+            except requests.RequestException as exc:
+                raise Exception(f"DeepSeek request error: {str(exc)}")
 
         if provider == "sensenova":
             if not self.sensenova_api_key:
