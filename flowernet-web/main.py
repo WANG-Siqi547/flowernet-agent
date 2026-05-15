@@ -294,6 +294,19 @@ def _extract_response_error(response: requests.Response) -> str:
         return response.text[:800]
 
 
+def _clean_error_text(value: Any, fallback: str = "unknown_error") -> str:
+    if isinstance(value, dict):
+        for key in ("error", "message", "detail"):
+            text = _clean_error_text(value.get(key), "")
+            if text:
+                return text
+        return fallback
+    text = str(value or "").strip()
+    if not text or text.lower() == "none":
+        return fallback
+    return text
+
+
 def _parse_retry_after_seconds(retry_after: str) -> float | None:
     value = (retry_after or "").strip()
     if not value:
@@ -897,6 +910,59 @@ def _recover_partial_document(document_id: str, attempts: int = 5, timeout_secon
                 "attempts": attempt,
             }
 
+        task_id = _find_generator_task_id_by_document(document_id)
+        if task_id:
+            try:
+                response = DOWNSTREAM_SESSION.get(
+                    f"{GENERATOR_URL}/generate_document_task/{task_id}",
+                    timeout=min(15, max(5, timeout_seconds)),
+                )
+                response.raise_for_status()
+                task_status = response.json()
+            except Exception as exc:
+                task_status = {"status": "unknown", "error": str(exc), "task_id": task_id}
+
+            status = str(task_status.get("status") or "unknown").lower()
+            result = task_status.get("result") if isinstance(task_status, dict) else None
+            if status == "completed" and isinstance(result, dict):
+                return {
+                    "success": True,
+                    "partial": bool(result.get("partial") or result.get("interrupted")),
+                    "document_id": document_id,
+                    "title": str(result.get("title") or "FlowerNet Document"),
+                    "content": str(result.get("content") or ""),
+                    "stats": result.get("stats") if isinstance(result.get("stats"), dict) else {},
+                    "generator_task_id": task_id,
+                    "generator_status": status,
+                }
+            if status in {"queued", "running"}:
+                return {
+                    "success": True,
+                    "partial": True,
+                    "document_id": document_id,
+                    "title": "",
+                    "content": "",
+                    "stats": {
+                        "expected_subsections": 1,
+                        "passed_subsections": 0,
+                        "failed_subsections": 0,
+                        "forced_subsections": 0,
+                        "total_generated": 0,
+                    },
+                    "generator_task_id": task_id,
+                    "generator_status": status,
+                    "message": f"后台生成任务仍在{status}",
+                }
+            if status == "failed":
+                return {
+                    "success": False,
+                    "document_id": document_id,
+                    "generator_task_id": task_id,
+                    "generator_status": status,
+                    "error": _clean_error_text(task_status, f"generator_task_failed: {task_id}"),
+                    "message": "后台生成任务失败",
+                }
+
         last_history_items = history_items
         if attempt < attempts:
             time.sleep(min(3.0, delay_seconds))
@@ -905,8 +971,8 @@ def _recover_partial_document(document_id: str, attempts: int = 5, timeout_secon
     return {
         "success": False,
         "document_id": document_id,
-        "error": "history_not_ready",
-        "message": "后台内容尚未可恢复，请稍后重试。",
+        "error": "history_or_generator_task_not_ready",
+        "message": "后台内容尚未可恢复，且未找到可追踪的 generator 任务。",
         "history_items": last_history_items,
         "attempts": attempts,
     }
@@ -1173,12 +1239,8 @@ def generate_document_with_recovery(
                         if status == "failed":
                             result = status_body.get("result")
                             if isinstance(result, dict):
-                                if not str(result.get("error") or result.get("message") or "").strip():
-                                    status_error = str(status_body.get("error") or "").strip()
-                                    if status_error:
-                                        result["error"] = status_error
-                                    else:
-                                        result["error"] = f"generator_task_failed: {task_id}"
+                                if not _clean_error_text(result.get("error") or result.get("message"), ""):
+                                    result["error"] = _clean_error_text(status_body, f"generator_task_failed: {task_id}")
                                 result.setdefault("task_id", task_id)
                                 result.setdefault("last_status", status_body)
                                 result.setdefault("interrupted", True)
@@ -1188,7 +1250,7 @@ def generate_document_with_recovery(
                                 return result
                             raise HTTPException(
                                 status_code=502,
-                                detail=status_body.get("error") or f"generator_task_failed: {task_id}",
+                                detail=_clean_error_text(status_body, f"generator_task_failed: {task_id}"),
                             )
                 except HTTPException:
                     raise
@@ -4476,7 +4538,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             else:
                 detail = ""
                 if isinstance(gen_resp, dict):
-                    detail = str(gen_resp.get("error") or gen_resp.get("message") or "").strip()
+                    detail = _clean_error_text(gen_resp.get("error") or gen_resp.get("message"), "")
                     if not detail:
                         detail = str({
                             "task_id": gen_resp.get("task_id"),
@@ -4534,7 +4596,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 msg = json.dumps({'type': 'warning', 'message': f'⚠️ 生成中断，先返回已通过的 {len(history_items)} 个小节'})
                 yield f"data: {msg}\n\n"
             else:
-                err_msg = gen_resp.get('error', '文档生成失败')
+                err_msg = _clean_error_text(gen_resp.get('error'), '文档生成失败')
                 msg = json.dumps({'type': 'error', 'message': err_msg})
                 yield f"data: {msg}\n\n"
                 return
@@ -4752,6 +4814,8 @@ async def generate_stream_endpoint(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Encoding": "identity",
         }
     )
 

@@ -295,7 +295,7 @@ services:
       - key: PROVIDER_MAX_BACKOFF
         value: "20.0"
       - key: PROVIDER_HTTP_TIMEOUT
-        value: "15"
+        value: "45"
       - key: GENERATOR_SENSENOVA_CONNECT_TIMEOUT
         value: "8"
       - key: GENERATOR_SENSENOVA_READ_TIMEOUT
@@ -305,17 +305,15 @@ services:
       - key: GENERATOR_SENSENOVA_TRANSPORT_BACKOFF
         value: "1.0"
       - key: PROVIDER_FAILURE_THRESHOLD
-        value: "1"
-      - key: PROVIDER_COOLDOWN_SECONDS
-        value: "10"
-      - key: MAX_SUBSECTION_ATTEMPTS
         value: "3"
+      - key: PROVIDER_COOLDOWN_SECONDS
+        value: "30"
       - key: MAX_PASS_REL_MARGIN
         value: "0.15"
       - key: MAX_PASS_RED_MARGIN
         value: "0.25"
       - key: DASHSCOPE_HTTP_TIMEOUT
-        value: "15"
+        value: "30"
       - key: PROMPT_OUTLINE_MAX_CHARS
         value: "4500"
       - key: PROMPT_ORIGINAL_MAX_CHARS
@@ -329,43 +327,57 @@ services:
       - key: PROMPT_HISTORY_MAX_CHARS
         value: "2600"
       - key: PROVIDER_JITTER
-        value: "0.15"
+        value: "0.3"
       - key: PROVIDER_MIN_INTERVAL
-        value: "0.5"
+        value: "0.8"
       - key: ORCH_GENERATOR_RETRIES
-        value: "1"
+        value: "2"
       - key: CONTROLLER_HTTP_TIMEOUT
-        value: "45"
+        value: "120"
       - key: ORCH_GENERATOR_BACKOFF
-        value: "1.2"
+        value: "1.5"
       - key: ORCH_GENERATOR_MAX_BACKOFF
-        value: "15.0"
+        value: "20.0"
+      - key: ORCH_GENERATOR_MAX_TOKENS
+        value: "2000"
+      - key: ORCH_COMPACT_GENERATION_ENABLED
+        value: "false"
+      - key: ORCH_COMPACT_PROMPT_TRIGGER_CHARS
+        value: "7000"
+      - key: ORCH_COMPACT_MAX_TOKENS
+        value: "1800"
+      - key: ORCH_MIN_DRAFT_CHARS
+        value: "800"
+      - key: RAG_FORCE_CITATION
+        value: "true"
       - key: SERIALIZE_DOCUMENT_TASKS
         value: "true"
       - key: SERIALIZE_DOCUMENT_WAIT_TIMEOUT
-        value: "120"
-      - key: DOCUMENT_TASK_HARD_TIMEOUT
-        value: "900"
-      - key: DOCUMENT_TASK_STALE_SECONDS
         value: "1200"
+      - key: DOCUMENT_TASK_HARD_TIMEOUT
+        value: "2400"
+      - key: DOCUMENT_TASK_STALE_SECONDS
+        value: "3000"
       - key: DOC_RETRY_BASE_DELAY
-        value: "1.0"
+        value: "2.0"
       - key: DOC_RETRY_MAX_DELAY
-        value: "10.0"
+        value: "20.0"
       - key: DOC_RETRY_JITTER
-        value: "0.2"
+        value: "0.5"
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: SUBSECTION_MAX_SECONDS
-        value: "180"
+        value: "900"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "3"
+        value: "5"
       - key: MAX_PASS_REL_MARGIN
         value: "0.15"
       - key: MAX_PASS_RED_MARGIN
         value: "0.25"
       - key: MAX_CONTROLLER_RETRIES
-        value: "2"
+        value: "4"
+      - key: STRICT_CONTROLLER_EFFECTIVE
+        value: "false"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
         value: "2"
       - key: USE_DATABASE

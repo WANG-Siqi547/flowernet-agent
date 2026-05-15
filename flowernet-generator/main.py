@@ -161,6 +161,19 @@ eval_store = get_eval_store()
 tool_registry = get_tool_registry()
 
 
+def _task_error_text(value: Any, fallback: str) -> str:
+    if isinstance(value, dict):
+        for key in ("error", "message", "detail"):
+            text = str(value.get(key) or "").strip()
+            if text and text.lower() != "none":
+                return text
+        return fallback
+    text = str(value or "").strip()
+    if text and text.lower() != "none":
+        return text
+    return fallback
+
+
 def ensure_generator_initialized():
     """按需初始化 Generator，避免启动阶段阻塞健康检查。"""
     global generator
@@ -323,11 +336,16 @@ def _document_task_worker_loop() -> None:
                     task_id,
                     status="failed",
                     result=result if isinstance(result, dict) else None,
-                    error=str((result or {}).get("error") if isinstance(result, dict) else result),
+                    error=_task_error_text(result, f"document_task_failed_without_error: {task_id}"),
                     completed_at=datetime.now().isoformat(),
                 )
         except Exception as e:
-            _set_document_task(task_id, status="failed", error=str(e), completed_at=datetime.now().isoformat())
+            _set_document_task(
+                task_id,
+                status="failed",
+                error=_task_error_text(str(e), f"{type(e).__name__}: document_task_exception"),
+                completed_at=datetime.now().isoformat(),
+            )
         finally:
             document_task_queue.task_done()
 
