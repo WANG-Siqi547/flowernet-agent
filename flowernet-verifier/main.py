@@ -945,6 +945,7 @@ class FlowerNetVerifier:
         )
         
         require_multidim_env = os.getenv("REQUIRE_MULTIDIM_QUALITY", "true").lower() == "true"
+        unieval_strict_required = os.getenv("UNIEVAL_STRICT_REQUIRED", "false").lower() == "true"
         unieval_endpoint = os.getenv("UNIEVAL_ENDPOINT", "").strip()
         # If UniEval endpoint is absent, degrade to heuristic-only quality checks
         # instead of failing every verify request with HTTP 500.
@@ -955,7 +956,7 @@ class FlowerNetVerifier:
             draft=draft,
             outline=outline,
             history_list=history_list,
-            require_available=require_multidim,
+            require_available=require_multidim and unieval_strict_required,
         )
         
         fusion = self._fuse_dimensions_with_uncertainty(

@@ -28,6 +28,8 @@ services:
         value: https://flowernet-unieval.onrender.com/score
       - key: UNIEVAL_TIMEOUT
         value: "25"
+      - key: UNIEVAL_STRICT_REQUIRED
+        value: "false"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -295,15 +297,23 @@ services:
       - key: PROVIDER_MAX_BACKOFF
         value: "20.0"
       - key: PROVIDER_HTTP_TIMEOUT
-        value: "45"
+        value: "120"
       - key: GENERATOR_SENSENOVA_CONNECT_TIMEOUT
-        value: "8"
+        value: "15"
       - key: GENERATOR_SENSENOVA_READ_TIMEOUT
-        value: "30"
+        value: "120"
       - key: GENERATOR_SENSENOVA_TRANSPORT_RETRIES
-        value: "1"
+        value: "4"
       - key: GENERATOR_SENSENOVA_TRANSPORT_BACKOFF
-        value: "1.0"
+        value: "2.0"
+      - key: VERIFIER_HTTP_TIMEOUT
+        value: "180"
+      - key: VERIFIER_MAX_RETRIES
+        value: "5"
+      - key: VERIFIER_RETRY_DELAY
+        value: "8.0"
+      - key: VERIFIER_UNAVAILABLE_BEST_EFFORT
+        value: "true"
       - key: PROVIDER_FAILURE_THRESHOLD
         value: "3"
       - key: PROVIDER_COOLDOWN_SECONDS

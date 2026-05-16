@@ -117,6 +117,7 @@ class DocumentGenerationOrchestrator:
         self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "60")))
         self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "3")))
         self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "3.0")))
+        self.verifier_unavailable_best_effort = os.getenv("VERIFIER_UNAVAILABLE_BEST_EFFORT", "true").lower() == "true"
         self.generator_max_tokens = max(400, int(os.getenv("ORCH_GENERATOR_MAX_TOKENS", "2000")))
         self.min_draft_chars = max(200, int(os.getenv("ORCH_MIN_DRAFT_CHARS", "800")))
         self.session = requests.Session()
@@ -717,6 +718,7 @@ class DocumentGenerationOrchestrator:
             "controller_fallback_outline_total": 0,
             "controller_exhausted_total": 0,
             "generator_short_draft_total": 0,
+            "verifier_error_total": 0,
             "token_usage": {
                 "prompt_tokens": 0,
                 "output_tokens": 0,
@@ -899,6 +901,7 @@ class DocumentGenerationOrchestrator:
                                 document_result["controller_triggered_subsections"] += 1
 
                             document_result["verifier_failed_total"] += int(metrics.get("verifier_failed", 0) or 0)
+                            document_result["verifier_error_total"] += int(metrics.get("verifier_error", 0) or 0)
                             document_result["controller_calls_total"] += int(metrics.get("controller_calls", 0) or 0)
                             document_result["controller_success_total"] += int(metrics.get("controller_success", 0) or 0)
                             document_result["controller_error_total"] += int(metrics.get("controller_error", 0) or 0)
@@ -1207,6 +1210,7 @@ class DocumentGenerationOrchestrator:
                     "prompt_cache_hit_rate": document_result["prompt_cache_hit_rate"],
                     "controller_triggered_subsections": document_result["controller_triggered_subsections"],
                     "verifier_failed_total": document_result["verifier_failed_total"],
+                    "verifier_error_total": document_result["verifier_error_total"],
                 },
             )
             
@@ -1240,6 +1244,7 @@ class DocumentGenerationOrchestrator:
                 "controller_fallback_outline_total": document_result.get("controller_fallback_outline_total", 0),
                 "controller_exhausted_total": document_result.get("controller_exhausted_total", 0),
                 "generator_short_draft_total": document_result.get("generator_short_draft_total", 0),
+                "verifier_error_total": document_result.get("verifier_error_total", 0),
                 "token_usage": document_result.get("token_usage", {}),
                 "prompt_cache_hit_rate": document_result.get("prompt_cache_hit_rate", 0.0),
                 # Include quality metrics fields to avoid zero defaults on frontend
@@ -1308,6 +1313,7 @@ class DocumentGenerationOrchestrator:
             "controller_exhausted": 0,
             "generator_degraded_mode": 0,
             "generator_short_draft": 0,
+            "verifier_error": 0,
             "prompt_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
@@ -1593,6 +1599,20 @@ class DocumentGenerationOrchestrator:
                     # 完全没有draft时，返回空内容而不是outline
                     fallback_draft = ""
                     fallback_note = "（内容生成失败，仍在恢复中）"
+                fallback_is_meaningful = (
+                    bool(str(fallback_draft or "").strip())
+                    and len(str(fallback_draft or "").strip()) >= self.min_draft_chars
+                    and not self._is_outline_like(fallback_draft, current_outline)
+                )
+                verifier_unavailable_only = (
+                    int(metrics.get("verifier_error", 0) or 0) > 0
+                    and int(metrics.get("verifier_failed", 0) or 0) == 0
+                )
+                best_effort_due_to_verifier = (
+                    self.verifier_unavailable_best_effort
+                    and verifier_unavailable_only
+                    and fallback_is_meaningful
+                )
                 
                 self._emit_progress_event(
                     document_id=document_id,
@@ -1621,7 +1641,10 @@ class DocumentGenerationOrchestrator:
                 except Exception:
                     pass
 
-                placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
+                if best_effort_due_to_verifier:
+                    placeholder_reason = "verifier_unavailable_best_effort"
+                else:
+                    placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
                 return {
                     "success": True,
                     "draft": fallback_draft,
@@ -1640,10 +1663,11 @@ class DocumentGenerationOrchestrator:
                         "relevancy_index": 0.0,
                         "redundancy_index": 1.0,
                         "feedback": placeholder_reason,
-                        "forced_pass": True,
+                        "forced_pass": not best_effort_due_to_verifier,
                         "force_reason": placeholder_reason,
+                        "verifier_unavailable": verifier_unavailable_only,
                     },
-                    "forced_pass": True,
+                    "forced_pass": not best_effort_due_to_verifier,
                     "force_reason": placeholder_reason,
                     "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
                     "controller_retry_count": controller_retry_count,
@@ -1932,13 +1956,19 @@ class DocumentGenerationOrchestrator:
             
             if not verify_result.get("success"):
                 print(f"         ⚠️ Verifier 错误，继续重试当前小节")
+                verifier_error = str(verify_result.get("error") or "verifier_unavailable")
+                metrics["verifier_error"] += 1
                 self._emit_progress_event(
                     document_id=document_id,
                     section_id=section_id,
                     subsection_id=subsection_id,
                     stage="verifier_error",
                     message=f"第 {iterations} 轮：Verifier 调用失败，准备重试",
-                    metadata={"iteration": iterations},
+                    metadata={
+                        "iteration": iterations,
+                        "error": verifier_error[:500],
+                        "draft_chars": len(str(draft or "")),
+                    },
                 )
                 time.sleep(self._compute_retry_delay(iterations))
                 continue
@@ -2846,8 +2876,12 @@ class DocumentGenerationOrchestrator:
                     return result
                 else:
                     elapsed = time.time() - start
-                    last_error = f"HTTP {response.status_code}"
-                    print(f"      [_call_verifier] HTTP {response.status_code} after {elapsed:.1f}s")
+                    try:
+                        response_text = response.text[:500]
+                    except Exception:
+                        response_text = ""
+                    last_error = f"HTTP {response.status_code}: {response_text}".strip()
+                    print(f"      [_call_verifier] HTTP {response.status_code} after {elapsed:.1f}s: {response_text[:180]}")
             except Exception as e:
                 elapsed = time.time() - start
                 last_error = str(e)
