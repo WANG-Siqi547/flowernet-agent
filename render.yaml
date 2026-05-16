@@ -222,9 +222,9 @@ services:
       - key: PROVIDER_MIN_INTERVAL
         value: "0.8"
       - key: PROVIDER_HTTP_TIMEOUT
-        value: "120"
+        value: "75"
       - key: DEEPSEEK_HTTP_TIMEOUT
-        value: "120"
+        value: "75"
       - key: SENSENOVA_CONNECT_TIMEOUT
         value: "15"
       - key: SENSENOVA_READ_TIMEOUT
@@ -353,17 +353,17 @@ services:
       - key: GENERATOR_SENSENOVA_CONNECT_TIMEOUT
         value: "15"
       - key: GENERATOR_SENSENOVA_READ_TIMEOUT
-        value: "120"
+        value: "75"
       - key: GENERATOR_SENSENOVA_TRANSPORT_RETRIES
         value: "4"
       - key: GENERATOR_SENSENOVA_TRANSPORT_BACKOFF
         value: "2.0"
       - key: VERIFIER_HTTP_TIMEOUT
-        value: "180"
+        value: "75"
       - key: VERIFIER_MAX_RETRIES
-        value: "5"
+        value: "2"
       - key: VERIFIER_RETRY_DELAY
-        value: "8.0"
+        value: "2.0"
       - key: VERIFIER_UNAVAILABLE_BEST_EFFORT
         value: "true"
       - key: PROVIDER_FAILURE_THRESHOLD
@@ -395,7 +395,7 @@ services:
       - key: ORCH_GENERATOR_RETRIES
         value: "2"
       - key: CONTROLLER_HTTP_TIMEOUT
-        value: "120"
+        value: "60"
       - key: ORCH_GENERATOR_BACKOFF
         value: "1.5"
       - key: ORCH_GENERATOR_MAX_BACKOFF
@@ -417,7 +417,9 @@ services:
       - key: SERIALIZE_DOCUMENT_WAIT_TIMEOUT
         value: "1200"
       - key: DOCUMENT_TASK_HARD_TIMEOUT
-        value: "2400"
+        value: "3600"
+      - key: DOCUMENT_TASK_HEARTBEAT_SECONDS
+        value: "20"
       - key: DOCUMENT_TASK_STALE_SECONDS
         value: "3000"
       - key: DOC_RETRY_BASE_DELAY
@@ -429,15 +431,15 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: SUBSECTION_MAX_SECONDS
-        value: "900"
+        value: "420"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "5"
+        value: "3"
       - key: MAX_PASS_REL_MARGIN
         value: "0.15"
       - key: MAX_PASS_RED_MARGIN
         value: "0.25"
       - key: MAX_CONTROLLER_RETRIES
-        value: "4"
+        value: "2"
       - key: STRICT_CONTROLLER_EFFECTIVE
         value: "false"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
@@ -454,7 +456,7 @@ services:
         value: https://flowernet-outliner.onrender.com
       - key: NO_PROXY
         value: "localhost,127.0.0.1"
-    healthCheckPath: /
+    healthCheckPath: /health
     
   # ==========================================
   # Service 5: Web UI (前端用户界面)
@@ -491,6 +493,8 @@ services:
         value: "10.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "5.0"
+      - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
+        value: "3600"
       - key: WEB_DEFAULT_REL_THRESHOLD
         value: "0.75"
       - key: WEB_DEFAULT_RED_THRESHOLD

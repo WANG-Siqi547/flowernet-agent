@@ -317,7 +317,20 @@ def _document_task_worker_loop() -> None:
 
             runner = threading.Thread(target=_run_task, daemon=True, name=f"document-task-runner-{task_id}")
             runner.start()
-            runner.join(timeout=DOCUMENT_TASK_HARD_TIMEOUT)
+            started_monotonic = time.monotonic()
+            heartbeat_interval = max(5.0, float(os.getenv("DOCUMENT_TASK_HEARTBEAT_SECONDS", "20")))
+            while runner.is_alive():
+                elapsed = time.monotonic() - started_monotonic
+                if elapsed >= DOCUMENT_TASK_HARD_TIMEOUT:
+                    break
+                runner.join(timeout=min(heartbeat_interval, max(0.1, DOCUMENT_TASK_HARD_TIMEOUT - elapsed)))
+                if runner.is_alive():
+                    _set_document_task(
+                        task_id,
+                        status="running",
+                        heartbeat_at=datetime.now().isoformat(),
+                        runtime_seconds=round(time.monotonic() - started_monotonic, 1),
+                    )
             if runner.is_alive():
                 _set_document_task(
                     task_id,
