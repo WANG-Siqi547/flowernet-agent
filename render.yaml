@@ -132,11 +132,11 @@ services:
       - key: PORT
         value: 8003
       - key: OUTLINER_PROVIDER
-        value: sensenova
+        value: deepseek
       - key: OUTLINER_PROVIDER_CHAIN
-        value: sensenova
+        value: deepseek,sensenova
       - key: OUTLINER_MODEL
-        value: glm-5
+        value: deepseek-v4-flash
       - key: OUTLINER_OPENROUTER_MODEL
         value: qwen/qwen3-coder:free
       - key: OUTLINER_GEMINI_MODEL
@@ -163,6 +163,30 @@ services:
         value: https://api.sensenova.cn/v1/llm/chat-completions
       - key: OUTLINER_SENSENOVA_API_KEY
         sync: false
+      - key: OUTLINER_DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: OUTLINER_DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: OUTLINER_DEEPSEEK_API_URL
+        value: https://api.deepseek.com/chat/completions
+      - key: OUTLINER_DEEPSEEK_ANTHROPIC_BASE_URL
+        value: https://api.deepseek.com/anthropic
+      - key: OUTLINER_DEEPSEEK_API_KEY
+        sync: false
+      - key: OUTLINER_DEEPSEEK_THINKING_ENABLED
+        value: "false"
+      - key: DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: DEEPSEEK_API_URL
+        value: https://api.deepseek.com/chat/completions
+      - key: DEEPSEEK_ANTHROPIC_BASE_URL
+        value: https://api.deepseek.com/anthropic
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_THINKING_ENABLED
+        value: "false"
       - key: DASHSCOPE_MODEL
         value: glm-5
       - key: DASHSCOPE_API_URL
@@ -198,6 +222,8 @@ services:
       - key: PROVIDER_MIN_INTERVAL
         value: "0.8"
       - key: PROVIDER_HTTP_TIMEOUT
+        value: "120"
+      - key: DEEPSEEK_HTTP_TIMEOUT
         value: "120"
       - key: SENSENOVA_CONNECT_TIMEOUT
         value: "15"
@@ -235,11 +261,11 @@ services:
       - key: PORT
         value: 8002
       - key: GENERATOR_PROVIDER
-        value: sensenova
+        value: deepseek
       - key: GENERATOR_PROVIDER_CHAIN
-        value: sensenova
+        value: deepseek,sensenova
       - key: GENERATOR_MODEL
-        value: glm-5
+        value: deepseek-v4-flash
       - key: GENERATOR_OPENROUTER_MODEL
         value: qwen/qwen3-coder:free
       - key: GENERATOR_GEMINI_MODEL
@@ -266,6 +292,30 @@ services:
         value: https://api.sensenova.cn/v1/llm/chat-completions
       - key: GENERATOR_SENSENOVA_API_KEY
         sync: false
+      - key: GENERATOR_DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: GENERATOR_DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: GENERATOR_DEEPSEEK_API_URL
+        value: https://api.deepseek.com/chat/completions
+      - key: GENERATOR_DEEPSEEK_ANTHROPIC_BASE_URL
+        value: https://api.deepseek.com/anthropic
+      - key: GENERATOR_DEEPSEEK_API_KEY
+        sync: false
+      - key: GENERATOR_DEEPSEEK_THINKING_ENABLED
+        value: "false"
+      - key: DEEPSEEK_MODEL
+        value: deepseek-v4-flash
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: DEEPSEEK_API_URL
+        value: https://api.deepseek.com/chat/completions
+      - key: DEEPSEEK_ANTHROPIC_BASE_URL
+        value: https://api.deepseek.com/anthropic
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_THINKING_ENABLED
+        value: "false"
       - key: DASHSCOPE_MODEL
         value: glm-5
       - key: DASHSCOPE_API_URL
@@ -297,6 +347,8 @@ services:
       - key: PROVIDER_MAX_BACKOFF
         value: "20.0"
       - key: PROVIDER_HTTP_TIMEOUT
+        value: "120"
+      - key: DEEPSEEK_HTTP_TIMEOUT
         value: "120"
       - key: GENERATOR_SENSENOVA_CONNECT_TIMEOUT
         value: "15"

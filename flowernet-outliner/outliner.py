@@ -269,7 +269,8 @@ class FlowerNetOutliner:
 2. title/section title/subsection title 必须是专业、简洁、主题相关的学术标题。
 3. 禁止把“请帮我生成...”“高质量长文档”“用户背景/用户需求/额外要求”等请求文本复制成标题。
 4. 不要输出模板占位标题，如“第1章”“Section 1”“Subsection”。
-5. 不要输出解释，不要代码块，只输出 JSON。
+5. 附加要求只作为格式、质量或风格约束，不是内容主题；禁止把测试、复测、修复等约束词写成标题。
+6. 不要输出解释，不要代码块，只输出 JSON。
 
 用户背景：
 {user_background}
@@ -319,6 +320,20 @@ class FlowerNetOutliner:
         first_line = text.strip().splitlines()[0].strip() if text.strip() else ""
         return (first_line or default).strip()[:120]
 
+    @staticmethod
+    def _extract_extra_constraints(user_requirements: str) -> str:
+        text = str(user_requirements or "")
+        matched = re.search(r"(?:附加要求|额外要求|Extra requirements)\s*[:：]\s*(.+)", text, flags=re.S)
+        if not matched:
+            return ""
+        return " ".join(matched.group(1).strip().split())[:360]
+
+    @staticmethod
+    def _topic_only_requirements(user_requirements: str) -> str:
+        text = str(user_requirements or "")
+        text = re.split(r"(?:附加要求|额外要求|Extra requirements)\s*[:：]", text, maxsplit=1)[0]
+        return text.strip()
+
     def _generate_compact_document_structure(
         self,
         user_background: str,
@@ -329,12 +344,15 @@ class FlowerNetOutliner:
     ) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
         topic = self._extract_requirement_field(user_requirements, ["文档主题", "主题", "Document topic"], "文档主题")
         audience = self._extract_requirement_field(user_requirements, ["目标读者/用户背景", "用户背景", "User background"], user_background)
+        topic_requirements = self._topic_only_requirements(user_requirements)
+        extra_constraints = self._extract_extra_constraints(user_requirements)
         compact_prompt = f"""
 只输出一个合法 JSON 对象，为专业长文档生成大纲。
 
 主题：{topic}
 目标读者：{audience or user_background}
-补充需求：{user_requirements[:600]}
+主题需求：{topic_requirements[:520]}
+附加约束（只作为格式、质量、测试或风格约束；不得写入标题或内容主题）：{extra_constraints or "无"}
 上一次失败原因：{reason[:240]}
 
 硬性要求：
@@ -342,6 +360,7 @@ class FlowerNetOutliner:
 - sections 必须恰好 {max_sections} 个。
 - 每个 section 的 subsections 必须恰好 {max_subsections_per_section} 个。
 - 标题必须是专业学术标题，禁止复制用户请求句，禁止“第1章/第1节/Section/Subsection”等占位标题。
+- 附加约束不是文档主题；禁止把“远端测试、复测、修复、测试要求、格式要求”等约束词写入 title/section/subsection。
 - description 用 1 句说明该节写什么。
 
 JSON 结构：
@@ -405,6 +424,9 @@ JSON 结构：
                 ]
             }
         """
+        topic = self._extract_requirement_field(user_requirements, ["文档主题", "主题", "Document topic"], "文档主题")
+        topic_requirements = self._topic_only_requirements(user_requirements)
+        extra_constraints = self._extract_extra_constraints(user_requirements)
         # 构建 Document Structure Prompt
         structure_prompt = f"""
 你是一个专业的文档结构设计专家。根据用户提供的背景和需求，生成一个详细的文档大纲。
@@ -413,7 +435,13 @@ JSON 结构：
 {user_background}
 
 **用户需求**:
-{user_requirements}
+{topic_requirements}
+
+**附加约束**（只影响格式、质量或风格，不是文档主题）:
+{extra_constraints or "无"}
+
+**文档主题锁定**:
+{topic}
 
 **任务要求**:
 1. 生成一个清晰的文档标题
@@ -423,6 +451,7 @@ JSON 结构：
 5. 总共应该生成：{max_sections * max_subsections_per_section} 个小节
 6. 标题必须是专业学术标题；禁止把用户请求句、写作要求、用户背景、"请帮我生成..."、"高质量长文档" 复制成章节或小节标题
 7. 禁止使用“第1章”“第1节”“Section 1”“Subsection”等占位标题
+8. 附加约束不是内容主题；禁止把测试、复测、修复、格式、引用等约束词写成章节或小节标题
 
 **输出格式**（严格按照 JSON 格式）:
 {{

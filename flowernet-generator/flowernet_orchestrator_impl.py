@@ -883,7 +883,9 @@ class DocumentGenerationOrchestrator:
                             history_order = len(passed_history)
                             forced_pass = bool(subsection_gen_result.get("forced_pass", False))
                             force_reason = str(subsection_gen_result.get("force_reason", "") or "")
-                            forced_should_fail = forced_pass and (not self.allow_forced_pass)
+                            generated_content = subsection_gen_result.get("draft", "")
+                            has_usable_forced_draft = forced_pass and bool(str(generated_content or "").strip())
+                            forced_should_fail = forced_pass and (not self.allow_forced_pass) and (not has_usable_forced_draft)
                             controller_triggered = bool(subsection_gen_result.get("controller_triggered", False))
                             controller_retry_count = int(subsection_gen_result.get("controller_retry_count", 0) or 0)
                             rag_used = bool(subsection_gen_result.get("rag_used", False))
@@ -978,8 +980,12 @@ class DocumentGenerationOrchestrator:
                                     document_id=document_id,
                                     section_id=section_id,
                                     subsection_id=subsection_id,
-                                    stage="subsection_passed",
-                                    message=f"小节通过验证: {section_title} > {subsection_title}",
+                                    stage="subsection_forced_pass" if forced_pass else "subsection_passed",
+                                    message=(
+                                        f"小节达到最大修复轮次，保留最佳草稿并继续: {section_title} > {subsection_title}"
+                                        if forced_pass
+                                        else f"小节通过验证: {section_title} > {subsection_title}"
+                                    ),
                                     metadata={
                                         "iterations": subsection_gen_result.get("iterations", 0),
                                         "verification": verification,
@@ -2539,6 +2545,7 @@ class DocumentGenerationOrchestrator:
 2. 当前小节只完成当前大纲要求的内容，不扩写到其他小节，不提前总结全文。
 3. 直接输出小节正文，不添加“以下是正文”“下面开始”等前言。
 4. 输出必须是完整、可发表长文档的小节正文，不允许只写提纲、摘要、列表标题或任务复述。
+5. 原始写作任务中的“附加要求/额外要求/Extra requirements”只作为格式、质量、测试或风格约束；除非其中明确要求作为正文主题，否则不得把测试、复测、修复、引用格式等约束词写成正文内容点。
 
 二、学术质量
 1. 采用专业中文学术文体，段落之间逻辑清晰、证据明确、过渡自然。

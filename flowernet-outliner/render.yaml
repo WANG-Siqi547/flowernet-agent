@@ -15,7 +15,7 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: OUTLINER_PROVIDER
-        value: sensenova
+        value: deepseek
       - key: OUTLINER_PROVIDER_CHAIN
         value: "deepseek,sensenova"
       - key: OUTLINER_MODEL
