@@ -24,7 +24,7 @@ services:
       - key: CONTROLLER_USE_LLM_OUTLINE
         value: "true"
       - key: CONTROLLER_LLM_CALL_MODE
-        value: "direct"
+        value: "generator"
       - key: CONTROLLER_LLM_FALLBACK_TO_GENERATOR
         value: "true"
       - key: CONTROLLER_REQUIRE_LLM_SOURCE
@@ -38,7 +38,7 @@ services:
       - key: SENSENOVA_API_KEY
         sync: false
       - key: CONTROLLER_LLM_TIMEOUT
-        value: "30"
+        value: "45"
       - key: CONTROLLER_LLM_RETRIES
         value: "1"
       - key: CONTROLLER_MIN_SCORE_GAIN
