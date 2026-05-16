@@ -94,9 +94,26 @@ class RAGSearchEngine:
                 "min_alignment": 0.28,
             },
             "technology": {
-                "signals": ["算法", "编程", "软件", "机器学习", "ai", "algorithm", "software", "machine learning"],
-                "expansions": ["computer science", "software engineering", "machine learning"],
-                "required_any": ["algorithm", "software", "computer", "machine learning", "算法", "软件", "机器学习"],
+                "signals": [
+                    "算法", "编程", "软件", "机器学习", "人工智能", "可靠性", "测试", "鲁棒性",
+                    "ai", "artificial intelligence", "algorithm", "software", "machine learning",
+                    "deep learning", "reliability", "testing", "robustness",
+                ],
+                "expansions": [
+                    "AI system reliability testing",
+                    "deep learning testing reliability",
+                    "coverage guided testing deep neural networks",
+                    "DeepXplore automated whitebox testing deep learning systems",
+                    "DeepGauge multi granularity testing criteria deep learning systems",
+                    "computer science",
+                    "software engineering",
+                    "machine learning",
+                ],
+                "required_any": [
+                    "ai", "artificial intelligence", "deep learning", "neural network", "reliability",
+                    "testing", "robustness", "algorithm", "software", "computer", "machine learning",
+                    "人工智能", "可靠性", "测试", "鲁棒性", "算法", "软件", "机器学习",
+                ],
                 "reject": ["student time management", "商业谈判"],
                 "preferred_domains": ["arxiv.org", "acm.org", "ieee.org", "springer.com"],
                 "min_alignment": 0.25,
@@ -175,7 +192,7 @@ class RAGSearchEngine:
                 academic_results = self._search_academic_sources(query)
                 if academic_results:
                     ranked_academic = self._rank_results(query, academic_results)
-                    if len(ranked_academic) >= self.safe_min_results:
+                    if len(ranked_academic) >= self.safe_min_results and self._has_usable_results(ranked_academic):
                         return {
                             "success": True,
                             "query": query,
@@ -187,7 +204,7 @@ class RAGSearchEngine:
                         }
                 if self.safe_backfill_enabled:
                     safe_ranked = self._safe_backfill_results(query, academic_results)
-                    if safe_ranked:
+                    if safe_ranked and self._has_usable_results(safe_ranked):
                         return {
                             "success": True,
                             "query": query,
@@ -260,6 +277,16 @@ class RAGSearchEngine:
             }
         finally:
             self._active_deadline = previous_deadline if "previous_deadline" in locals() else None
+
+    @staticmethod
+    def _has_usable_results(results: List[Dict[str, Any]]) -> bool:
+        for item in results or []:
+            semantic = float((item or {}).get("semantic_score", 0.0) or 0.0)
+            quality = float((item or {}).get("quality_score", 0.0) or 0.0)
+            topic = float((item or {}).get("topic_alignment_score", 0.0) or 0.0)
+            if semantic >= 0.18 or quality >= 0.55 or topic >= 0.35:
+                return True
+        return False
 
     def _build_query_candidates(self, query: str) -> List[str]:
         query_text = " ".join(str(query or "").split())[:300].strip()
@@ -550,12 +577,21 @@ class RAGSearchEngine:
 
     def _academic_queries(self, query_text: str, semantic_query: str, profile: Dict[str, Any]) -> List[str]:
         candidates: List[str] = []
-        for expansion in profile.get("expansions", [])[:5]:
-            candidates.append(str(expansion))
         if semantic_query:
             candidates.append(semantic_query)
         if query_text:
             candidates.append(query_text)
+        combined = f"{query_text} {semantic_query}".lower()
+        if any(term in combined for term in ["ai", "人工智能", "reliability", "可靠性", "testing", "测试", "neural", "深度学习"]):
+            candidates.extend([
+                "AI system reliability testing",
+                "deep learning testing reliability",
+                "coverage guided testing deep neural networks",
+                "DeepXplore automated whitebox testing deep learning systems",
+                "DeepGauge multi granularity testing criteria deep learning systems",
+            ])
+        for expansion in profile.get("expansions", [])[:5]:
+            candidates.append(str(expansion))
         dedup: List[str] = []
         seen: set[str] = set()
         for candidate in candidates:
