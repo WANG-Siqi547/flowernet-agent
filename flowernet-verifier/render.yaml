@@ -23,4 +23,4 @@ services:
         value: "0.60"
       - key: QUALITY_DIMENSION_THRESHOLDS_JSON
         value: '{"topic_alignment":0.53,"coverage_completeness":0.53,"logical_coherence":0.05,"evidence_grounding":0.33,"novelty":0.68,"structure_clarity":0.51}'
-    healthCheckPath: /
+    healthCheckPath: /health/live

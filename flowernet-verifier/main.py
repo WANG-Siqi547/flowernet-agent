@@ -1101,6 +1101,13 @@ print("🚀 FlowerNet API 启动（Verifier 将按需初始化）...")
 def read_root():
     return {"status": "online", "message": "FlowerNet Verifying Layer is ready."}
 
+
+@app.get("/health")
+@app.get("/health/live")
+def health_check():
+    """Lightweight liveness endpoint for Render and upstream probes."""
+    return {"status": "ok", "service": "flowernet-verifier"}
+
 # 4. 定义核心验证接口
 @app.post("/verify")
 async def perform_verification(request: VerifyRequest):

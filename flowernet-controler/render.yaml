@@ -49,4 +49,4 @@ services:
         value: "0.005"
       - key: CONTROLLER_MIN_STRUCTURE_GAIN
         value: "0.05"
-    healthCheckPath: /
+    healthCheckPath: /health/live

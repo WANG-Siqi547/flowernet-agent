@@ -34,7 +34,7 @@ services:
         value: "true"
       - key: DATABASE_PATH
         value: flowernet_history.db
-    healthCheckPath: /
+    healthCheckPath: /health/live
 
   # ==========================================
   # Service 1.5: UniEval (多维语义评估服务)
@@ -116,7 +116,7 @@ services:
         value: "true"
       - key: DATABASE_PATH
         value: flowernet_history.db
-    healthCheckPath: /
+    healthCheckPath: /health/live
     
   # ==========================================
   # Service 3: Outliner (大纲生成服务)

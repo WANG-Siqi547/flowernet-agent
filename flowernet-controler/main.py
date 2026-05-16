@@ -910,6 +910,13 @@ def read_root():
     }
 
 
+@app.get("/health")
+@app.get("/health/live")
+def health_check():
+    """Lightweight health endpoint for Render and upstream service probes."""
+    return {"status": "ok", "service": "flowernet-controller"}
+
+
 @app.post("/refine_prompt")
 async def refine_prompt(req: RefinePromptRequest):
     """
