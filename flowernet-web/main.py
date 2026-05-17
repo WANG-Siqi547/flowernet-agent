@@ -1944,11 +1944,47 @@ def build_markdown_document(
         focus = "、".join(section_titles[:3]) if _document_uses_chinese() else ", ".join(section_titles[:3])
         methods = "、".join(subsection_titles[:4]) if _document_uses_chinese() else ", ".join(subsection_titles[:4])
         doc_title = _normalize_label(title)
+        content_sentences: List[str] = []
+        for section in generated_sections or []:
+            for subsection in section.get("subsections", []) or []:
+                text = _clean_subsection_text(str(subsection.get("content", "") or ""))
+                text = re.sub(r"\[[0-9]+\]", "", text)
+                text = re.sub(r"<[^>]+>", "", text)
+                for sentence in re.split(r"(?<=[。！？!?])\s*", text):
+                    sentence = " ".join(sentence.split()).strip()
+                    if not sentence:
+                        continue
+                    if re.match(r"^#{1,6}\s+", sentence):
+                        continue
+                    if any(noise in sentence.lower() for noise in ["references", "bibliography", "index terms"]):
+                        continue
+                    if len(sentence) < 24 or len(sentence) > 180:
+                        continue
+                    content_sentences.append(sentence.rstrip("。.!?！？"))
+                    break
+                if len(content_sentences) >= 3:
+                    break
+            if len(content_sentences) >= 3:
+                break
         if _document_uses_chinese():
+            evidence_focus = "；".join(content_sentences[:2])
+            if evidence_focus:
+                return (
+                    f"本文以“{doc_title}”为研究对象，围绕{focus or '核心问题'}构建分层论证框架。"
+                    f"文章结合{methods or '关键子主题'}展开分析，重点说明：{evidence_focus}。"
+                    "在此基础上，本文进一步比较不同方法、机制或实践路径的适用边界，形成兼顾概念界定、证据支撑与应用判断的专题综述。"
+                )
             return (
                 f"本文围绕“{doc_title}”展开，重点梳理{focus or '核心问题'}之间的逻辑关系、机制解释与应用边界。"
                 f"文章进一步结合{methods or '关键子主题'}等内容，构建从概念界定、理论建模到实践场景分析的论证链条。"
                 "全文强调问题定义、证据支撑与结构化推理的一致性，旨在形成可复核、可扩展且适合学术写作的专题综述。"
+            )
+        evidence_focus = "; ".join(content_sentences[:2])
+        if evidence_focus:
+            return (
+                f"This article studies {doc_title} through the connected themes of {focus or 'the central research questions'}. "
+                f"It develops the analysis across {methods or 'the main analytical subtopics'} and foregrounds the following argument: {evidence_focus}. "
+                "The manuscript integrates definitions, evidence, mechanisms, and applied boundaries into a coherent review-style technical narrative."
             )
         return (
             f"This article examines {doc_title} through the connected themes of {focus or 'the central research questions'}. "

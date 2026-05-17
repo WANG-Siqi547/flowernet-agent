@@ -239,13 +239,23 @@ class FlowerNetVerifier:
         # 3) Coverage completeness: 是否覆盖大纲关键信息
         coverage_completeness = self._clip01(0.7 * keyword_coverage + 0.3 * rouge_l)
 
-        # 4) Logical coherence: 使用句长稳定性 + 连接词密度近似估计
+        chinese_ratio = (
+            len(re.findall(r"[\u4e00-\u9fff]", draft))
+            / max(1, len(re.sub(r"\s+", "", draft)))
+        )
+
+        # 4) Logical coherence: 使用句长稳定性 + 连接词密度近似估计。
+        # 中文学术段落天然比英文短句更长，不能按短句写作目标惩罚正式论文段落。
         sentence_units = [s.strip() for s in re.split(r"[。！？!?；;\n]", draft) if s.strip()]
         if sentence_units:
             lengths = [len(s) for s in sentence_units]
             avg_len = sum(lengths) / len(lengths)
-            len_penalty = abs(avg_len - 24.0) / 24.0
-            connector_count = len(re.findall(r"因此|所以|然而|同时|此外|首先|其次|最后|because|however|therefore|moreover|first|second|finally", draft.lower()))
+            target_len = 42.0 if chinese_ratio >= 0.35 else 24.0
+            len_penalty = abs(avg_len - target_len) / target_len
+            connector_count = len(re.findall(
+                r"因此|所以|然而|同时|此外|首先|其次|最后|由此|综上|相比|例如|because|however|therefore|moreover|first|second|finally",
+                draft.lower(),
+            ))
             connector_density = connector_count / max(1, len(sentence_units))
             logical_coherence = self._clip01((1.0 - min(1.0, len_penalty)) * 0.65 + min(1.0, connector_density) * 0.35)
         else:
@@ -260,11 +270,29 @@ class FlowerNetVerifier:
         citation_signal = 1.0 if source_check.get("passed") else 0.35
         evidence_grounding = self._clip01(0.65 * avg_semantic_match + 0.35 * citation_signal)
 
-        # 6) Structure clarity: 小节组织形态质量
-        line_count = len([ln for ln in draft.splitlines() if ln.strip()])
+        # 6) Structure clarity: 小节组织形态质量。
+        # 发表型正文通常是多段论证，而不是小节内部继续堆标题/项目符号。
+        paragraphs = [
+            p.strip()
+            for p in re.split(r"\n\s*\n", draft)
+            if len(p.strip()) >= 30 and not re.match(r"^#{1,6}\s+", p.strip())
+        ]
         heading_count = len(re.findall(r"^#{1,4}\s+", draft, flags=re.MULTILINE))
         bullet_count = len(re.findall(r"^[\-\*\d]+[\.\)]?\s+", draft, flags=re.MULTILINE))
-        structure_clarity = self._clip01(min(1.0, line_count / 10.0) * 0.5 + min(1.0, (heading_count + bullet_count) / 4.0) * 0.5)
+        connector_count = len(re.findall(
+            r"因此|所以|然而|同时|此外|首先|其次|最后|由此|综上|相比|例如|because|however|therefore|moreover|first|second|finally",
+            draft.lower(),
+        ))
+        paragraph_signal = min(1.0, len(paragraphs) / 3.0)
+        sentence_signal = min(1.0, len(sentence_units) / 8.0)
+        transition_signal = min(1.0, connector_count / 5.0)
+        outline_signal = min(1.0, (heading_count + bullet_count) / 4.0)
+        structure_clarity = self._clip01(
+            0.45 * paragraph_signal
+            + 0.25 * sentence_signal
+            + 0.20 * transition_signal
+            + 0.10 * outline_signal
+        )
 
         return {
             "topic_alignment": round(topic_alignment, 4),
@@ -479,12 +507,28 @@ class FlowerNetVerifier:
                 continue
 
             if h is not None and u is not None:
-                # Two-estimator fusion: mean with estimator disagreement uncertainty.
-                mean_val = (float(h) + float(u)) / 2.0
-                unc = self._clip01(abs(float(h) - float(u)))
+                # Two-estimator fusion. UniEval is useful as a second opinion,
+                # but the deployed evaluator can be systematically harsh on
+                # Chinese long-form paragraphs. Keep heuristic/source/relevance
+                # as the primary signal and downweight UniEval when estimators
+                # strongly disagree, so one low-confidence evaluator cannot
+                # destabilize the controller loop.
+                base_weight = self._clip01(self._safe_float(os.getenv("QUALITY_UNIEVAL_WEIGHT", "0.25"), 0.25))
+                min_weight = self._clip01(self._safe_float(os.getenv("QUALITY_UNIEVAL_DIVERGENCE_MIN_WEIGHT", "0.08"), 0.08))
+                divergence_threshold = self._clip01(self._safe_float(os.getenv("QUALITY_UNIEVAL_DIVERGENCE_THRESHOLD", "0.35"), 0.35))
+                disagreement = abs(float(h) - float(u))
+                unieval_weight = base_weight
+                if disagreement >= divergence_threshold and float(u) < float(h):
+                    unieval_weight = min_weight
+                mean_val = (1.0 - unieval_weight) * float(h) + unieval_weight * float(u)
+                unc = self._clip01(disagreement)
                 low = self._clip01(mean_val - 0.5 * unc)
                 high = self._clip01(mean_val + 0.5 * unc)
-                sources[key] = {"heuristic": round(float(h), 4), "unieval": round(float(u), 4)}
+                sources[key] = {
+                    "heuristic": round(float(h), 4),
+                    "unieval": round(float(u), 4),
+                    "unieval_weight": round(unieval_weight, 4),
+                }
             else:
                 mean_val = float(entries[0])
                 unc = single_source_unc
