@@ -1168,7 +1168,13 @@ class RAGSearchEngine:
         if not items:
             return ""
 
-        context = "【参考资料（可引用来源）】\n"
+        allowed = "、".join(f"[{index}]" for index in range(1, len(items) + 1))
+        context = (
+            "【参考资料（可引用来源）】\n"
+            f"本小节只能引用下列来源编号：{allowed}。"
+            "如果大纲或用户要求中出现更大的引用编号，必须忽略并映射到下列可用来源；"
+            "不得虚构未列出的来源编号。\n"
+        )
         for index, item in enumerate(items, start=1):
             context += (
                 f"\n来源ID: {index}\n"

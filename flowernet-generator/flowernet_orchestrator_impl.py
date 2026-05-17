@@ -139,6 +139,7 @@ class DocumentGenerationOrchestrator:
         self.prompt_original_max_chars = max(500, int(os.getenv("PROMPT_ORIGINAL_MAX_CHARS", "3500")))
         self.prompt_rag_max_chars = max(200, int(os.getenv("PROMPT_RAG_MAX_CHARS", "1200")))
         self.prompt_history_max_chars = max(200, int(os.getenv("PROMPT_HISTORY_MAX_CHARS", "1500")))
+        self.near_pass_quality_margin = max(0.0, float(os.getenv("NEAR_PASS_QUALITY_MARGIN", "0.03")))
 
         self.search_engine = (
             RAGSearchEngine(max_results=self.rag_max_results, timeout=self.rag_timeout)
@@ -152,6 +153,58 @@ class DocumentGenerationOrchestrator:
         delay = min(base, self.retry_max_delay)
         delay += random.uniform(0.0, self.retry_jitter)
         return min(delay, self.retry_max_delay)
+
+    def _sanitize_subsection_draft(self, draft: str) -> str:
+        """Remove model meta-output and local reference blocks before verification/export."""
+        text = str(draft or "").strip()
+        if not text:
+            return ""
+
+        lines = text.splitlines()
+        cleaned: List[str] = []
+        skip_rest = False
+        reference_heading = re.compile(r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*(?:references?|bibliography|参考文献)\s*(?:\*\*)?\s*[:：]?\s*$", re.I)
+        meta_heading = re.compile(
+            r"^\s*(?:#{1,6}\s*)?(?:\*\*)?\s*(?:论证链实现说明|结构优化|写作说明|生成说明|质量检查说明|citation\s+notes?)\s*(?:\*\*)?\s*[:：]?\s*$",
+            re.I,
+        )
+        inline_reference = re.compile(r"(?is)\s*(?:\*\*)?\s*(?:references?|bibliography|参考文献)\s*(?:\*\*)?\s*[:：]?\s*(?:\[\d+\].*)$")
+        inline_meta = re.compile(r"(?is)\s*(?:---\s*)?(?:\*\*)?\s*(?:论证链实现说明|结构优化|写作说明|生成说明|质量检查说明)\s*(?:\*\*)?\s*[:：]?.*$")
+
+        for raw_line in lines:
+            stripped = raw_line.strip()
+            if reference_heading.match(stripped) or meta_heading.match(stripped):
+                skip_rest = True
+                continue
+            if skip_rest:
+                continue
+            raw_line = inline_reference.sub("", raw_line)
+            raw_line = inline_meta.sub("", raw_line)
+            cleaned.append(raw_line)
+
+        text = "\n".join(cleaned).strip()
+        text = re.sub(r"(?is)\n\s*(?:---\s*)?(?:\*\*)?\s*(?:论证链实现说明|结构优化|写作说明|生成说明|质量检查说明)\s*(?:\*\*)?\s*[:：]?.*$", "", text).strip()
+        text = re.sub(r"(?is)\n\s*(?:\*\*)?\s*(?:references?|bibliography|参考文献)\s*(?:\*\*)?\s*[:：]?\s*(?:\[\d+\].*)$", "", text).strip()
+        return text
+
+    def _verification_near_pass(self, verification: Dict[str, Any], rel_threshold: float, red_threshold: float) -> bool:
+        if not isinstance(verification, dict):
+            return False
+        source_check = verification.get("source_check") if isinstance(verification.get("source_check"), dict) else {}
+        if not bool(source_check.get("passed", False)):
+            return False
+        rel = float(verification.get("relevancy_index", 0) or 0)
+        red = float(verification.get("redundancy_index", 1) or 1)
+        quality = float(verification.get("quality_score", 0) or 0)
+        quality_threshold = float(verification.get("quality_threshold", 0.6) or 0.6)
+        failed_dims = verification.get("quality_dimensions_failed", [])
+        failed_count = len(failed_dims) if isinstance(failed_dims, list) else 0
+        return (
+            rel >= rel_threshold
+            and red <= red_threshold
+            and quality >= max(0.0, quality_threshold - self.near_pass_quality_margin)
+            and failed_count <= 1
+        )
 
     def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
         """
@@ -1385,7 +1438,10 @@ class DocumentGenerationOrchestrator:
                             rag_search_result["vector_backend"] = self.vector_store.active_backend
                     except Exception as _e:
                         rag_search_result["vector_index_error"] = str(_e)[:180]
-                    rag_context = self.search_engine.format_search_context(rag_search_result, max_items=3)
+                    rag_context = self.search_engine.format_search_context(
+                        rag_search_result,
+                        max_items=min(self.rag_max_results, len(rag_search_result.get("results", []) or [])),
+                    )
                     # If RAG returned usable sources, citations must be used even when an
                     # old deployment env accidentally left RAG_FORCE_CITATION=false.
                     require_source_citations = True
@@ -1432,7 +1488,10 @@ class DocumentGenerationOrchestrator:
                         "source_type": "vector_db",
                         "vector_backend": getattr(self.vector_store, "active_backend", "memory"),
                     }
-                    rag_context = self.search_engine.format_search_context(rag_search_result, max_items=3)
+                    rag_context = self.search_engine.format_search_context(
+                        rag_search_result,
+                        max_items=min(self.rag_max_results, len(rag_search_result.get("results", []) or [])),
+                    )
                     require_source_citations = True
                     rag_used = True
                     rag_selected_query = str(rag_search_result.get("query") or "")
@@ -1718,6 +1777,7 @@ class DocumentGenerationOrchestrator:
                 red_threshold=effective_red_threshold,
                 rag_context=rag_context,
                 require_source_citations=require_source_citations,
+                available_source_count=len(rag_search_result.get("results", []) or []),
                 negative_constraints=last_negative_constraints,
             )
             
@@ -1859,7 +1919,8 @@ class DocumentGenerationOrchestrator:
 
             generator_failure_streak = 0
             
-            draft = gen_result.get("draft", "")
+            raw_draft = gen_result.get("draft", "")
+            draft = self._sanitize_subsection_draft(raw_draft)
             all_drafts.append(draft)
             print(f"         ✅ 生成 {len(draft)} 字符")
             generator_metadata = gen_result.get("metadata") if isinstance(gen_result.get("metadata"), dict) else {}
@@ -2157,6 +2218,54 @@ class DocumentGenerationOrchestrator:
                     )
                 ):
                     best_candidate = current_candidate
+
+            if best_candidate and controller_triggered:
+                best_verification = best_candidate.get("verification", {})
+                current_is_worse_than_best = current_candidate is not best_candidate
+                if (
+                    current_is_worse_than_best
+                    and self._verification_near_pass(best_verification, rel_threshold, red_threshold)
+                ):
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="verifier_best_effort_pass",
+                        message="Controller 后续轮次未优于最佳草稿，保留最佳近通过结果并继续",
+                        metadata={
+                            "iteration": iterations,
+                            "best_iteration": best_candidate.get("iteration", iterations),
+                            "relevancy_index": best_verification.get("relevancy_index", 0),
+                            "redundancy_index": best_verification.get("redundancy_index", 1),
+                            "quality_score": best_verification.get("quality_score", 0),
+                            "reason": "prevent_controller_regression",
+                        },
+                    )
+                    return {
+                        "success": True,
+                        "draft": best_candidate.get("draft", ""),
+                        "final_outline": best_candidate.get("outline", current_outline),
+                        "iterations": iterations,
+                        "source_results": best_candidate.get("source_results", rag_search_result.get("results", [])),
+                        "rag_used": bool(best_candidate.get("rag_used", rag_used)),
+                        "rag_search_success": bool(best_candidate.get("rag_search_success", bool(rag_search_result.get("success", False)))),
+                        "rag_result_count": int(best_candidate.get("rag_result_count", len(rag_search_result.get("results", []))) or 0),
+                        "rag_selected_query": str(best_candidate.get("rag_selected_query", rag_selected_query) or ""),
+                        "controller_effective": bool(best_candidate.get("controller_effective", bool(controller_last_result.get("effective", False)))),
+                        "controller_source": str(best_candidate.get("controller_source", controller_last_result.get("source", "")) or ""),
+                        "verification": {
+                            **best_verification,
+                            "forced_pass": False,
+                            "force_reason": "prevent_controller_regression",
+                        },
+                        "bandit": best_candidate.get("bandit", {}),
+                        "all_drafts": all_drafts,
+                        "forced_pass": False,
+                        "force_reason": "prevent_controller_regression",
+                        "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                        "controller_retry_count": controller_retry_count,
+                        "metrics": metrics,
+                    }
 
             print(f"         🔧 调用 Controller...")
             self._emit_progress_event(
@@ -2505,6 +2614,7 @@ class DocumentGenerationOrchestrator:
         red_threshold: float,
         rag_context: str,
         require_source_citations: bool,
+        available_source_count: int = 0,
         negative_constraints: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
@@ -2655,13 +2765,17 @@ class DocumentGenerationOrchestrator:
 """
 
         if require_source_citations:
-            enhanced += """【来源引用硬性要求（CRITICAL - 强制执行）】
-✓ 内联引用标记强制要求：本小节正文至少插入 2 处专业来源引用，使用紧凑 IEEE 标记如 [1][2]
+            source_count = max(0, int(available_source_count or 0))
+            allowed_ids = "、".join(f"[{idx}]" for idx in range(1, source_count + 1)) or "[1]"
+            min_marker_count = 2 if source_count >= 2 else 1
+            enhanced += f"""【来源引用硬性要求（CRITICAL - 强制执行）】
+✓ 本小节可用引用编号只有：{allowed_ids}
+✓ 如果大纲、原始任务或上轮反馈中出现超出上述范围的编号（例如 [6][7][8]），必须忽略并改用上述可用编号，禁止输出不存在的编号
+✓ 内联引用标记强制要求：本小节正文至少插入 {min_marker_count} 处专业来源引用，使用紧凑 IEEE 标记如 [1][2]
 ✓ 关键事实/数据处必须有引用，理论/框架处必须有引用
-✓ 不要仅在末尾列References！要在正文中**嵌入**引用标记
-✓ 参考文献末尾按 [1][2][3]... 顺序列出（作者/标题/出处/年份；有 DOI/URL 时附上）
+✓ 不要在本小节末尾输出 References / Bibliography / 参考文献块；整篇文档会在最后统一汇总 References
 ✓ 禁止虚构论文、编造链接、引用不相关来源；没有 URL 时也必须保留最可信的真实书籍、论文或权威综述来源
-✓ 最低标准：正文至少 [1][2] 两个标记 + References小节
+✓ 最低标准：正文至少 {min_marker_count} 个内联引用标记，且每个编号必须来自可用编号集合
 """
 
         if negative_constraints:
@@ -2689,7 +2803,7 @@ class DocumentGenerationOrchestrator:
 - 加强与当前小节【{outline.split(chr(10))[0][:60]}】直接相关的内容、数据、案例
 - 删除所有与小节主题不一致的观点和跨领域引用
 - 至少提供 2+ 处事实句 + [序号] 内联引用（不是末尾列表！）
-- 若原文已包含 [1] [2]，本轮必须加强到 [3] [4] 等更多引用
+- 只能使用当前参考资料中存在的编号；不要为了“增加引用”而输出不存在的 [6][7][8] 等编号
 - 改进逻辑连贯性：确保每个段落都能直接回答大纲中的某个要点
 - 若上一轮短于 {self.min_draft_chars} 字符，本轮必须扩展为 900～1300 字的完整正文
 """
