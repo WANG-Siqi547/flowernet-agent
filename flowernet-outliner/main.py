@@ -154,6 +154,8 @@ outline_task_queue: "queue.Queue[str]" = queue.Queue()
 outline_tasks: Dict[str, Dict[str, Any]] = {}
 outline_tasks_lock = threading.Lock()
 outline_worker_started = False
+OUTLINE_TASK_HARD_TIMEOUT = float(os.getenv("OUTLINE_TASK_HARD_TIMEOUT", "900"))
+OUTLINE_LOCK_WAIT_TIMEOUT = float(os.getenv("OUTLINE_LOCK_WAIT_TIMEOUT", "300"))
 
 
 def _is_transient_outliner_error(message: str) -> bool:
@@ -167,6 +169,7 @@ def _is_transient_outliner_error(message: str) -> bool:
 
 
 def _find_outline_task_by_document(document_id: str) -> Optional[str]:
+    _mark_stale_outline_tasks()
     with outline_tasks_lock:
         for task_id, task in outline_tasks.items():
             if task.get("document_id") == document_id and task.get("status") in {"queued", "running", "completed"}:
@@ -179,6 +182,32 @@ def _set_outline_task(task_id: str, **updates: Any) -> None:
         task = outline_tasks.setdefault(task_id, {})
         task.update(updates)
         task["updated_at"] = datetime.now().isoformat()
+
+
+def _iso_age_seconds(value: str) -> float:
+    if not value:
+        return 0.0
+    try:
+        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return max(0.0, (datetime.now() - ts.replace(tzinfo=None)).total_seconds())
+    except Exception:
+        return 0.0
+
+
+def _mark_stale_outline_tasks() -> None:
+    if OUTLINE_TASK_HARD_TIMEOUT <= 0:
+        return
+    now = datetime.now().isoformat()
+    with outline_tasks_lock:
+        for task_id, task in outline_tasks.items():
+            if task.get("status") not in {"queued", "running"}:
+                continue
+            started_at = str(task.get("started_at") or task.get("created_at") or "")
+            if started_at and _iso_age_seconds(started_at) > OUTLINE_TASK_HARD_TIMEOUT:
+                task["status"] = "failed"
+                task["error"] = f"outline_task_timeout_after_{int(OUTLINE_TASK_HARD_TIMEOUT)}s"
+                task["completed_at"] = now
+                task["updated_at"] = now
 
 
 def _outline_task_worker_loop() -> None:
@@ -742,7 +771,7 @@ def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
     print(f"{'='*60}\n")
     
     serialize_tasks = os.getenv("OUTLINER_SERIALIZE_TASKS", "true").lower() == "true"
-    wait_timeout = float(os.getenv("OUTLINER_TASK_WAIT_TIMEOUT", "0"))
+    wait_timeout = float(os.getenv("OUTLINER_TASK_WAIT_TIMEOUT", str(OUTLINE_LOCK_WAIT_TIMEOUT)))
     flow_retries = max(1, int(os.getenv("OUTLINER_FLOW_RETRIES", "3")))
     flow_backoff = max(0.5, float(os.getenv("OUTLINER_FLOW_BACKOFF", "6.0")))
     
@@ -760,11 +789,18 @@ def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
     if serialize_tasks:
         print(f"🔒 尝试获取大纲生成锁...")
         if wait_timeout > 0:
-            print(f"   配置了等待上限 {wait_timeout}s，但当前采用阻塞等待避免远端 429")
+            print(f"   配置了等待上限 {wait_timeout}s")
+            acquired = outline_generation_lock.acquire(timeout=wait_timeout)
+            if not acquired:
+                return {
+                    "success": False,
+                    "error": f"outliner_busy_timeout_after_{int(wait_timeout)}s",
+                    "retryable": True,
+                }
         else:
             print(f"   无限等待（blocking mode）")
-        outline_generation_lock.acquire()
-        acquired = True
+            outline_generation_lock.acquire()
+            acquired = True
         print(f"✅ 锁获取成功，开始生成")
 
     try:
@@ -890,6 +926,7 @@ def generate_and_save_outline(request: GenerateAndSaveOutlineRequest):
 def start_outline_generation_task(request: GenerateAndSaveOutlineRequest):
     """Queue outline generation and return immediately to avoid Render request 429s."""
     _ensure_outline_worker_started()
+    _mark_stale_outline_tasks()
     existing_task_id = _find_outline_task_by_document(request.document_id)
     if existing_task_id:
         with outline_tasks_lock:
@@ -926,6 +963,7 @@ def start_outline_generation_task(request: GenerateAndSaveOutlineRequest):
 
 @app.get("/outline/task-status/{task_id}")
 def get_outline_task_status_get(task_id: str):
+    _mark_stale_outline_tasks()
     with outline_tasks_lock:
         task = dict(outline_tasks.get(task_id, {}))
     if not task:

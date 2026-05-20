@@ -154,6 +154,7 @@ document_tasks_lock = threading.Lock()
 document_worker_started = False
 DOCUMENT_TASK_HARD_TIMEOUT = max(120, int(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT", "2400")))
 DOCUMENT_TASK_STALE_SECONDS = max(120, int(os.getenv("DOCUMENT_TASK_STALE_SECONDS", "3000")))
+PROVIDER_DIAGNOSTIC_TIMEOUT = max(3.0, float(os.getenv("PROVIDER_DIAGNOSTIC_TIMEOUT", "20")))
 checkpoint_store = get_checkpoint_store()
 agent_task_queue = get_task_queue("flowernet:generator:tasks")
 vector_store = get_vector_store()
@@ -900,7 +901,29 @@ def diagnose_providers(request: ProviderDiagnosticRequest):
             # FlowerNetGenerator honors GENERATOR_PROVIDER_CHAIN globally; force
             # diagnostics to test the requested provider in isolation.
             probe.provider_chain = [provider_name]
-            result = probe.generate_draft(request.prompt, max_tokens=max_tokens)
+            result_box: Dict[str, Any] = {}
+
+            def _run_probe() -> None:
+                try:
+                    result_box["result"] = probe.generate_draft(request.prompt, max_tokens=max_tokens)
+                except Exception as exc:
+                    result_box["exception"] = exc
+
+            probe_thread = threading.Thread(target=_run_probe, daemon=True, name=f"provider-diagnostic-{provider_name}")
+            probe_thread.start()
+            probe_thread.join(timeout=PROVIDER_DIAGNOSTIC_TIMEOUT)
+            if probe_thread.is_alive():
+                results[provider_name] = {
+                    "success": False,
+                    "latency_seconds": round(time.time() - started, 3),
+                    "draft_chars": 0,
+                    "error_summary": f"diagnostic_timeout_after_{PROVIDER_DIAGNOSTIC_TIMEOUT:.0f}s",
+                    "selected_provider": provider_name,
+                }
+                continue
+            if result_box.get("exception") is not None:
+                raise result_box["exception"]
+            result = result_box.get("result")
             draft = str((result or {}).get("draft", "") or (result or {}).get("content", ""))
             metadata = (result or {}).get("metadata") if isinstance(result, dict) else {}
             metadata = metadata if isinstance(metadata, dict) else {}

@@ -1201,7 +1201,12 @@ class SourceVerifier:
         topic: str = "",
         min_semantic_score: float = 0.35,
     ) -> Dict[str, Any]:
-        refs = sorted({int(value) for value in re.findall(r"\[来源(\d+)\]", text or "")})
+        refs_found = set()
+        for source_ref, ieee_ref in re.findall(r"(?:\[来源\s*(\d+)\]|\[(\d+)\])", text or ""):
+            raw_ref = source_ref or ieee_ref
+            if raw_ref:
+                refs_found.add(int(raw_ref))
+        refs = sorted(refs_found)
         url_pattern = re.compile(r"https?://[^\s\]）)>,;]+", flags=re.IGNORECASE)
         found_urls = sorted(set(url_pattern.findall(text or "")))
         total_sources = len(source_results or [])

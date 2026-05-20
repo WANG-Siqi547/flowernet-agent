@@ -119,15 +119,18 @@ DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_D
 GENERATOR_RESUME_RETRIES = int(os.getenv("GENERATOR_RESUME_RETRIES", "0"))
 GENERATOR_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("GENERATOR_DOWNSTREAM_MIN_TIMEOUT", "600"))
 GENERATOR_TASK_POLL_MAX_TIMEOUT = int(os.getenv("GENERATOR_TASK_POLL_MAX_TIMEOUT", "2400"))
-GENERATOR_STATUS_MISS_LIMIT = int(os.getenv("GENERATOR_STATUS_MISS_LIMIT", "6"))
+GENERATOR_STATUS_MISS_LIMIT = int(os.getenv("GENERATOR_STATUS_MISS_LIMIT", "4"))
 GENERATOR_PREFLIGHT_ENABLED = os.getenv("GENERATOR_PREFLIGHT_ENABLED", "true").lower() == "true"
 GENERATOR_PREFLIGHT_STRICT = os.getenv("GENERATOR_PREFLIGHT_STRICT", "false").lower() == "true"
+GENERATOR_PREFLIGHT_TIMEOUT = max(3.0, float(os.getenv("GENERATOR_PREFLIGHT_TIMEOUT", "20")))
 GENERATOR_PREFLIGHT_PROVIDERS = [
     item.strip()
     for item in os.getenv("GENERATOR_PREFLIGHT_PROVIDERS", "deepseek,sensenova").split(",")
     if item.strip()
 ]
 OUTLINER_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("OUTLINER_DOWNSTREAM_MIN_TIMEOUT", "600"))
+OUTLINER_TASK_POLL_MAX_TIMEOUT = int(os.getenv("OUTLINER_TASK_POLL_MAX_TIMEOUT", "900"))
+OUTLINER_STREAM_MAX_WAIT = int(os.getenv("OUTLINER_STREAM_MAX_WAIT", str(OUTLINER_TASK_POLL_MAX_TIMEOUT)))
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
 DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
 DOWNSTREAM_GENERATOR_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_GENERATOR_COOLDOWN_429", "20.0"))
@@ -534,6 +537,18 @@ def _get_rate_limit_sleep_seconds(rate_key: str) -> float:
     return max(0.0, next_allowed - now)
 
 
+def _iso_age_seconds(value: str) -> float:
+    if not value:
+        return 0.0
+    try:
+        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if ts.tzinfo is not None:
+            return max(0.0, time.time() - ts.timestamp())
+        return max(0.0, (datetime.now() - ts).total_seconds())
+    except Exception:
+        return 0.0
+
+
 def _probe_service_health(base_url: str, timeout: float = 5.0) -> bool:
     root_url = base_url.rstrip("/") + "/"
     health_url = base_url.rstrip("/") + "/health"
@@ -777,7 +792,10 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
     """
     task_url = f"{OUTLINER_URL}/outline/generate-task"
     legacy_url = f"{OUTLINER_URL}/outline/generate-and-save"
-    poll_timeout = max(OUTLINER_DOWNSTREAM_MIN_TIMEOUT, int(timeout))
+    poll_timeout = min(
+        max(OUTLINER_DOWNSTREAM_MIN_TIMEOUT, int(timeout)),
+        max(60, OUTLINER_TASK_POLL_MAX_TIMEOUT),
+    )
     task_resp: Dict[str, Any] = {}
 
     start_attempts = max(1, OUTLINER_TASK_START_RETRIES)
@@ -842,6 +860,20 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
                         "error": status_body.get("error") or "outliner_task_failed",
                         "task_id": task_id,
                     }
+                started_at = str(status_body.get("started_at") or "")
+                updated_at = str(status_body.get("updated_at") or "")
+                if status in {"queued", "running"}:
+                    last_status = status_body
+                    if started_at or updated_at:
+                        heartbeat_age = _iso_age_seconds(updated_at or started_at)
+                        run_age = _iso_age_seconds(started_at) if started_at else 0.0
+                        if heartbeat_age > 240 and run_age > 300:
+                            return {
+                                "success": False,
+                                "error": "outliner_task_stale_no_heartbeat",
+                                "task_id": task_id,
+                                "last_status": status_body,
+                            }
         except Exception as e:
             last_status = {"error": str(e), "task_id": task_id}
 
@@ -1026,6 +1058,7 @@ def extract_document_quality_metrics(gen_resp: Dict[str, Any]) -> Dict[str, Any]
             "bandit_last_selected_arm": "",
             "bandit_last_selection_mode": "",
             "bandit_last_constraints": {},
+            "bandit_recent_events": [],
         }
 
     return {
@@ -1047,6 +1080,7 @@ def extract_document_quality_metrics(gen_resp: Dict[str, Any]) -> Dict[str, Any]
         "bandit_last_selected_arm": str(gen_resp.get("bandit_last_selected_arm", "") or ""),
         "bandit_last_selection_mode": str(gen_resp.get("bandit_last_selection_mode", "") or ""),
         "bandit_last_constraints": gen_resp.get("bandit_last_constraints", {}) if isinstance(gen_resp.get("bandit_last_constraints"), dict) else {},
+        "bandit_recent_events": gen_resp.get("bandit_recent_events", []) if isinstance(gen_resp.get("bandit_recent_events"), list) else [],
         # Optional plot bounds provided by orchestrator for frontend chart scaling
         "bandit_plot_y_min": float(gen_resp.get("plot_y_min", 0.0) or 0.0),
         "bandit_plot_y_max": float(gen_resp.get("plot_y_max", 0.0) or 0.0),
@@ -1086,7 +1120,11 @@ def _generator_task_exists(document_id: str, task_id: str = "") -> bool:
         summary = response.json()
     except Exception as exc:
         print(f"[Web] ⚠️ Generator task existence lookup failed: {exc}")
-        return True
+        # If the status endpoint already missed repeatedly and even the summary
+        # endpoint is unreachable, treating the task as "probably still alive"
+        # leaves the UI stuck at 0/N until the full poll timeout. Fail fast so
+        # the user can retry after Render recovers/redeploys.
+        return False
     items = summary.get("tasks") if isinstance(summary, dict) else None
     if not isinstance(items, list):
         return True
@@ -1108,7 +1146,7 @@ def preflight_generator_warning(topic: str) -> str:
         response = DOWNSTREAM_SESSION.post(
             f"{GENERATOR_URL}/diagnostics/providers",
             json={"providers": GENERATOR_PREFLIGHT_PROVIDERS, "prompt": probe_prompt, "max_tokens": 40},
-            timeout=90,
+            timeout=GENERATOR_PREFLIGHT_TIMEOUT,
         )
         if response.status_code == 429:
             warning = "生成模型预检被限流，已跳过预检并继续正式生成"
@@ -1257,10 +1295,16 @@ def generate_document_with_recovery(
                 except Exception as exc:
                     last_status = {"error": str(exc), "task_id": task_id}
                     consecutive_status_misses += 1
-                    if consecutive_status_misses >= GENERATOR_STATUS_MISS_LIMIT and not _generator_task_exists(document_id, task_id):
+                    if consecutive_status_misses >= GENERATOR_STATUS_MISS_LIMIT:
+                        task_still_visible = _generator_task_exists(document_id, task_id)
+                        if task_still_visible:
+                            consecutive_status_misses = 0
+                            time.sleep(min(8.0, sleep_seconds))
+                            sleep_seconds = min(8.0, sleep_seconds * 1.3)
+                            continue
                         return {
                             "success": False,
-                            "error": "generator_task_lost_or_service_restarted",
+                            "error": "generator_downstream_unresponsive_or_task_lost",
                             "task_id": task_id,
                             "last_status": last_status,
                             "interrupted": True,
@@ -3218,11 +3262,14 @@ def build_markdown_document(
             seen_local.add(key)
             refs.append(ref)
 
-        if refs:
+        if len(refs) >= min_total_references:
             return refs
 
         # Last resort only: never mix placeholder references with real references,
         # because that creates citation-number drift in exported DOCX/PDF files.
+        # If real references exist but are fewer than one per subsection, append
+        # conservative topic-level entries so every subsection can receive at
+        # least one stable inline marker.
         terms = _extract_topic_terms(limit=5)
         fallback_pool: List[str] = [
             f"Authoritative scholarly literature on {_normalize_label(title)} and {', '.join(terms[:3]) or 'the document topic'}.",
@@ -4256,9 +4303,10 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 print(f"[Web] 🌐 发起异步 Outliner 请求: {OUTLINER_URL}/outline/generate-and-save")
                 print(f"[Web]    document_id: {outline_payload['document_id']}")
                 print(f"[Web]    user_requirements: {outline_payload['user_requirements'][:80]}...")
+                outline_timeout = min(stream_timeout, max(60, OUTLINER_STREAM_MAX_WAIT))
                 outline_resp = call_outliner_generate_and_save(
                     outline_payload,
-                    stream_timeout,
+                    outline_timeout,
                 )
                 print(f"[Web] ✅ Outliner 请求成功: {outline_resp.get('success')}")
             except Exception as e:
@@ -4268,7 +4316,8 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         outline_thread = threading.Thread(target=build_outline_async, daemon=True)
         outline_thread.start()
         print(f"[Web] 🚀 启动异步 Outliner 线程（timeout={stream_timeout}s）")
-        outline_deadline = time.time() + stream_timeout
+        outline_wait_limit = min(stream_timeout, max(60, OUTLINER_STREAM_MAX_WAIT))
+        outline_deadline = time.time() + outline_wait_limit
         last_outline_keepalive = time.time()
 
         while outline_thread.is_alive() and time.time() < outline_deadline:
@@ -4283,8 +4332,8 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         outline_thread.join(timeout=1)
 
         if outline_thread.is_alive():
-            print(f"[Web] ⏱️ Outliner 生成超时（>{stream_timeout}s）")
-            msg = json.dumps({'type': 'error', 'message': f'大纲生成超时（>{stream_timeout}s），请稍后重试'})
+            print(f"[Web] ⏱️ Outliner 生成超时（>{outline_wait_limit}s）")
+            msg = json.dumps({'type': 'error', 'message': f'大纲生成超时（>{outline_wait_limit}s）：远端 outliner 未按时返回，请等待服务恢复后重试'})
             yield f"data: {msg}\n\n"
             return
 

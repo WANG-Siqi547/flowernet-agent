@@ -263,6 +263,7 @@ class DocumentGenerationOrchestrator:
             "bandit_last_selected_arm": "",
             "bandit_last_selection_mode": "",
             "bandit_last_constraints": {},
+            "bandit_recent_events": [],
         }
 
     def _accumulate_quality_summary(self, summary: Dict[str, Any], verification: Dict[str, Any]) -> None:
@@ -310,10 +311,20 @@ class DocumentGenerationOrchestrator:
 
         reward = bandit.get("reward")
         if isinstance(reward, (int, float)):
-            summary["bandit_reward_sum"] += float(reward)
+            reward_value = float(reward)
+            summary["bandit_reward_sum"] += reward_value
             summary["bandit_reward_count"] += 1
             if summary["bandit_reward_count"] > 0:
                 summary["bandit_reward_avg"] = summary["bandit_reward_sum"] / summary["bandit_reward_count"]
+            if selected_arm:
+                recent = summary.setdefault("bandit_recent_events", [])
+                if isinstance(recent, list):
+                    recent.append({
+                        "arm": selected_arm,
+                        "reward": reward_value,
+                        "selection_mode": summary.get("bandit_last_selection_mode", ""),
+                    })
+                    del recent[:-80]
 
         drift = bandit.get("drift") if isinstance(bandit.get("drift"), dict) else {}
         if drift:
@@ -327,6 +338,13 @@ class DocumentGenerationOrchestrator:
             summary["bandit_last_constraints"] = dict(constraints)
         # constraints handled above
 
+    def _resolve_bandit_events_path(self) -> str:
+        raw = os.getenv("CONTROLLER_BANDIT_EVENTS_PATH", "controller_bandit_events.jsonl").strip()
+        if os.path.isabs(raw):
+            return raw
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(project_root, raw)
+
     def _load_recent_bandit_stats(self, max_events: int = 200) -> Dict[str, Any]:
         """从文件 `controller_bandit_events.jsonl` 读取最近若干条 bandit 事件并聚合为统计信息。
         返回字典包含与前端契合的字段（counts, sum, count, avg, last_arm, drift_events）。
@@ -339,10 +357,10 @@ class DocumentGenerationOrchestrator:
             "bandit_last_selected_arm": "",
             "bandit_last_selection_mode": "",
             "bandit_drift_events": 0,
+            "bandit_recent_events": [],
         }
         try:
-            project_root = os.path.dirname(os.path.abspath(__file__))
-            events_path = os.path.join(project_root, "controller_bandit_events.jsonl")
+            events_path = self._resolve_bandit_events_path()
             if not os.path.exists(events_path):
                 return stats
             with open(events_path, "r", encoding="utf-8") as fh:
@@ -361,6 +379,11 @@ class DocumentGenerationOrchestrator:
                 if arm:
                     stats["bandit_selected_arm_counts"][arm] = stats["bandit_selected_arm_counts"].get(arm, 0) + 1
                     stats["bandit_last_selected_arm"] = arm
+                    stats["bandit_recent_events"].append({
+                        "arm": arm,
+                        "reward": reward,
+                        "selection_mode": str(ev.get("selection_mode") or ev.get("mode") or ""),
+                    })
                 stats["bandit_reward_sum"] += reward
                 rewards.append(reward)
                 if reward != 0.0:
@@ -395,8 +418,7 @@ class DocumentGenerationOrchestrator:
     def _read_last_bandit_event(self) -> Dict[str, Any]:
         """返回 controller_bandit_events.jsonl 中最后一条事件的原始解析结果（或空字典）。"""
         try:
-            project_root = os.path.dirname(os.path.abspath(__file__))
-            events_path = os.path.join(project_root, "controller_bandit_events.jsonl")
+            events_path = self._resolve_bandit_events_path()
             if not os.path.exists(events_path):
                 return {}
             with open(events_path, "r", encoding="utf-8") as fh:
@@ -804,6 +826,7 @@ class DocumentGenerationOrchestrator:
             "bandit_last_selected_arm": "",
             "bandit_last_selection_mode": "",
             "bandit_last_constraints": {},
+            "bandit_recent_events": [],
         }
         
         start_time = datetime.now()
@@ -1215,6 +1238,9 @@ class DocumentGenerationOrchestrator:
                     document_result["bandit_last_selected_arm"] = str(recent_stats.get("bandit_last_selected_arm", "") or "")
                     document_result["bandit_last_selection_mode"] = str(recent_stats.get("bandit_last_selection_mode", "") or "")
                     document_result["bandit_drift_events"] = int(recent_stats.get("bandit_drift_events", 0) or 0)
+                    document_result["bandit_recent_events"] = recent_stats.get("bandit_recent_events", [])
+                elif not document_result.get("bandit_recent_events") and recent_stats.get("bandit_recent_events"):
+                    document_result["bandit_recent_events"] = recent_stats.get("bandit_recent_events", [])
             except Exception:
                 pass
 
@@ -1325,6 +1351,7 @@ class DocumentGenerationOrchestrator:
                 "bandit_last_selected_arm": str(document_result.get("bandit_last_selected_arm", "") or ""),
                 "bandit_last_selection_mode": str(document_result.get("bandit_last_selection_mode", "") or ""),
                 "bandit_last_constraints": document_result.get("bandit_last_constraints", {}),
+                "bandit_recent_events": document_result.get("bandit_recent_events", []),
                 "error": str(e),
                 "warning": f"document_exception_fallback: {str(e)[:180]}",
             }

@@ -691,6 +691,36 @@
 
     function App() {
       const banditSeriesKeys = ["llm", "rule", "rule_structured", "defect_topic", "defect_evidence", "defect_structure"];
+      const createEmptyBanditSeries = () => ({
+        llm: [],
+        rule: [],
+        rule_structured: [],
+        defect_topic: [],
+        defect_evidence: [],
+        defect_structure: [],
+      });
+      const appendBanditPoint = (series, arm, reward) => {
+        const next = createEmptyBanditSeries();
+        for (const k of banditSeriesKeys) {
+          next[k] = [...(series?.[k] || [])];
+          const last = next[k].length ? next[k][next[k].length - 1] : 0;
+          next[k].push(k === arm ? reward : last);
+          next[k] = next[k].slice(-24);
+        }
+        return next;
+      };
+      const buildBanditSeriesFromEvents = (events) => {
+        const items = Array.isArray(events) ? events : [];
+        return items.slice(-80).reduce((series, item) => {
+          const arm = String(item?.arm || item?.selected_arm || item?.chosen_arm || "");
+          if (!banditSeriesKeys.includes(arm)) {
+            return series;
+          }
+          const rawReward = Number(item?.reward ?? 0);
+          const reward = Math.max(0, Math.min(1, Number.isFinite(rawReward) ? rawReward : 0));
+          return appendBanditPoint(series, arm, reward);
+        }, createEmptyBanditSeries());
+      };
       const [topic, setTopic] = useState("");
       const [background, setBackground] = useState("Research student in AI systems");
       const [extra, setExtra] = useState("");
@@ -727,7 +757,7 @@
         unieval_available_subsections: 0,
         unieval_fallback_subsections: 0,
       });
-      const [banditSeries, setBanditSeries] = useState({ llm: [], rule: [], rule_structured: [], defect_topic: [], defect_evidence: [], defect_structure: [] });
+      const [banditSeries, setBanditSeries] = useState(() => createEmptyBanditSeries());
       const [banditSummary, setBanditSummary] = useState({
         bandit_selected_arm_counts: {},
         bandit_reward_avg: 0,
@@ -876,7 +906,7 @@
         setQualityPeak(0);
         setVerifierDetail(createEmptyVerifierDetail());
         setQualitySummary({ quality_score_avg: 0, quality_score_count: 0, unieval_available_subsections: 0, unieval_fallback_subsections: 0 });
-        setBanditSeries({ llm: [], rule: [], rule_structured: [], defect_topic: [], defect_evidence: [], defect_structure: [] });
+        setBanditSeries(createEmptyBanditSeries());
         setBanditSummary({ bandit_selected_arm_counts: {}, bandit_reward_avg: 0, bandit_last_selected_arm: "", bandit_last_selection_mode: "", bandit_event_count: 0 });
 
         const params = new URLSearchParams({
@@ -972,9 +1002,11 @@
             }
 
             if (stage === "controller_result") {
-              const arm = String(meta.selected_arm || "");
-              const reward = Math.max(0, Math.min(1, Number(meta.reward ?? 0)));
-              const selectionMode = String(meta.selection_mode || "");
+              const nestedBandit = meta.bandit && typeof meta.bandit === "object" ? meta.bandit : {};
+              const arm = String(meta.selected_arm || meta.chosen_arm || nestedBandit.selected_arm || nestedBandit.chosen_arm || "");
+              const rawReward = Number(meta.reward ?? nestedBandit.reward ?? 0);
+              const reward = Math.max(0, Math.min(1, Number.isFinite(rawReward) ? rawReward : 0));
+              const selectionMode = String(meta.selection_mode || nestedBandit.selection_mode || nestedBandit.selection?.mode || "");
               console.log(`🎯 [Frontend Handler] controller_result: arm="${arm}", reward=${reward}, mode="${selectionMode}", meta=`, meta);
               setBanditSummary((prev) => ({
                 ...prev,
@@ -996,29 +1028,7 @@
               }));
               if (arm) {
                 setBanditSeries((s) => {
-                  const next = {
-                    llm: [...(s.llm || [])],
-                    rule: [...(s.rule || [])],
-                    rule_structured: [...(s.rule_structured || [])],
-                    defect_topic: [...(s.defect_topic || [])],
-                    defect_evidence: [...(s.defect_evidence || [])],
-                    defect_structure: [...(s.defect_structure || [])],
-                  };
-                  for (const k of banditSeriesKeys) {
-                    const arr = next[k];
-                    const last = arr.length ? arr[arr.length - 1] : 0;
-                    if (k === arm) {
-                      arr.push(reward);
-                    } else {
-                      arr.push(last);
-                    }
-                  }
-                  next.llm = next.llm.slice(-24);
-                  next.rule = next.rule.slice(-24);
-                  next.rule_structured = next.rule_structured.slice(-24);
-                  next.defect_topic = next.defect_topic.slice(-24);
-                  next.defect_evidence = next.defect_evidence.slice(-24);
-                  next.defect_structure = next.defect_structure.slice(-24);
+                  const next = appendBanditPoint(s, arm, reward);
                   console.log(`🎯 [Updated Bandit Series]`, next);
                   return next;
                 });
@@ -1060,6 +1070,17 @@
             // 因为消息中的百分比可能是基于 history 中的项目数，不一定准确
             // 真正的进度应该基于实际收到的 subsection_passed/generated 事件数量
             setStatusText(msg || "Generating...");
+            const progressMeta = data.metadata || {};
+            const metaTotal = Number(progressMeta.total || 0);
+            const metaCompleted = Number(progressMeta.completed || 0);
+            if (metaTotal > 0 && metaCompleted >= 0) {
+              setProgress((p) => {
+                const total = Math.max(Number(p.total || 0), metaTotal);
+                const current = Math.min(total, Math.max(Number(p.current || 0), metaCompleted));
+                const percent = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+                return { current, total, percent };
+              });
+            }
           }
 
           if (data.type === "start") {
@@ -1119,17 +1140,22 @@
               bandit_last_selected_arm: String(stats.bandit_last_selected_arm || prev.bandit_last_selected_arm || ""),
               bandit_last_selection_mode: String(stats.bandit_last_selection_mode || prev.bandit_last_selection_mode || ""),
               bandit_event_count: Object.values(stats.bandit_selected_arm_counts || {}).reduce((acc, n) => acc + Number(n || 0), 0) || Number(prev.bandit_event_count || 0),
-              bandit_plot_y_min: Number(stats.plot_y_min ?? prev.bandit_plot_y_min ?? 0.0),
-              bandit_plot_y_max: Number(stats.plot_y_max ?? prev.bandit_plot_y_max ?? 0.1),
+              bandit_plot_y_min: Number(stats.bandit_plot_y_min ?? stats.plot_y_min ?? prev.bandit_plot_y_min ?? 0.0),
+              bandit_plot_y_max: Number(stats.bandit_plot_y_max ?? stats.plot_y_max ?? prev.bandit_plot_y_max ?? 0.1),
             }));
             setBanditSeries((prev) => {
-              const hasRealData = banditSeriesKeys.reduce((sum, k) => sum + ((prev[k]?.length || 0)), 0) > 0;
-              if (hasRealData) {
+              const currentCount = banditSeriesKeys.reduce((sum, k) => sum + ((prev[k]?.length || 0)), 0);
+              const rebuilt = buildBanditSeriesFromEvents(stats.bandit_recent_events || []);
+              const rebuiltCount = banditSeriesKeys.reduce((sum, k) => sum + ((rebuilt[k]?.length || 0)), 0);
+              if (rebuiltCount > currentCount) {
+                return rebuilt;
+              }
+              if (currentCount > 0) {
                 return prev;
               }
               const reward = Number(stats.bandit_reward_avg || 0);
               const arm = String(stats.bandit_last_selected_arm || "");
-              const s = { llm: [], rule: [], rule_structured: [], defect_topic: [], defect_evidence: [], defect_structure: [] };
+              const s = createEmptyBanditSeries();
               if (arm && s[arm]) {
                 s[arm].push(reward);
               }
@@ -1265,13 +1291,11 @@
         ? Math.max(qualityPeak, currentQualityMean, Number(qualitySummary.quality_score_avg || 0))
         : Math.max(currentQualityMean, Number(qualitySummary.quality_score_avg || 0));
       const activeSubsectionIndex = subsections.findIndex((item) => ["Drafting", "Evaluating via UniEval", "Repairing"].includes(item.stage));
-      const activeOrdinal = activeSubsectionIndex >= 0 ? activeSubsectionIndex + 1 : progress.current;
-      const displayCurrent = running ? Math.max(progress.current, activeOrdinal) : progress.current;
-      const displayPercent = running && progress.total > 0 && displayCurrent > 0
-        ? Math.max(progress.percent, Math.min(99, Math.round(((Math.max(displayCurrent, 1) - 0.33) / progress.total) * 100)))
-        : progress.percent;
+      const activeOrdinal = activeSubsectionIndex >= 0 ? activeSubsectionIndex + 1 : 0;
+      const displayCurrent = progress.current;
+      const displayPercent = progress.percent;
       const normalizedStatusText = running
-        ? `进度: 正在处理 ${displayCurrent}/${progress.total || 0}；已验证/处理 ${progress.current}/${progress.total || 0} (${displayPercent}%)`
+        ? `进度: ${activeOrdinal > 0 ? `正在处理第 ${activeOrdinal}/${progress.total || 0} 小节；` : ""}已验证/处理 ${progress.current}/${progress.total || 0} (${displayPercent}%)`
         : statusText;
 
       return (
@@ -1340,7 +1364,7 @@
                       <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
                         <motion.div animate={{ width: `${displayPercent}%` }} className="h-full bg-gradient-to-r from-coral to-peach" />
                       </div>
-                      <div className="text-xs text-slate-600">{running ? `processing ${displayCurrent}/${progress.total || 0} · verified ${progress.current}/${progress.total || 0}` : `${progress.current}/${progress.total || 0} subsections`} · {displayPercent}%</div>
+                      <div className="text-xs text-slate-600">{running ? `${activeOrdinal > 0 ? `active ${activeOrdinal}/${progress.total || 0} · ` : ""}verified ${progress.current}/${progress.total || 0}` : `${progress.current}/${progress.total || 0} subsections`} · {displayPercent}%</div>
                       <div className="grid grid-cols-2 gap-2">
                         <button onClick={handleStart} disabled={running} className="col-span-2 min-h-12 rounded-xl bg-slate-900 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap">{running ? "Running..." : "Start"}</button>
                         <button onClick={handleDownload} disabled={!doc.content} className="min-h-11 rounded-xl bg-emerald-600 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap leading-tight">DOCX</button>
