@@ -1760,6 +1760,229 @@ def _build_download_url(request: Request) -> str:
     return str(request.url_for("download_docx")).rstrip("/")
 
 
+def _public_api_base_url(request: Request) -> str:
+    if PUBLIC_BASE_URL:
+        return PUBLIC_BASE_URL.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
+    base_url = _public_api_base_url(request)
+    security_schemes: Dict[str, Any] = {}
+    security: List[Dict[str, List[str]]] = []
+    if API_AUTH_ENABLED:
+        security_schemes = {
+            "apiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key",
+            },
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+            },
+        }
+        security = [{"apiKeyAuth": []}, {"bearerAuth": []}]
+
+    return {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "FlowerNet Agent for POffices",
+            "version": "1.0.0",
+            "description": "Generate structured long-form documents with FlowerNet and poll task status asynchronously.",
+        },
+        "servers": [{"url": base_url}],
+        "paths": {
+            "/api/poffices/generate": {
+                "post": {
+                    "operationId": "createFlowerNetDocument",
+                    "summary": "Create a FlowerNet document generation task",
+                    "description": "Starts an asynchronous FlowerNet document generation task. Use task_id with getFlowerNetTaskStatus to retrieve the final content and download payload.",
+                    "security": security,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/PofficesGenerateRequest"},
+                                "examples": {
+                                    "basic": {
+                                        "value": {
+                                            "query": "Write a professional report about plant disease recognition with deep learning",
+                                            "chapter_count": 3,
+                                            "subsection_count": 2,
+                                            "user_background": "Research audience",
+                                            "extra_requirements": "Use clear academic structure and concise citations",
+                                            "async_mode": True,
+                                            "timeout_seconds": 2400,
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Task accepted or synchronous result returned",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "oneOf": [
+                                            {"$ref": "#/components/schemas/TaskAcceptedResponse"},
+                                            {"$ref": "#/components/schemas/CompletedDocumentResponse"},
+                                        ]
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+            "/api/poffices/task-status": {
+                "post": {
+                    "operationId": "getFlowerNetTaskStatus",
+                    "summary": "Get FlowerNet generation task status",
+                    "description": "Poll with the task_id returned by createFlowerNetDocument until a completed or failed status is returned.",
+                    "security": security,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/PofficesTaskStatusRequest"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Current task state or completed document result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "oneOf": [
+                                            {"$ref": "#/components/schemas/TaskStatusResponse"},
+                                            {"$ref": "#/components/schemas/CompletedDocumentResponse"},
+                                            {"$ref": "#/components/schemas/FailedTaskResponse"},
+                                        ]
+                                    }
+                                }
+                            },
+                        },
+                        "404": {"description": "task_id not found"},
+                    },
+                }
+            },
+            "/api/download-docx": {
+                "post": {
+                    "operationId": "downloadFlowerNetDocx",
+                    "summary": "Download a generated FlowerNet document as DOCX",
+                    "description": "POST the title and markdown content returned by the completed document response to download a DOCX file.",
+                    "security": security,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/DownloadDocxRequest"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "DOCX file",
+                            "content": {
+                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                                    "schema": {"type": "string", "format": "binary"}
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+        },
+        "components": {
+            "securitySchemes": security_schemes,
+            "schemas": {
+                "PofficesGenerateRequest": {
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {"type": "string", "minLength": 2, "description": "Document topic or user request"},
+                        "chapter_count": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                        "subsection_count": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3},
+                        "user_background": {"type": "string", "default": "普通读者"},
+                        "extra_requirements": {"type": "string", "default": ""},
+                        "rel_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": WEB_DEFAULT_REL_THRESHOLD},
+                        "red_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": WEB_DEFAULT_RED_THRESHOLD},
+                        "async_mode": {"type": "boolean", "default": True},
+                        "timeout_seconds": {"type": "integer", "minimum": 60, "maximum": 7200, "default": 7200},
+                    },
+                },
+                "PofficesTaskStatusRequest": {
+                    "type": "object",
+                    "required": ["task_id"],
+                    "properties": {"task_id": {"type": "string"}},
+                },
+                "DownloadDocxRequest": {
+                    "type": "object",
+                    "required": ["title", "content"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "content": {"type": "string", "description": "Markdown content returned by FlowerNet"},
+                    },
+                },
+                "TaskAcceptedResponse": {
+                    "type": "object",
+                    "properties": {
+                        "success": {"type": "boolean"},
+                        "task_id": {"type": "string"},
+                        "status": {"type": "string", "enum": ["queued"]},
+                        "poll_url": {"type": "string"},
+                        "message": {"type": "string"},
+                    },
+                },
+                "TaskStatusResponse": {
+                    "type": "object",
+                    "properties": {
+                        "success": {"type": "boolean"},
+                        "task_id": {"type": "string"},
+                        "status": {"type": "string", "enum": ["queued", "running"]},
+                        "message": {"type": "string"},
+                    },
+                },
+                "CompletedDocumentResponse": {
+                    "type": "object",
+                    "properties": {
+                        "success": {"type": "boolean"},
+                        "task_status": {"type": "string", "enum": ["completed"]},
+                        "document_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "content": {"type": "string"},
+                        "stats": {"type": "object", "additionalProperties": True},
+                        "download": {"$ref": "#/components/schemas/DownloadInstruction"},
+                    },
+                },
+                "DownloadInstruction": {
+                    "type": "object",
+                    "properties": {
+                        "method": {"type": "string", "enum": ["POST"]},
+                        "url": {"type": "string"},
+                        "body": {"$ref": "#/components/schemas/DownloadDocxRequest"},
+                        "content_type": {"type": "string"},
+                    },
+                },
+                "FailedTaskResponse": {
+                    "type": "object",
+                    "properties": {
+                        "success": {"type": "boolean", "enum": [False]},
+                        "task_id": {"type": "string"},
+                        "status": {"type": "string", "enum": ["failed"]},
+                        "error": {"type": "string"},
+                        "message": {"type": "string"},
+                    },
+                },
+            },
+        },
+    }
+
+
 def _build_poffices_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
     download_url = _build_download_url(request)
     return {
@@ -4998,6 +5221,11 @@ def download_pdf(
             "Content-Disposition": f"attachment; filename={ascii_fallback}_{ts}.pdf; filename*=UTF-8''{encoded}"
         },
     )
+
+
+@app.get("/api/poffices/openapi.json")
+def poffices_openapi(request: Request):
+    return _build_poffices_openapi(request)
 
 
 def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
