@@ -24,14 +24,18 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import cm, inch
-from reportlab.lib.fonts import addMapping
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.pdfbase import pdfmetrics
-from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Preformatted, NextPageTemplate
+try:
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import cm, inch
+    from reportlab.lib.fonts import addMapping
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Preformatted, NextPageTemplate
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
 from pydantic import BaseModel, Field
 
 # Ensure repo-root modules are importable even when uvicorn is started from flowernet-web/
@@ -4206,6 +4210,9 @@ def _render_docx_document(title: str, content: str) -> BytesIO:
 
 
 def _render_pdf_document(title: str, content: str) -> BytesIO:
+    if not HAS_REPORTLAB:
+        raise RuntimeError("PDF generation requires reportlab, which is not installed in this runtime")
+
     stream = BytesIO()
 
     try:
