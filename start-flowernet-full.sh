@@ -104,13 +104,13 @@ if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
     OUTLINER_PROVIDER=${OUTLINER_PROVIDER:-deepseek}
     GENERATOR_PROVIDER_CHAIN=${GENERATOR_PROVIDER_CHAIN:-deepseek,sensenova}
     OUTLINER_PROVIDER_CHAIN=${OUTLINER_PROVIDER_CHAIN:-deepseek,sensenova}
-    GENERATOR_MODEL=${GENERATOR_MODEL:-deepseek-v4-flash}
-    OUTLINER_MODEL=${OUTLINER_MODEL:-deepseek-v4-flash}
+    GENERATOR_MODEL=${GENERATOR_MODEL:-deepseek-chat}
+    OUTLINER_MODEL=${OUTLINER_MODEL:-deepseek-chat}
     if [ "$GENERATOR_PROVIDER" = "deepseek" ] && echo "$GENERATOR_MODEL" | grep -Eiq "sensenova|gpt-|azure"; then
-        GENERATOR_MODEL=deepseek-v4-flash
+        GENERATOR_MODEL=deepseek-chat
     fi
     if [ "$OUTLINER_PROVIDER" = "deepseek" ] && echo "$OUTLINER_MODEL" | grep -Eiq "sensenova|gpt-|azure"; then
-        OUTLINER_MODEL=deepseek-v4-flash
+        OUTLINER_MODEL=deepseek-chat
     fi
 else
     GENERATOR_PROVIDER=${GENERATOR_PROVIDER:-sensenova}

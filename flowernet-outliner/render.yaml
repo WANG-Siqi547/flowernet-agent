@@ -47,7 +47,7 @@ services:
       - key: OUTLINER_SENSENOVA_API_KEY
         sync: false
       - key: OUTLINER_DEEPSEEK_MODEL
-        value: deepseek-v4-flash
+        value: deepseek-chat
       - key: OUTLINER_DEEPSEEK_BASE_URL
         value: https://api.deepseek.com
       - key: OUTLINER_DEEPSEEK_API_URL
@@ -59,7 +59,7 @@ services:
       - key: OUTLINER_DEEPSEEK_THINKING_ENABLED
         value: "false"
       - key: DEEPSEEK_MODEL
-        value: deepseek-v4-flash
+        value: deepseek-chat
       - key: DEEPSEEK_BASE_URL
         value: https://api.deepseek.com
       - key: DEEPSEEK_API_URL

@@ -74,7 +74,14 @@ class FlowerNetOutliner:
         )
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
         allowed_providers = {"azure", "gemini", "dashscope", "sensenova", "deepseek", "openrouter", "ollama"}
-        self.provider_chain = [p for p in parsed_chain if p in allowed_providers] or ["deepseek", "sensenova"]
+        normalized_chain: List[str] = []
+        for candidate in parsed_chain:
+            if candidate in allowed_providers and candidate not in normalized_chain:
+                normalized_chain.append(candidate)
+        for fallback in ("gemini", "azure", "dashscope", "openrouter", "ollama"):
+            if fallback not in normalized_chain:
+                normalized_chain.append(fallback)
+        self.provider_chain = normalized_chain or ["gemini", "azure", "dashscope", "openrouter", "ollama"]
 
         self.model = model
         self.azure_model = os.getenv("OUTLINER_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -95,7 +102,7 @@ class FlowerNetOutliner:
             "OUTLINER_SENSENOVA_API_URL",
             os.getenv("SENSENOVA_API_URL", "https://api.sensenova.cn/v1/llm/chat-completions")
         ).rstrip("/")
-        self.deepseek_model = os.getenv("OUTLINER_DEEPSEEK_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"))
+        self.deepseek_model = os.getenv("OUTLINER_DEEPSEEK_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-chat"))
         self.deepseek_api_key = os.getenv("OUTLINER_DEEPSEEK_API_KEY", os.getenv("DEEPSEEK_API_KEY", "")).strip()
         self.deepseek_base_url = os.getenv(
             "OUTLINER_DEEPSEEK_BASE_URL",
