@@ -93,7 +93,7 @@ services:
       - key: PROVIDER_RETRIES
         value: "1"
       - key: GENERATOR_PROVIDER_CHAIN
-        value: "deepseek,sensenova"
+        value: "deepseek"
       - key: PROVIDER_BACKOFF
         value: "2.0"
       - key: PROVIDER_MAX_BACKOFF
@@ -121,7 +121,7 @@ services:
       - key: VERIFIER_RETRY_DELAY
         value: "8.0"
       - key: VERIFIER_UNAVAILABLE_BEST_EFFORT
-        value: "true"
+        value: "false"
       - key: DASHSCOPE_HTTP_TIMEOUT
         value: "30"
       - key: PROMPT_OUTLINE_MAX_CHARS
@@ -151,6 +151,8 @@ services:
       - key: ORCH_GENERATOR_MAX_TOKENS
         value: "2000"
       - key: ORCH_COMPACT_GENERATION_ENABLED
+        value: "false"
+      - key: GENERATOR_COMPACT_FALLBACK_ENABLED
         value: "false"
       - key: ORCH_COMPACT_PROMPT_TRIGGER_CHARS
         value: "7000"

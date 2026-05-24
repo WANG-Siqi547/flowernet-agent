@@ -872,7 +872,8 @@
         if (stage === "subsection_start" || stage === "generator_start") return "Drafting";
         if (stage === "verifier_start") return "Evaluating via UniEval";
         if (stage === "verifier_failed" || stage === "controller_start") return "Repairing";
-        if (stage === "subsection_passed" || stage === "subsection_forced_pass" || stage === "verifier_passed" || stage === "verifier_forced_pass") return "Passed";
+        if (stage === "subsection_passed" || stage === "verifier_passed") return "Passed";
+        if (stage === "subsection_forced_pass" || stage === "verifier_forced_pass") return "Failed";
         if (stage === "subsection_failed") return "Failed";
         return "Waiting";
       };
@@ -1040,13 +1041,13 @@
             // verifier_result means one full generator->verifier cycle has completed for this subsection.
             // Count it as processed for the top progress indicator, while terminal events still own final status.
             const subsectionKey = getSubsectionKey(data.metadata || {});
-            const isProcessedSubsectionStage = stage === "verifier_result" || stage === "verifier_passed" || stage === "verifier_failed" || stage === "subsection_passed" || stage === "subsection_forced_pass" || stage === "subsection_failed";
+            const isProcessedSubsectionStage = stage === "verifier_result" || stage === "verifier_passed" || stage === "verifier_failed" || stage === "subsection_passed" || stage === "subsection_failed";
             if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isProcessedSubsectionStage) {
               if (!processedSubsectionsRef.current.has(subsectionKey)) {
                 processedSubsectionsRef.current.add(subsectionKey);
               }
             }
-            const isFinalSubsectionStage = stage === "subsection_passed" || stage === "subsection_forced_pass" || stage === "subsection_failed";
+            const isFinalSubsectionStage = stage === "subsection_passed" || stage === "subsection_failed";
             if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isFinalSubsectionStage) {
               if (!completedSubsectionsRef.current.has(subsectionKey)) {
                 completedSubsectionsRef.current.add(subsectionKey);

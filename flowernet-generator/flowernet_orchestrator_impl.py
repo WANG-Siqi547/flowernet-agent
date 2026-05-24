@@ -117,7 +117,7 @@ class DocumentGenerationOrchestrator:
         self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "60")))
         self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "3")))
         self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "3.0")))
-        self.verifier_unavailable_best_effort = os.getenv("VERIFIER_UNAVAILABLE_BEST_EFFORT", "true").lower() == "true"
+        self.verifier_unavailable_best_effort = os.getenv("VERIFIER_UNAVAILABLE_BEST_EFFORT", "false").lower() == "true"
         self.generator_max_tokens = max(400, int(os.getenv("ORCH_GENERATOR_MAX_TOKENS", "2000")))
         self.min_draft_chars = max(200, int(os.getenv("ORCH_MIN_DRAFT_CHARS", "800")))
         self.session = requests.Session()
@@ -128,6 +128,7 @@ class DocumentGenerationOrchestrator:
         self.vector_store = get_vector_store() if get_vector_store is not None else None
         self._local_verifier = None
         self._local_controller = None
+        self.deadline_monotonic: Optional[float] = None
         
         self.rag_enabled = os.getenv("RAG_ENABLED", "true").lower() == "true" and RAG_AVAILABLE
         self.rag_force_citation = os.getenv("RAG_FORCE_CITATION", "true").lower() == "true"
@@ -147,6 +148,58 @@ class DocumentGenerationOrchestrator:
             else None
         )
         self.source_verifier = SourceVerifier() if self.rag_enabled else None
+
+    def _remaining_deadline_seconds(self) -> Optional[float]:
+        if not self.deadline_monotonic:
+            return None
+        return self.deadline_monotonic - time.monotonic()
+
+    def _deadline_exceeded(self) -> bool:
+        remaining = self._remaining_deadline_seconds()
+        return remaining is not None and remaining <= 0
+
+    def _subsection_failure_result(
+        self,
+        *,
+        reason: str,
+        draft: str = "",
+        final_outline: str = "",
+        iterations: int = 0,
+        verification: Optional[Dict[str, Any]] = None,
+        all_drafts: Optional[List[str]] = None,
+        metrics: Optional[Dict[str, int]] = None,
+        rag_search_result: Optional[Dict[str, Any]] = None,
+        rag_used: bool = False,
+        rag_selected_query: str = "",
+        controller_triggered: bool = False,
+        controller_retry_count: int = 0,
+        controller_last_result: Optional[Dict[str, Any]] = None,
+        bandit: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        rag_search_result = rag_search_result or {"success": False, "results": []}
+        controller_last_result = controller_last_result or {}
+        return {
+            "success": False,
+            "error": reason,
+            "draft": str(draft or ""),
+            "final_outline": final_outline,
+            "iterations": iterations,
+            "source_results": rag_search_result.get("results", []),
+            "rag_used": rag_used,
+            "rag_search_success": bool(rag_search_result.get("success", False)),
+            "rag_result_count": len(rag_search_result.get("results", []) or []),
+            "rag_selected_query": rag_selected_query,
+            "controller_effective": bool(controller_last_result.get("effective", False)),
+            "controller_source": str(controller_last_result.get("source", "") or ""),
+            "verification": verification or {},
+            "bandit": bandit or {},
+            "all_drafts": all_drafts or [],
+            "forced_pass": False,
+            "force_reason": "",
+            "controller_triggered": controller_triggered,
+            "controller_retry_count": controller_retry_count,
+            "metrics": metrics or {},
+        }
 
     def _compute_retry_delay(self, attempt: int) -> float:
         base = self.retry_base_delay * (2 ** max(0, min(attempt - 1, 6)))
@@ -960,8 +1013,7 @@ class DocumentGenerationOrchestrator:
                             forced_pass = bool(subsection_gen_result.get("forced_pass", False))
                             force_reason = str(subsection_gen_result.get("force_reason", "") or "")
                             generated_content = subsection_gen_result.get("draft", "")
-                            has_usable_forced_draft = forced_pass and bool(str(generated_content or "").strip())
-                            forced_should_fail = forced_pass and (not self.allow_forced_pass) and (not has_usable_forced_draft)
+                            forced_should_fail = forced_pass and (not self.allow_forced_pass)
                             controller_triggered = bool(subsection_gen_result.get("controller_triggered", False))
                             controller_retry_count = int(subsection_gen_result.get("controller_retry_count", 0) or 0)
                             rag_used = bool(subsection_gen_result.get("rag_used", False))
@@ -1044,24 +1096,13 @@ class DocumentGenerationOrchestrator:
                                 )
                             else:
                                 document_result["passed_subsections"] += 1
-                            if forced_pass:
-                                document_result["forced_subsections"].append({
-                                    "section_id": section_id,
-                                    "subsection_id": subsection_id,
-                                    "reason": force_reason,
-                                    "iterations": subsection_gen_result.get("iterations", 0),
-                                })
                             if not forced_should_fail:
                                 self._emit_progress_event(
                                     document_id=document_id,
                                     section_id=section_id,
                                     subsection_id=subsection_id,
-                                    stage="subsection_forced_pass" if forced_pass else "subsection_passed",
-                                    message=(
-                                        f"小节达到最大修复轮次，保留最佳草稿并继续: {section_title} > {subsection_title}"
-                                        if forced_pass
-                                        else f"小节通过验证: {section_title} > {subsection_title}"
-                                    ),
+                                    stage="subsection_passed",
+                                    message=f"小节通过验证: {section_title} > {subsection_title}",
                                     metadata={
                                         "iterations": subsection_gen_result.get("iterations", 0),
                                         "verification": verification,
@@ -1103,37 +1144,27 @@ class DocumentGenerationOrchestrator:
                             err = subsection_gen_result.get("error", "Unknown error")
                             print(f"⚠️ 当前小节返回失败结果: {err}")
                             failed_draft = str(subsection_gen_result.get("draft", "") or "").strip()
-                            if failed_draft:
-                                fallback_content = failed_draft
-                            else:
-                                fallback_content = f"（系统兜底）{subsection_title}\n\n（内容生成失败，仍在恢复中）"
                             section_result["subsections"].append({
                                 "subsection_id": subsection_id,
                                 "subsection_title": subsection_title,
-                                "content": fallback_content,
+                                "content": failed_draft,
                                 "outline": subsection_outline,
                                 "success": False,
                                 "iterations": subsection_gen_result.get("iterations", 0),
                                 "verification": subsection_gen_result.get("verification", {}),
                                 "bandit": subsection_gen_result.get("bandit", {}),
-                                "forced_pass": True,
-                                "force_reason": "subsection_fallback_on_error",
+                                "forced_pass": False,
+                                "force_reason": "",
                                 "rag_used": bool(subsection_gen_result.get("rag_used", False)),
                                 "rag_search_success": bool(subsection_gen_result.get("rag_search_success", False)),
                                 "controller_effective": bool(subsection_gen_result.get("controller_effective", False)),
                                 "source_results": subsection_gen_result.get("source_results", []),
-                                "length": len(fallback_content),
+                                "length": len(failed_draft),
                             })
                             document_result["failed_subsections"].append({
                                 "section_id": section_id,
                                 "subsection_id": subsection_id,
                                 "reason": str(err),
-                                "iterations": subsection_gen_result.get("iterations", 0),
-                            })
-                            document_result["forced_subsections"].append({
-                                "section_id": section_id,
-                                "subsection_id": subsection_id,
-                                "reason": "subsection_fallback_on_error",
                                 "iterations": subsection_gen_result.get("iterations", 0),
                             })
                             self._emit_progress_event(
@@ -1146,32 +1177,25 @@ class DocumentGenerationOrchestrator:
                             )
                     
                     except Exception as e:
-                        print(f"⚠️ 小节生成异常，启用兜底继续文档流程: {e}")
+                        print(f"⚠️ 小节生成异常，记录失败并继续文档流程: {e}")
                         error_str = str(e)[:200]
-                        fallback_content = f"（系统兜底）{subsection_title}\n\n（内容生成异常，仍在恢复中）"
                         section_result["subsections"].append({
                             "subsection_id": subsection_id,
                             "subsection_title": subsection_title,
-                            "content": fallback_content,
+                            "content": "",
                             "outline": subsection_outline,
                             "success": False,
                             "iterations": 0,
                             "verification": {},
                             "bandit": {},
-                            "forced_pass": True,
-                            "force_reason": "subsection_exception_fallback",
-                            "length": len(fallback_content),
+                            "forced_pass": False,
+                            "force_reason": "",
+                            "length": 0,
                         })
                         document_result["failed_subsections"].append({
                             "section_id": section_id,
                             "subsection_id": subsection_id,
-                            "reason": "subsection_exception_fallback",
-                            "iterations": 0,
-                        })
-                        document_result["forced_subsections"].append({
-                            "section_id": section_id,
-                            "subsection_id": subsection_id,
-                            "reason": "subsection_exception_fallback",
+                            "reason": error_str or "subsection_exception",
                             "iterations": 0,
                         })
                         self._emit_progress_event(
@@ -1555,6 +1579,33 @@ class DocumentGenerationOrchestrator:
         effective_attempt_cap = self.max_subsection_attempts if self.max_subsection_attempts > 0 else self.max_iterations
         
         while True:
+            if self._deadline_exceeded():
+                reason = "document_deadline_exceeded_before_subsection_generation"
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="subsection_failed",
+                    message="文档生成总时限已到，停止当前小节而不是兜底通过",
+                    metadata={"iteration": iterations, "reason": reason},
+                )
+                return self._subsection_failure_result(
+                    reason=reason,
+                    draft=(best_candidate or {}).get("draft", "") if best_candidate else "",
+                    final_outline=current_outline,
+                    iterations=iterations,
+                    verification=(best_candidate or {}).get("verification", {}) if best_candidate else {},
+                    all_drafts=all_drafts,
+                    metrics=metrics,
+                    rag_search_result=rag_search_result,
+                    rag_used=rag_used,
+                    rag_selected_query=rag_selected_query,
+                    controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                    controller_retry_count=controller_retry_count,
+                    controller_last_result=controller_last_result,
+                    bandit=(best_candidate or {}).get("bandit", {}) if best_candidate else {},
+                )
+
             iterations += 1
             elapsed_subsection = time.time() - subsection_started_at
             timed_out = self.subsection_max_seconds > 0 and elapsed_subsection >= self.subsection_max_seconds
@@ -1568,34 +1619,17 @@ class DocumentGenerationOrchestrator:
                 timeout_triggered = timed_out and not reached_attempt_cap
                 if best_candidate and best_candidate.get("draft"):
                     best_verification = best_candidate.get("verification", {})
-                    best_rel = float(best_verification.get("relevancy_index", 0) or 0)
-                    best_red = float(best_verification.get("redundancy_index", 1) or 1)
-                    max_pass_ok = (
-                        best_rel >= max(0.0, rel_threshold - self.max_pass_rel_margin)
-                        and best_red <= min(1.0, red_threshold + self.max_pass_red_margin)
-                    )
-                    absolute_best_effort_ok = best_rel >= 0.45 and best_red <= 0.90
-                    max_pass_ok = max_pass_ok or absolute_best_effort_ok
-                    stage_name = "verifier_best_effort_pass" if max_pass_ok else "verifier_forced_pass"
                     if timeout_triggered:
-                        pass_message = (
-                            f"单小节耗时已达 {self.subsection_max_seconds}s，最佳结果满足放宽阈值，按最佳努力通过"
-                            if max_pass_ok
-                            else f"单小节耗时已达 {self.subsection_max_seconds}s，按最佳结果强制通过并继续"
-                        )
-                        pass_reason = "subsection_timeout_best_effort" if max_pass_ok else "subsection_timeout_forced"
+                        pass_message = f"单小节耗时已达 {self.subsection_max_seconds}s，停止当前小节；不进行兜底通过"
+                        pass_reason = "subsection_timeout"
                     else:
-                        pass_message = (
-                            f"达到最大检测次数 {effective_attempt_cap}，最佳结果满足放宽阈值，按最佳努力通过"
-                            if max_pass_ok
-                            else f"达到最大检测次数 {effective_attempt_cap}，按最佳结果强制通过并继续"
-                        )
-                        pass_reason = "best_effort_after_max_attempts" if max_pass_ok else "max_attempts_reached"
+                        pass_message = f"达到最大检测次数 {effective_attempt_cap}，停止当前小节；不进行兜底通过"
+                        pass_reason = "max_attempts_reached"
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
                         subsection_id=subsection_id,
-                        stage=stage_name,
+                        stage="subsection_failed",
                         message=pass_message,
                         metadata={
                             "iteration": iterations - 1,
@@ -1605,73 +1639,22 @@ class DocumentGenerationOrchestrator:
                             "elapsed_seconds": round(elapsed_subsection, 2),
                         },
                     )
-                    if self.history_manager:
-                        try:
-                            self.history_manager.update_subsection_content(
-                                document_id=document_id,
-                                section_id=section_id,
-                                subsection_id=subsection_id,
-                                generated_content=best_candidate.get("draft", ""),
-                                outline=best_candidate.get("outline", current_outline),
-                                relevancy_index=best_verification.get("relevancy_index", 0),
-                                redundancy_index=best_verification.get("redundancy_index", 1),
-                                is_passed=True,
-                                iteration_count=iterations - 1,
-                            )
-                        except Exception as _e:
-                            print(f"⚠️  强制通过回写失败: {_e}")
-                    return {
-                        "success": True,
-                        "draft": best_candidate.get("draft", ""),
-                        "final_outline": best_candidate.get("outline", current_outline),
-                        "iterations": iterations - 1,
-                        "source_results": best_candidate.get(
-                            "source_results",
-                            rag_search_result.get("results", []),
-                        ),
-                        "rag_used": bool(best_candidate.get("rag_used", rag_used)),
-                        "rag_search_success": bool(
-                            best_candidate.get(
-                                "rag_search_success",
-                                bool(rag_search_result.get("success", False)),
-                            )
-                        ),
-                        "rag_result_count": int(
-                            best_candidate.get(
-                                "rag_result_count",
-                                len(rag_search_result.get("results", [])),
-                            )
-                            or 0
-                        ),
-                        "rag_selected_query": str(
-                            best_candidate.get("rag_selected_query", rag_selected_query) or ""
-                        ),
-                        "controller_effective": bool(
-                            best_candidate.get(
-                                "controller_effective",
-                                bool(controller_last_result.get("effective", False)),
-                            )
-                        ),
-                        "controller_source": str(
-                            best_candidate.get(
-                                "controller_source",
-                                controller_last_result.get("source", ""),
-                            )
-                            or ""
-                        ),
-                        "verification": {
-                            **best_verification,
-                            "forced_pass": (not max_pass_ok),
-                            "force_reason": pass_reason,
-                        },
-                        "bandit": best_candidate.get("bandit", {}),
-                        "all_drafts": all_drafts,
-                        "forced_pass": (not max_pass_ok),
-                        "force_reason": pass_reason,
-                        "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
-                        "controller_retry_count": controller_retry_count,
-                        "metrics": metrics,
-                    }
+                    return self._subsection_failure_result(
+                        reason=pass_reason,
+                        draft=best_candidate.get("draft", ""),
+                        final_outline=best_candidate.get("outline", current_outline),
+                        iterations=iterations - 1,
+                        verification=best_verification,
+                        all_drafts=all_drafts,
+                        metrics=metrics,
+                        rag_search_result=rag_search_result,
+                        rag_used=bool(best_candidate.get("rag_used", rag_used)),
+                        rag_selected_query=str(best_candidate.get("rag_selected_query", rag_selected_query) or ""),
+                        controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                        controller_retry_count=controller_retry_count,
+                        controller_last_result=controller_last_result,
+                        bandit=best_candidate.get("bandit", {}),
+                    )
 
                 # 改进兜底逻辑：优先使用 all_drafts 中最后一个，而不是 outline
                 if all_drafts and len(all_drafts) > 0:
@@ -1710,11 +1693,11 @@ class DocumentGenerationOrchestrator:
                     document_id=document_id,
                     section_id=section_id,
                     subsection_id=subsection_id,
-                    stage="verifier_forced_pass",
+                    stage="subsection_failed",
                     message=(
-                        f"单小节耗时已达 {self.subsection_max_seconds}s，按最后可用内容通过"
+                        f"单小节耗时已达 {self.subsection_max_seconds}s，且没有可验证草稿，停止当前小节"
                         if timeout_triggered
-                        else f"达到最大检测次数 {effective_attempt_cap}，按最后可用内容通过"
+                        else f"达到最大检测次数 {effective_attempt_cap}，且没有可验证草稿，停止当前小节"
                     ),
                     metadata={
                         "iteration": iterations - 1,
@@ -1723,48 +1706,39 @@ class DocumentGenerationOrchestrator:
                         "fallback_note": fallback_note,
                     },
                 )
-                # 诊断日志：记录究竟选中了哪个兜底草稿，便于排查 web 侧为何仍展示 outline
+                # 诊断日志：记录保留下来的失败草稿，便于排查 web 侧为何仍展示 outline
                 try:
                     print(
-                        f"[Orch] verifier_forced_pass for {section_id}::{subsection_id} - "
+                        f"[Orch] verifier_failed_no_usable_draft for {section_id}::{subsection_id} - "
                         f"chosen_len={len(fallback_draft or '')}, is_outline_like={self._is_outline_like(fallback_draft, current_outline)}, "
                         f"best_candidate_present={bool(best_candidate)}, total_drafts={len(all_drafts)}"
                     )
                 except Exception:
                     pass
 
+                placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
                 if best_effort_due_to_verifier:
-                    placeholder_reason = "verifier_unavailable_best_effort"
-                else:
-                    placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
-                return {
-                    "success": True,
-                    "draft": fallback_draft,
-                    "final_outline": current_outline,
-                    "iterations": iterations - 1,
-                    "all_drafts": all_drafts,
-                    "source_results": rag_search_result.get("results", []),
-                    "rag_used": rag_used,
-                    "rag_search_success": bool(rag_search_result.get("success", False)),
-                    "rag_result_count": len(rag_search_result.get("results", [])),
-                    "rag_selected_query": rag_selected_query,
-                    "controller_effective": bool(controller_last_result.get("effective", False)),
-                    "controller_source": controller_last_result.get("source", ""),
-                    "bandit": {},
-                    "verification": {
+                    placeholder_reason = "verifier_unavailable"
+                return self._subsection_failure_result(
+                    reason=placeholder_reason,
+                    draft=fallback_draft,
+                    final_outline=current_outline,
+                    iterations=iterations - 1,
+                    verification={
                         "relevancy_index": 0.0,
                         "redundancy_index": 1.0,
                         "feedback": placeholder_reason,
-                        "forced_pass": not best_effort_due_to_verifier,
-                        "force_reason": placeholder_reason,
                         "verifier_unavailable": verifier_unavailable_only,
                     },
-                    "forced_pass": not best_effort_due_to_verifier,
-                    "force_reason": placeholder_reason,
-                    "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
-                    "controller_retry_count": controller_retry_count,
-                    "metrics": metrics,
-                }
+                    all_drafts=all_drafts,
+                    metrics=metrics,
+                    rag_search_result=rag_search_result,
+                    rag_used=rag_used,
+                    rag_selected_query=rag_selected_query,
+                    controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                    controller_retry_count=controller_retry_count,
+                    controller_last_result=controller_last_result,
+                )
 
             if iterations <= self.max_iterations:
                 print(f"\n      尝试 {iterations}/{self.max_iterations}")
@@ -1833,7 +1807,7 @@ class DocumentGenerationOrchestrator:
                 if generator_failure_streak >= max_generator_failures:
                     fail_error = str(gen_result.get("error", "generator_unavailable"))
 
-                    # 首次达到连续失败阈值时，先进入降级重试而不是立即强制通过。
+                    # 首次达到连续失败阈值时，先简化上下文再重试一次生成链路。
                     if not generator_degraded_mode:
                         generator_degraded_mode = True
                         generator_failure_streak = 0
@@ -1868,17 +1842,17 @@ class DocumentGenerationOrchestrator:
                                 break
                         if chosen is None:
                             chosen = all_drafts[-1]
-                            fallback_note = "（Generator失败，使用最后尝试的内容）"
+                            fallback_note = "（Generator失败，保留最后尝试的内容用于诊断）"
                         else:
-                            fallback_note = "（Generator失败，使用最后尝试的非大纲内容）"
+                            fallback_note = "（Generator失败，保留最后尝试的非大纲内容用于诊断）"
                         fallback_text = chosen
                     else:
                         fallback_text = ""
-                        fallback_note = "（Generator失败，内容仍在恢复中）"
+                        fallback_note = "（Generator失败，未产生可用草稿）"
 
                     try:
                         print(
-                            f"[Orch] generator_degraded_forced_pass for {section_id}::{subsection_id} - "
+                            f"[Orch] generator_failed_after_context_simplification for {section_id}::{subsection_id} - "
                             f"chosen_len={len(fallback_text or '')}, is_outline_like={self._is_outline_like(fallback_text, fail_outline)}, "
                             f"total_drafts={len(all_drafts)}"
                         )
@@ -1889,8 +1863,8 @@ class DocumentGenerationOrchestrator:
                         document_id=document_id,
                         section_id=section_id,
                         subsection_id=subsection_id,
-                        stage="subsection_forced_pass",
-                        message=f"Generator 在降级模式下仍连续失败 {generator_failure_streak} 次，按最后可用内容通过",
+                        stage="subsection_failed",
+                        message=f"Generator 在降级模式下仍连续失败 {generator_failure_streak} 次，停止当前小节；不进行兜底通过",
                         metadata={
                             "iteration": iterations,
                             "max_generator_failures": max_generator_failures,
@@ -1900,46 +1874,25 @@ class DocumentGenerationOrchestrator:
                             "fallback_note": fallback_note,
                         },
                     )
-                    if self.history_manager:
-                        try:
-                            self.history_manager.update_subsection_content(
-                                document_id=document_id,
-                                section_id=section_id,
-                                subsection_id=subsection_id,
-                                generated_content=fallback_text,
-                                outline=current_outline,
-                                relevancy_index=0.0,
-                                redundancy_index=1.0,
-                                is_passed=True,
-                                iteration_count=iterations,
-                            )
-                        except Exception as _e:
-                            print(f"⚠️  Generator失败兜底回写失败: {_e}")
-                    return {
-                        "success": True,
-                        "draft": fallback_text,
-                        "final_outline": current_outline,
-                        "iterations": iterations,
-                        "rag_used": rag_used,
-                        "rag_search_success": bool(rag_search_result.get("success", False)),
-                        "rag_result_count": len(rag_search_result.get("results", [])),
-                        "rag_selected_query": rag_selected_query,
-                        "controller_effective": bool(controller_last_result.get("effective", False)),
-                        "controller_source": controller_last_result.get("source", ""),
-                        "verification": {
+                    return self._subsection_failure_result(
+                        reason="generator_repeated_failure_after_degraded_mode",
+                        draft=fallback_text,
+                        final_outline=current_outline,
+                        iterations=iterations,
+                        verification={
                             "relevancy_index": 0.0,
                             "redundancy_index": 1.0,
                             "feedback": "generator_repeated_failure_after_degraded_mode",
-                            "forced_pass": True,
-                            "force_reason": "generator_repeated_failure_after_degraded_mode",
                         },
-                        "all_drafts": all_drafts,
-                        "forced_pass": True,
-                        "force_reason": "generator_repeated_failure_after_degraded_mode",
-                        "controller_triggered": (metrics.get("controller_calls", 0) > 0) or controller_triggered,
-                        "controller_retry_count": controller_retry_count,
-                        "metrics": metrics,
-                    }
+                        all_drafts=all_drafts,
+                        metrics=metrics,
+                        rag_search_result=rag_search_result,
+                        rag_used=rag_used,
+                        rag_selected_query=rag_selected_query,
+                        controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                        controller_retry_count=controller_retry_count,
+                        controller_last_result=controller_last_result,
+                    )
 
                 time.sleep(self._compute_retry_delay(iterations))
                 continue

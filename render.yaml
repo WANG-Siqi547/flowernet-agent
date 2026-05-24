@@ -134,7 +134,7 @@ services:
       - key: OUTLINER_PROVIDER
         value: deepseek
       - key: OUTLINER_PROVIDER_CHAIN
-        value: deepseek,sensenova
+        value: deepseek
       - key: OUTLINER_MODEL
         value: deepseek-chat
       - key: OUTLINER_OPENROUTER_MODEL
@@ -263,7 +263,7 @@ services:
       - key: GENERATOR_PROVIDER
         value: deepseek
       - key: GENERATOR_PROVIDER_CHAIN
-        value: deepseek,sensenova
+        value: deepseek
       - key: GENERATOR_MODEL
         value: deepseek-chat
       - key: GENERATOR_OPENROUTER_MODEL
@@ -365,7 +365,7 @@ services:
       - key: VERIFIER_RETRY_DELAY
         value: "2.0"
       - key: VERIFIER_UNAVAILABLE_BEST_EFFORT
-        value: "true"
+        value: "false"
       - key: PROVIDER_FAILURE_THRESHOLD
         value: "3"
       - key: PROVIDER_COOLDOWN_SECONDS
@@ -403,6 +403,8 @@ services:
       - key: ORCH_GENERATOR_MAX_TOKENS
         value: "2000"
       - key: ORCH_COMPACT_GENERATION_ENABLED
+        value: "false"
+      - key: GENERATOR_COMPACT_FALLBACK_ENABLED
         value: "false"
       - key: ORCH_COMPACT_PROMPT_TRIGGER_CHARS
         value: "7000"

@@ -74,10 +74,7 @@ class FlowerNetGenerator:
         for candidate in parsed_chain:
             if candidate in allowed_providers and candidate not in normalized_chain:
                 normalized_chain.append(candidate)
-        for fallback in ("gemini", "azure", "dashscope", "openrouter", "ollama"):
-            if fallback not in normalized_chain:
-                normalized_chain.append(fallback)
-        self.provider_chain = normalized_chain or ["gemini", "azure", "dashscope", "openrouter", "ollama"]
+        self.provider_chain = normalized_chain or ["deepseek"]
 
         self.model = model
         self.azure_model = os.getenv("GENERATOR_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -140,7 +137,7 @@ class FlowerNetGenerator:
         self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.deepseek_http_timeout = float(os.getenv('DEEPSEEK_HTTP_TIMEOUT', str(self.provider_http_timeout)))
-        self.compact_fallback_enabled = os.getenv("GENERATOR_COMPACT_FALLBACK_ENABLED", "true").lower() == "true"
+        self.compact_fallback_enabled = os.getenv("GENERATOR_COMPACT_FALLBACK_ENABLED", "false").lower() == "true"
         self.compact_prompt_trigger_chars = max(800, int(os.getenv("GENERATOR_COMPACT_PROMPT_TRIGGER_CHARS", "2500")))
         self.compact_prompt_max_chars = max(700, int(os.getenv("GENERATOR_COMPACT_PROMPT_MAX_CHARS", "1800")))
         self.compact_max_tokens = max(400, int(os.getenv("GENERATOR_COMPACT_MAX_TOKENS", "1200")))
@@ -305,7 +302,7 @@ class FlowerNetGenerator:
         """
         try:
             errors: List[str] = []
-            has_fallback_provider = len(self.provider_chain) > 1
+            has_fallback_provider = False
             for provider in self.provider_chain:
                 provider_errors: List[str] = []
                 cooldown_until = self._provider_cooldown_until.get(provider, 0.0)
@@ -341,8 +338,7 @@ class FlowerNetGenerator:
                         self._provider_cooldown_until[provider] = 0.0
                         self.last_provider_used = provider
                         meta = result.get("metadata") or {}
-                        if "fallback_chain" not in meta:
-                            meta["fallback_chain"] = self.provider_chain
+                        meta["provider_chain"] = self.provider_chain
                         result["metadata"] = meta
                         return result
 

@@ -78,10 +78,7 @@ class FlowerNetOutliner:
         for candidate in parsed_chain:
             if candidate in allowed_providers and candidate not in normalized_chain:
                 normalized_chain.append(candidate)
-        for fallback in ("gemini", "azure", "dashscope", "openrouter", "ollama"):
-            if fallback not in normalized_chain:
-                normalized_chain.append(fallback)
-        self.provider_chain = normalized_chain or ["gemini", "azure", "dashscope", "openrouter", "ollama"]
+        self.provider_chain = normalized_chain or ["deepseek"]
 
         self.model = model
         self.azure_model = os.getenv("OUTLINER_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -499,14 +496,8 @@ JSON 结构：
                     stage_name="document_structure",
                 )
             except Exception as exc:
-                print(f"⚠️ 标准大纲生成失败，尝试短提示 LLM 大纲: {exc}")
-                structure, llm_metadata, structure_text = self._generate_compact_document_structure(
-                    user_background=user_background,
-                    user_requirements=user_requirements,
-                    max_sections=max_sections,
-                    max_subsections_per_section=max_subsections_per_section,
-                    reason=str(exc),
-                )
+                print(f"❌ 标准大纲生成失败: {exc}")
+                raise
 
             issues = self._outline_quality_issues(structure)
             if issues:
@@ -539,45 +530,33 @@ JSON 结构：
             
             # 检查章节数量
             if actual_section_count != max_sections:
-                print(f"⚠️  警告: 大纲的章节数 ({actual_section_count}) 与要求不符 ({max_sections})")
-                if actual_section_count > max_sections:
-                    sections = sections[:max_sections]
-                    actual_section_count = len(sections)
-                # 如果太少，补充空章节
-                while actual_section_count < max_sections:
-                    actual_section_count += 1
-                    sections.append({
-                        "id": f"section_{actual_section_count}",
-                        "title": f"第{actual_section_count}章 (自动生成)",
-                        "subsections": [
-                            {
-                                "id": f"subsection_{actual_section_count}_{j}",
-                                "title": f"第{j}小节",
-                                "description": "补充内容"
-                            }
-                            for j in range(1, max_subsections_per_section + 1)
-                        ]
-                    })
-                structure['sections'] = sections
+                return {
+                    "success": False,
+                    "error": f"outline_section_count_mismatch: got {actual_section_count}, expected {max_sections}",
+                    "metadata": {
+                        "provider_chain": self.provider_chain,
+                        "active_provider": llm_metadata.get("provider", self.last_provider_used),
+                        "model": llm_metadata.get("model", self.model),
+                    },
+                }
             
             # 检查每个章节的小节数量
             for section in sections:
                 subsections = section.get('subsections', [])
                 actual_subsection_count = len(subsections)
                 if actual_subsection_count != max_subsections_per_section:
-                    print(f"⚠️  警告: 章节 '{section.get('title')}' 的小节数 ({actual_subsection_count}) 与要求不符 ({max_subsections_per_section})")
-                    if actual_subsection_count > max_subsections_per_section:
-                        subsections = subsections[:max_subsections_per_section]
-                        actual_subsection_count = len(subsections)
-                    # 补充缺少的小节
-                    while actual_subsection_count < max_subsections_per_section:
-                        actual_subsection_count += 1
-                        subsections.append({
-                            "id": f"{section.get('id')}_{actual_subsection_count}",
-                            "title": f"第{actual_subsection_count}小节 (自动生成)",
-                            "description": "补充内容"
-                        })
-                    section['subsections'] = subsections
+                    return {
+                        "success": False,
+                        "error": (
+                            f"outline_subsection_count_mismatch: section={section.get('id')}, "
+                            f"got {actual_subsection_count}, expected {max_subsections_per_section}"
+                        ),
+                        "metadata": {
+                            "provider_chain": self.provider_chain,
+                            "active_provider": llm_metadata.get("provider", self.last_provider_used),
+                            "model": llm_metadata.get("model", self.model),
+                        },
+                    }
             
             total_subsections = sum(len(s.get('subsections', [])) for s in sections)
             final_issues = self._outline_quality_issues(structure)
@@ -1154,10 +1133,8 @@ JSON 结构：
                     last_error = str(exc2)
                     continue
 
-        # Fallback: 返回空结构而不是抛出异常
-        print(f"⚠️  {stage_name} JSON 生成失败（重试 {retries} 次）: {last_error}")
-        print(f"⚠️  使用 fallback 结构继续")
-        return {}, last_metadata, last_text
+        print(f"❌ {stage_name} JSON 生成失败（重试 {retries} 次）: {last_error}")
+        raise ValueError(f"{stage_name}_json_generation_failed: {last_error}")
     
     def generate_detailed_section_outlines(
             self,
@@ -1220,15 +1197,15 @@ JSON 结构：
                     stage_name="detailed_section_outlines",
                 )
             except Exception as exc:
-                print(f"⚠️ 详细大纲生成失败，使用基础结构继续: {exc}")
-                detailed = {}
-                llm_metadata = {
-                    "provider": self.last_provider_used,
-                    "model": self.model,
-                    "error": str(exc),
-                    "fallback_to_base_structure": True,
+                print(f"❌ 详细大纲生成失败: {exc}")
+                return {
+                    "success": False,
+                    "error": f"detailed_outline_generation_failed: {exc}",
+                    "metadata": {
+                        "provider": self.last_provider_used,
+                        "model": self.model,
+                    },
                 }
-                detailed_text = ""
             detailed.setdefault("title", structure.get("title", ""))
     
             base_sections = structure.get("sections", []) if isinstance(structure.get("sections", []), list) else []

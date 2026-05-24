@@ -261,6 +261,10 @@ def _execute_generate_document(request: GenerateDocumentRequest, use_lock: bool 
                 headers={"Retry-After": str(max(5, int(min(lock_wait_timeout, 30))))},
             )
 
+    previous_deadline = getattr(orch, "deadline_monotonic", None)
+    hard_budget = max(120.0, float(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT", str(DOCUMENT_TASK_HARD_TIMEOUT))))
+    orch.deadline_monotonic = time.monotonic() + hard_budget
+
     try:
         result = orch.generate_document(
             document_id=request.document_id,
@@ -291,6 +295,7 @@ def _execute_generate_document(request: GenerateDocumentRequest, use_lock: bool 
                 pass
         return result
     finally:
+        orch.deadline_monotonic = previous_deadline
         if serialize_tasks and acquired:
             document_generation_lock.release()
 
@@ -308,49 +313,30 @@ def _document_task_worker_loop() -> None:
                 continue
             _set_document_task(task_id, status="running", started_at=datetime.now().isoformat())
 
-            result_box: Dict[str, Any] = {}
-
-            def _run_task() -> None:
-                try:
-                    result_box["result"] = _execute_generate_document(request, use_lock=False)
-                except Exception as exc:
-                    result_box["exception"] = exc
-
-            runner = threading.Thread(target=_run_task, daemon=True, name=f"document-task-runner-{task_id}")
-            runner.start()
             started_monotonic = time.monotonic()
-            heartbeat_interval = max(5.0, float(os.getenv("DOCUMENT_TASK_HEARTBEAT_SECONDS", "20")))
-            while runner.is_alive():
-                elapsed = time.monotonic() - started_monotonic
-                if elapsed >= DOCUMENT_TASK_HARD_TIMEOUT:
-                    break
-                runner.join(timeout=min(heartbeat_interval, max(0.1, DOCUMENT_TASK_HARD_TIMEOUT - elapsed)))
-                if runner.is_alive():
-                    _set_document_task(
-                        task_id,
-                        status="running",
-                        heartbeat_at=datetime.now().isoformat(),
-                        runtime_seconds=round(time.monotonic() - started_monotonic, 1),
-                    )
-            if runner.is_alive():
+            _set_document_task(
+                task_id,
+                status="running",
+                heartbeat_at=datetime.now().isoformat(),
+                runtime_seconds=0,
+            )
+            result = _execute_generate_document(request, use_lock=False)
+            runtime_seconds = round(time.monotonic() - started_monotonic, 1)
+            if isinstance(result, dict) and result.get("success"):
                 _set_document_task(
                     task_id,
-                    status="failed",
-                    error=f"document_task_timeout_after_{DOCUMENT_TASK_HARD_TIMEOUT}s",
+                    status="completed",
+                    result=result,
+                    runtime_seconds=runtime_seconds,
                     completed_at=datetime.now().isoformat(),
                 )
-                continue
-            if result_box.get("exception") is not None:
-                raise result_box["exception"]
-            result = result_box.get("result")
-            if isinstance(result, dict) and result.get("success"):
-                _set_document_task(task_id, status="completed", result=result, completed_at=datetime.now().isoformat())
             else:
                 _set_document_task(
                     task_id,
                     status="failed",
                     result=result if isinstance(result, dict) else None,
                     error=_task_error_text(result, f"document_task_failed_without_error: {task_id}"),
+                    runtime_seconds=runtime_seconds,
                     completed_at=datetime.now().isoformat(),
                 )
         except Exception as e:
@@ -887,10 +873,10 @@ def diagnose_providers(request: ProviderDiagnosticRequest):
     """轻量检测远端 LLM provider 是否可用，不返回密钥或敏感配置。"""
     configured_chain = [
         item.strip()
-        for item in (os.getenv("GENERATOR_PROVIDER_CHAIN", "") or os.getenv("GENERATOR_PROVIDER", "sensenova")).split(",")
+        for item in (os.getenv("GENERATOR_PROVIDER_CHAIN", "") or os.getenv("GENERATOR_PROVIDER", "deepseek")).split(",")
         if item.strip()
     ]
-    providers = request.providers or configured_chain or ["sensenova"]
+    providers = request.providers or configured_chain or ["deepseek"]
     max_tokens = max(1, min(int(request.max_tokens or 80), 200))
     results: Dict[str, Any] = {}
 

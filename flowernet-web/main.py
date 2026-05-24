@@ -129,7 +129,7 @@ GENERATOR_PREFLIGHT_STRICT = os.getenv("GENERATOR_PREFLIGHT_STRICT", "false").lo
 GENERATOR_PREFLIGHT_TIMEOUT = max(3.0, float(os.getenv("GENERATOR_PREFLIGHT_TIMEOUT", "20")))
 GENERATOR_PREFLIGHT_PROVIDERS = [
     item.strip()
-    for item in os.getenv("GENERATOR_PREFLIGHT_PROVIDERS", "deepseek,sensenova").split(",")
+    for item in os.getenv("GENERATOR_PREFLIGHT_PROVIDERS", "deepseek").split(",")
     if item.strip()
 ]
 OUTLINER_DOWNSTREAM_MIN_TIMEOUT = int(os.getenv("OUTLINER_DOWNSTREAM_MIN_TIMEOUT", "600"))
@@ -2046,7 +2046,7 @@ def _is_outline_like_fallback_content(
             or compact_text in compact_outline
         )
 
-    # 仅在 forced_pass/系统兜底场景下过滤，避免误伤正常正文
+    # 兼容清理旧任务里的 forced_pass/系统兜底内容，避免旧脏数据进入最终文档。
     should_filter = bool((forced_pass or has_system_fallback_prefix) and (outline_embedded or has_prompt_marker))
     if should_filter:
         print(
@@ -2058,7 +2058,7 @@ def _is_outline_like_fallback_content(
 
 
 def _build_content_map_from_history(history: List[Dict[str, Any]]) -> Dict[str, str]:
-    """从history中构建content map，优先使用非forced_pass的内容"""
+    """从 history 中构建 content map；跳过旧任务中的 forced_pass 脏数据。"""
     content_map: Dict[str, str] = {}
     # 第一遍：记录所有内容
     for item in history:
@@ -2071,12 +2071,11 @@ def _build_content_map_from_history(history: List[Dict[str, Any]]) -> Dict[str, 
         if _is_outline_like_fallback_content(content=content, outline=outline, forced_pass=bool(is_forced_pass)):
             continue
 
-        # 仅当content非空时才添加；如果已有内容且新内容是forced_pass，则不覆盖
+        # 仅当 content 非空时才添加；旧 forced_pass 不能覆盖已验证正文。
         if content:
             if key not in content_map:
                 content_map[key] = content
             elif not is_forced_pass:
-                # 如果新内容不是forced_pass，优先使用它（更新已存在的content）
                 content_map[key] = content
     return content_map
 
@@ -4783,9 +4782,8 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
 
                     # 每次进度变化或30秒都推送一次进度（但不要做implicit的完成判断）
                     if current_count > last_count or time.time() - last_progress_update > 30:
-                        # 注意：这里只是报告已添加到 history 的项目数，不应该用来判断是否完成
-                        # 因为 forced_pass 的小节也会立即被添加到 history，
-                        # 但可能还没有经过真正的验证（verifier），所以指标可能还是0
+                        # 注意：这里只是报告已添加到 history 的项目数，不应该用来判断是否完成。
+                        # 最终完成状态必须以后端返回的完整文档结果为准。
                         progress = min(100, int(current_count / total_subsections * 100)) if total_subsections > 0 else 0
                         msg = json.dumps({
                             'type': 'progress',
@@ -4795,7 +4793,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                                 'total': total_subsections,
                                 'percent': progress,
                             },
-                            'note': '进度反映已保存的内容，部分可能是强制通过的临时结果',
+                            'note': '进度反映已保存的内容，最终状态以后端完整结果为准',
                         })
                         yield f"data: {msg}\n\n"
                         last_count = current_count
@@ -4839,17 +4837,10 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         if error_occurred:
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
-                gen_resp = gen_resp or {}
-                gen_resp.update({
-                    "success": True,
-                    "passed_subsections": len(history_items),
-                    "failed_subsections": gen_resp.get("failed_subsections", []),
-                    "forced_subsections": gen_resp.get("forced_subsections", []),
-                    "interrupted": True,
-                    "interrupted_reason": gen_resp.get("error", "生成服务连接失败"),
-                })
-                msg = json.dumps({'type': 'warning', 'message': f'⚠️ 生成中断，先返回已通过的 {len(history_items)} 个小节'})
+                detail = _clean_error_text((gen_resp or {}).get("error") if isinstance(gen_resp, dict) else "", "生成服务连接失败")
+                msg = json.dumps({'type': 'error', 'message': f'{detail}；已生成 {len(history_items)} 个小节，但未完成全文，已停止返回部分兜底内容'})
                 yield f"data: {msg}\n\n"
+                return
             else:
                 detail = ""
                 if isinstance(gen_resp, dict):
@@ -4900,16 +4891,10 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         if not gen_resp.get("success"):
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
-                gen_resp.update({
-                    "success": True,
-                    "passed_subsections": len(history_items),
-                    "failed_subsections": gen_resp.get("failed_subsections", []),
-                    "forced_subsections": gen_resp.get("forced_subsections", []),
-                    "interrupted": True,
-                    "interrupted_reason": gen_resp.get('error', '文档生成失败'),
-                })
-                msg = json.dumps({'type': 'warning', 'message': f'⚠️ 生成中断，先返回已通过的 {len(history_items)} 个小节'})
+                err_msg = _clean_error_text(gen_resp.get('error'), '文档生成失败')
+                msg = json.dumps({'type': 'error', 'message': f'{err_msg}；已生成 {len(history_items)} 个小节，但未完成全文，已停止返回部分兜底内容'})
                 yield f"data: {msg}\n\n"
+                return
             else:
                 err_msg = _clean_error_text(gen_resp.get('error'), '文档生成失败')
                 msg = json.dumps({'type': 'error', 'message': err_msg})
@@ -4949,9 +4934,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             final_history = history_resp.json().get("history", []) if history_resp.status_code == 200 else []
             final_count = len(final_history)
 
-            # 仅在生成器完全返回后，才补发最后的 subsection_passed 事件
-            # 注意：检查每个 history 项的 forced_pass 标记，只发送真正通过验证的小节
-            # （forced_pass 的小节不发送"通过验证"事件，避免前端误导）
+            # 仅在生成器完全返回后，才补发真正通过验证的小节事件。
             for idx in range(len(emitted_passed_indices), final_count):
                 if idx >= len(ordered_subsections):
                     break
@@ -4960,7 +4943,6 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 history_item = final_history[idx] if idx < len(final_history) else {}
                 is_forced_pass = history_item.get("metadata", {}).get("forced_pass", False)
 
-                # 只发送非 forced_pass 的小节为"通过验证"
                 if not is_forced_pass:
                     pass_msg = f"小节通过验证: {item['section_title']} > {item['subsection_title']}"
                     msg = json.dumps({
@@ -4979,12 +4961,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                     })
                     yield f"data: {msg}\n\n"
                 else:
-                    # forced_pass 的小节显示为"内容已生成"而不是"通过验证"
-                    pass_msg = f"小节生成完成（强制通过）: {item['section_title']} > {item['subsection_title']}"
+                    fail_msg = f"小节未通过验证: {item['section_title']} > {item['subsection_title']}"
                     msg = json.dumps({
                         'type': 'detail',
-                        'message': pass_msg,
-                        'stage': 'subsection_generated',
+                        'message': fail_msg,
+                        'stage': 'subsection_failed',
                         'metadata': {
                             'section_id': item['section_id'],
                             'subsection_id': item['subsection_id'],
@@ -4994,6 +4975,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                             'section_subsection_total': total_subsections,
                             'forced_pass': True,
                             'force_reason': history_item.get("metadata", {}).get("force_reason", "unknown"),
+                            'verification_passed': False,
                         },
                     })
                     yield f"data: {msg}\n\n"

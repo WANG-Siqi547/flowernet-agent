@@ -11,7 +11,7 @@ services:
       - key: GENERATOR_URL
         value: https://flowernet-generator.onrender.com
       - key: GENERATOR_PREFLIGHT_PROVIDERS
-        value: deepseek,sensenova
+        value: deepseek
       - key: PUBLIC_BASE_URL
         value: https://flowernet-web.onrender.com
       - key: REQUEST_TIMEOUT

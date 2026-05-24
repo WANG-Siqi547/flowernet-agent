@@ -17,7 +17,7 @@ services:
       - key: OUTLINER_PROVIDER
         value: deepseek
       - key: OUTLINER_PROVIDER_CHAIN
-        value: "deepseek,sensenova"
+        value: "deepseek"
       - key: OUTLINER_MODEL
         value: glm-5
       - key: OUTLINER_OPENROUTER_MODEL
