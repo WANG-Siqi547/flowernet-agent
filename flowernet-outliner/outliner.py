@@ -227,10 +227,19 @@ class FlowerNetOutliner:
         if re.fullmatch(r"(section|chapter|subsection)\s*\d*", text, flags=re.I):
             return True
         request_artifacts = [
-            "请帮我", "生成一篇", "高质量长文档", "用户背景", "用户需求", "额外要求",
-            "document topic", "user background", "extra requirements",
+            "请帮我", "生成一篇", "高质量长文档", "额外要求",
+            "document topic", "extra requirements",
         ]
         if any(token in lowered for token in request_artifacts):
+            return True
+        label_artifact_patterns = [
+            r"用户背景\s*[:：]",
+            r"用户需求\s*[:：]",
+            r"附加要求\s*[:：]",
+            r"user background\s*:",
+            r"user requirements\s*:",
+        ]
+        if any(re.search(pattern, text, flags=re.I) for pattern in label_artifact_patterns):
             return True
         if len(text) > 64 and re.search(r"[。！？.!?，,；;]", text):
             return True

@@ -929,9 +929,27 @@ def _recover_partial_document(document_id: str, attempts: int = 5, timeout_secon
                     expected += len(subs)
 
             passed = len(history_items)
+            if expected > 0 and passed < expected:
+                return {
+                    "success": False,
+                    "partial": True,
+                    "document_id": document_id,
+                    "title": title,
+                    "content": "",
+                    "stats": {
+                        "expected_subsections": expected,
+                        "passed_subsections": passed,
+                        "failed_subsections": 0,
+                        "forced_subsections": 0,
+                        "total_generated": passed,
+                    },
+                    "history_items": history_items,
+                    "attempts": attempt,
+                    "error": f"partial_document_rejected: passed {passed}/{expected}",
+                }
             return {
                 "success": True,
-                "partial": expected > 0 and passed < expected,
+                "partial": False,
                 "document_id": document_id,
                 "title": title,
                 "content": markdown_content,
@@ -961,9 +979,18 @@ def _recover_partial_document(document_id: str, attempts: int = 5, timeout_secon
             status = str(task_status.get("status") or "unknown").lower()
             result = task_status.get("result") if isinstance(task_status, dict) else None
             if status == "completed" and isinstance(result, dict):
+                if result.get("partial") or result.get("interrupted"):
+                    return {
+                        "success": False,
+                        "partial": True,
+                        "document_id": document_id,
+                        "generator_task_id": task_id,
+                        "generator_status": status,
+                        "error": "partial_generator_result_rejected",
+                    }
                 return {
                     "success": True,
-                    "partial": bool(result.get("partial") or result.get("interrupted")),
+                    "partial": False,
                     "document_id": document_id,
                     "title": str(result.get("title") or "FlowerNet Document"),
                     "content": str(result.get("content") or ""),
@@ -973,7 +1000,7 @@ def _recover_partial_document(document_id: str, attempts: int = 5, timeout_secon
                 }
             if status in {"queued", "running"}:
                 return {
-                    "success": True,
+                    "success": False,
                     "partial": True,
                     "document_id": document_id,
                     "title": "",
@@ -1438,98 +1465,26 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
 
     if not gen_resp.get("success"):
         if history_items:
-            partial_content = build_markdown_document(
-                title,
-                structure,
-                history_items,
-                generated_sections=gen_resp.get("sections", []) if isinstance(gen_resp, dict) else [],
-                user_background=req.user_background,
-                extra_requirements=req.extra_requirements,
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"文档生成失败，已生成 {len(history_items)}/{outlined_subsections} 个通过验证的小节；"
+                    f"拒绝返回不完整文档: {gen_resp}"
+                ),
             )
-            citation_quality = _citation_quality_check(partial_content)
-            _enforce_citation_quality_or_raise(citation_quality, context="partial_generation_failure")
-            total_source_refs = _aggregate_source_reference_count(
-                history_items=history_items,
-                generated_sections=gen_resp.get("sections", []) if isinstance(gen_resp, dict) else [],
-            )
-            total_source_refs = max(total_source_refs, int(citation_quality.get("reference_count", 0) or 0))
-            return {
-                "success": True,
-                "partial": True,
-                "interrupted": True,
-                "message": f"生成中断，已返回通过验证的 {len(history_items)} 个小节",
-                "document_id": document_id,
-                "title": title,
-                "content": partial_content,
-                "stats": {
-                    "expected_subsections": expected_subsections,
-                    "outlined_subsections": outlined_subsections,
-                    "passed_subsections": len(history_items),
-                    "failed_subsections": len(gen_resp.get("failed_subsections", [])) if isinstance(gen_resp, dict) else 0,
-                    "forced_subsections": len(gen_resp.get("forced_subsections", [])) if isinstance(gen_resp, dict) else 0,
-                    "total_iterations": gen_resp.get("total_iterations", 0) if isinstance(gen_resp, dict) else 0,
-                    "generation_time": gen_resp.get("generation_time", "") if isinstance(gen_resp, dict) else "",
-                    "citation_quality": citation_quality,
-                    "total_source_references": total_source_refs,
-                    "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0) if isinstance(gen_resp, dict) else 0,
-                    "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0) if isinstance(gen_resp, dict) else 0,
-                    "controller_effective_subsections": int(gen_resp.get("controller_effective_subsections", 0) or 0) if isinstance(gen_resp, dict) else 0,
-                    "token_usage": gen_resp.get("token_usage", {}) if isinstance(gen_resp, dict) else {},
-                    "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0) if isinstance(gen_resp, dict) else 0.0,
-                    "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0) if isinstance(gen_resp, dict) else 0,
-                    **orchestration_metrics,
-                    **document_quality_metrics,
-                },
-            }
         raise HTTPException(status_code=500, detail=f"文档生成失败: {gen_resp}")
 
     passed = gen_resp.get("passed_subsections", 0)
     failed = len(gen_resp.get("failed_subsections", []))
     forced = len(gen_resp.get("forced_subsections", []))
     if passed < outlined_subsections and history_items:
-        markdown_content = build_markdown_document(
-            title,
-            structure,
-            history_items,
-            generated_sections=gen_resp.get("sections", []),
-            user_background=req.user_background,
-            extra_requirements=req.extra_requirements,
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"文档生成未达到大纲小节数: 通过 {passed}/{outlined_subsections}, "
+                f"失败 {failed}; 拒绝返回不完整文档"
+            ),
         )
-        citation_quality = _citation_quality_check(markdown_content)
-        _enforce_citation_quality_or_raise(citation_quality, context="partial_generation_insufficient_passed")
-        total_source_refs = _aggregate_source_reference_count(
-            history_items=history_items,
-            generated_sections=gen_resp.get("sections", []),
-        )
-        total_source_refs = max(total_source_refs, int(citation_quality.get("reference_count", 0) or 0))
-        return {
-            "success": True,
-            "partial": True,
-            "interrupted": True,
-            "message": f"生成中断，已返回通过验证的 {len(history_items)} 个小节",
-            "document_id": document_id,
-            "title": title,
-            "content": markdown_content,
-            "stats": {
-                "expected_subsections": expected_subsections,
-                "outlined_subsections": outlined_subsections,
-                "passed_subsections": len(history_items),
-                "failed_subsections": failed,
-                "forced_subsections": forced,
-                "total_iterations": gen_resp.get("total_iterations", 0),
-                "generation_time": gen_resp.get("generation_time", ""),
-                "citation_quality": citation_quality,
-                "total_source_references": total_source_refs,
-                "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
-                "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
-                "controller_effective_subsections": int(gen_resp.get("controller_effective_subsections", 0) or 0),
-                "token_usage": gen_resp.get("token_usage", {}),
-                "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0),
-                "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0),
-                **orchestration_metrics,
-                **document_quality_metrics,
-            },
-        }
     if passed < outlined_subsections:
         raise HTTPException(
             status_code=500,
@@ -1565,34 +1520,10 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
     total_source_refs = max(total_source_refs, int(citation_quality.get("reference_count", 0) or 0))
 
     if not citation_quality.get("passed", False):
-        return {
-            "success": True,
-            "partial": True,
-            "interrupted": True,
-            "message": f"文档内容已生成，但引用质量未达标：{citation_quality.get('reason')}",
-            "document_id": document_id,
-            "title": title,
-            "content": markdown_content,
-            "stats": {
-                "expected_subsections": expected_subsections,
-                "outlined_subsections": outlined_subsections,
-                "passed_subsections": passed,
-                "failed_subsections": failed,
-                "forced_subsections": forced,
-                "total_iterations": gen_resp.get("total_iterations", 0),
-                "generation_time": gen_resp.get("generation_time", ""),
-                "citation_quality": citation_quality,
-                "total_source_references": total_source_refs,
-                "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
-                "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
-                "controller_effective_subsections": int(gen_resp.get("controller_effective_subsections", 0) or 0),
-                "token_usage": gen_resp.get("token_usage", {}),
-                "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0),
-                "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0),
-                **orchestration_metrics,
-                **document_quality_metrics,
-            },
-        }
+        raise HTTPException(
+            status_code=500,
+            detail=f"文档内容已生成，但引用质量未达标，拒绝返回不完整结果：{citation_quality.get('reason')}",
+        )
 
     return {
         "success": True,
