@@ -102,6 +102,8 @@ except ImportError:
     METRICS_CATEGORIES = {}
     FLOWERNET_FEATURES = {}
 
+from flowernet_agent_stack import get_checkpoint_store
+
 
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
 GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
@@ -178,11 +180,88 @@ CITATION_HTTP_SESSION.trust_env = False
 
 POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
+POFFICES_CHECKPOINT_STORE = get_checkpoint_store()
 RECENT_PIPELINE_SECONDS = deque(maxlen=20)
 RECENT_ITERATION_SECONDS = deque(maxlen=20)
 METRICS_LOCK = threading.Lock()
 RATE_LIMIT_LOCK = threading.Lock()
 RATE_LIMIT_UNTIL: Dict[str, float] = {}
+
+
+def _poffices_task_key(task_id: str) -> str:
+    return f"poffices_task:{task_id}"
+
+
+def _persist_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
+    try:
+        POFFICES_CHECKPOINT_STORE.set(
+            _poffices_task_key(task_id),
+            {k: v for k, v in dict(task).items() if k != "_thread_started"},
+            ttl_seconds=7 * 24 * 3600,
+        )
+    except Exception as exc:
+        print(f"[Poffices] checkpoint persist failed for {task_id}: {exc}")
+
+
+def _set_poffices_task(task_id: str, **updates: Any) -> Dict[str, Any]:
+    with POFFICES_TASKS_LOCK:
+        task = POFFICES_TASKS.setdefault(task_id, {})
+        task.update(updates)
+        task["updated_at"] = datetime.now().isoformat()
+        snapshot = dict(task)
+    _persist_poffices_task(task_id, snapshot)
+    return snapshot
+
+
+def _restore_poffices_task(task_id: str) -> Optional[Dict[str, Any]]:
+    with POFFICES_TASKS_LOCK:
+        existing = POFFICES_TASKS.get(task_id)
+        if existing:
+            return dict(existing)
+    try:
+        restored = POFFICES_CHECKPOINT_STORE.get(_poffices_task_key(task_id))
+    except Exception as exc:
+        print(f"[Poffices] checkpoint restore failed for {task_id}: {exc}")
+        restored = None
+    if not isinstance(restored, dict):
+        return None
+    with POFFICES_TASKS_LOCK:
+        POFFICES_TASKS[task_id] = dict(restored)
+        return dict(POFFICES_TASKS[task_id])
+
+
+def _restart_restored_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
+    status = str(task.get("status") or "").lower()
+    if status not in {"queued", "running"}:
+        return
+    request_payload = task.get("request")
+    if not isinstance(request_payload, dict):
+        _set_poffices_task(
+            task_id,
+            status="failed",
+            error="restored_task_missing_request_payload",
+            message="任务恢复失败",
+            completed_at=datetime.now().isoformat(),
+        )
+        return
+    with POFFICES_TASKS_LOCK:
+        current = POFFICES_TASKS.setdefault(task_id, dict(task))
+        if current.get("_thread_started"):
+            return
+        current["_thread_started"] = True
+    try:
+        req = PofficesGenerateRequest(**request_payload)
+    except Exception as exc:
+        _set_poffices_task(
+            task_id,
+            status="failed",
+            error=f"restored_task_request_invalid: {exc}",
+            message="任务恢复失败",
+            completed_at=datetime.now().isoformat(),
+        )
+        return
+    _set_poffices_task(task_id, status="queued", message="任务已从 checkpoint 恢复，重新入队")
+    threading.Thread(target=_run_poffices_task, args=(task_id, req), daemon=True).start()
 
 
 class GenerateDocRequest(BaseModel):
@@ -5159,10 +5238,12 @@ def poffices_openapi(request: Request):
 
 def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
     try:
-        with POFFICES_TASKS_LOCK:
-            POFFICES_TASKS[task_id]["status"] = "running"
-            POFFICES_TASKS[task_id]["message"] = "任务运行中"
-            POFFICES_TASKS[task_id]["started_at"] = datetime.now().isoformat()
+        _set_poffices_task(
+            task_id,
+            status="running",
+            message="任务运行中",
+            started_at=datetime.now().isoformat(),
+        )
 
         timeout_profile = _build_timeout_profile(
             chapter_count=req.chapter_count,
@@ -5188,20 +5269,29 @@ def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
         if elapsed > timeout_profile["effective_timeout_seconds"]:
             raise TimeoutError(f"任务超时: {elapsed:.1f}s > {timeout_profile['effective_timeout_seconds']}s")
 
-        with POFFICES_TASKS_LOCK:
-            POFFICES_TASKS[task_id]["status"] = "completed"
-            POFFICES_TASKS[task_id]["result"] = result
-            POFFICES_TASKS[task_id]["message"] = "任务完成"
+        _set_poffices_task(
+            task_id,
+            status="completed",
+            result=result,
+            message="任务完成",
+            completed_at=datetime.now().isoformat(),
+        )
     except HTTPException as exc:
-        with POFFICES_TASKS_LOCK:
-            POFFICES_TASKS[task_id]["status"] = "failed"
-            POFFICES_TASKS[task_id]["error"] = str(exc.detail)
-            POFFICES_TASKS[task_id]["message"] = "任务失败"
+        _set_poffices_task(
+            task_id,
+            status="failed",
+            error=str(exc.detail),
+            message="任务失败",
+            completed_at=datetime.now().isoformat(),
+        )
     except Exception as exc:
-        with POFFICES_TASKS_LOCK:
-            POFFICES_TASKS[task_id]["status"] = "failed"
-            POFFICES_TASKS[task_id]["error"] = str(exc)
-            POFFICES_TASKS[task_id]["message"] = "任务失败"
+        _set_poffices_task(
+            task_id,
+            status="failed",
+            error=str(exc),
+            message="任务失败",
+            completed_at=datetime.now().isoformat(),
+        )
 
 
 @app.post("/api/poffices/generate")
@@ -5226,18 +5316,19 @@ def poffices_generate(
 
     if req.async_mode:
         task_id = f"task_{uuid4().hex}"
-        with POFFICES_TASKS_LOCK:
-            POFFICES_TASKS[task_id] = {
-                "status": "queued",
-                "message": "任务已入队",
-                "created_at": datetime.now().isoformat(),
-                "started_at": None,
-                "timeout_seconds": req.timeout_seconds,
-                "request": req.model_dump(),
-            }
+        _set_poffices_task(
+            task_id,
+            status="queued",
+            message="任务已入队",
+            created_at=datetime.now().isoformat(),
+            started_at=None,
+            timeout_seconds=req.timeout_seconds,
+            request=req.model_dump(),
+        )
 
-        th = threading.Thread(target=_run_poffices_task, args=(task_id, req), daemon=True)
-        th.start()
+        with POFFICES_TASKS_LOCK:
+            POFFICES_TASKS[task_id]["_thread_started"] = True
+        threading.Thread(target=_run_poffices_task, args=(task_id, req), daemon=True).start()
         return {
             "success": True,
             "task_id": task_id,
@@ -5293,13 +5384,16 @@ def poffices_task_status(
 ):
     verify_auth(x_api_key=x_api_key, authorization=authorization)
 
-    with POFFICES_TASKS_LOCK:
-        task = POFFICES_TASKS.get(req.task_id)
+    task = _restore_poffices_task(req.task_id)
 
     if not task:
         raise HTTPException(status_code=404, detail="task_id not found")
 
     status = task.get("status", "unknown")
+    if status in {"queued", "running"}:
+        _restart_restored_poffices_task(req.task_id, task)
+        task = _restore_poffices_task(req.task_id) or task
+        status = task.get("status", status)
 
     if status in {"queued", "running"}:
         started_at = task.get("started_at") or task.get("created_at")
@@ -5309,12 +5403,17 @@ def poffices_task_status(
                 elapsed = (datetime.now() - datetime.fromisoformat(started_at)).total_seconds()
                 if elapsed > timeout_seconds + 30:
                     with POFFICES_TASKS_LOCK:
-                        if req.task_id in POFFICES_TASKS and POFFICES_TASKS[req.task_id].get("status") in {"queued", "running"}:
-                            POFFICES_TASKS[req.task_id]["status"] = "failed"
-                            POFFICES_TASKS[req.task_id]["error"] = f"任务超时: {int(elapsed)}s"
-                            POFFICES_TASKS[req.task_id]["message"] = "任务超时"
+                        current_status = POFFICES_TASKS.get(req.task_id, {}).get("status")
+                    if current_status in {"queued", "running"}:
+                        _set_poffices_task(
+                            req.task_id,
+                            status="failed",
+                            error=f"任务超时: {int(elapsed)}s",
+                            message="任务超时",
+                            completed_at=datetime.now().isoformat(),
+                        )
                     status = "failed"
-                    task = POFFICES_TASKS.get(req.task_id, task)
+                    task = _restore_poffices_task(req.task_id) or task
             except ValueError:
                 pass
 
