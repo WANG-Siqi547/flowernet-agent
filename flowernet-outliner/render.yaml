@@ -106,6 +106,10 @@ services:
         value: "120"
       - key: DEEPSEEK_HTTP_TIMEOUT
         value: "120"
+      - key: OUTLINER_DEEPSEEK_HTTP_TIMEOUT
+        value: "45"
+      - key: OUTLINER_DEEPSEEK_JSON_RESPONSE_FORMAT
+        value: "false"
       - key: SENSENOVA_CONNECT_TIMEOUT
         value: "15"
       - key: SENSENOVA_READ_TIMEOUT

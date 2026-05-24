@@ -266,7 +266,7 @@ async def startup_event():
         provider = (
             os.getenv('OUTLINER_PROVIDER_CHAIN', '').strip()
             or os.getenv('OUTLINER_PROVIDER', '').strip()
-            or 'sensenova,azure,gemini,dashscope,openrouter,ollama'
+            or 'deepseek'
         )
         model = os.getenv('OUTLINER_MODEL', 'gpt-4o-mini')
 

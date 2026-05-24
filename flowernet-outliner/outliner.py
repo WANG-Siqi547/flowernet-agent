@@ -70,7 +70,7 @@ class FlowerNetOutliner:
         requested_provider = (
             os.getenv("OUTLINER_PROVIDER_CHAIN", "").strip()
             or provider
-            or os.getenv("OUTLINER_PROVIDER", "sensenova")
+            or os.getenv("OUTLINER_PROVIDER", "deepseek")
         )
         parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
         allowed_providers = {"azure", "gemini", "dashscope", "sensenova", "deepseek", "openrouter", "ollama"}
@@ -142,7 +142,14 @@ class FlowerNetOutliner:
         self.azure_http_timeout = float(os.getenv('AZURE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.dashscope_http_timeout = float(os.getenv('DASHSCOPE_HTTP_TIMEOUT', str(self.provider_http_timeout)))
         self.openrouter_http_timeout = float(os.getenv('OPENROUTER_HTTP_TIMEOUT', str(self.provider_http_timeout)))
-        self.deepseek_http_timeout = float(os.getenv('DEEPSEEK_HTTP_TIMEOUT', str(self.provider_http_timeout)))
+        self.deepseek_http_timeout = float(os.getenv(
+            'OUTLINER_DEEPSEEK_HTTP_TIMEOUT',
+            os.getenv('DEEPSEEK_HTTP_TIMEOUT', str(self.provider_http_timeout)),
+        ))
+        self.deepseek_json_response_format = os.getenv(
+            "OUTLINER_DEEPSEEK_JSON_RESPONSE_FORMAT",
+            os.getenv("DEEPSEEK_JSON_RESPONSE_FORMAT", "false"),
+        ).lower() == "true"
         self.http_session = requests.Session()
         self.http_session.trust_env = False
         self._provider_next_allowed: Dict[str, float] = {}
@@ -833,7 +840,7 @@ JSON 结构：
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                 }
-                if expect_json:
+                if expect_json and self.deepseek_json_response_format:
                     payload["response_format"] = {"type": "json_object"}
                 headers = {
                     "Authorization": f"Bearer {self.dashscope_api_key}",
@@ -842,8 +849,14 @@ JSON 结构：
                 response = self.http_session.post(self.dashscope_api_url, json=payload, headers=headers, timeout=self.dashscope_http_timeout)
                 response.raise_for_status()
                 data = response.json()
+                if not isinstance(data, dict):
+                    raise Exception(f"DeepSeek returned non-object JSON response: {type(data).__name__}")
                 choice = ((data.get("choices") or [{}])[0] or {})
+                if not isinstance(choice, dict):
+                    raise Exception("DeepSeek response choice is not an object")
                 msg = choice.get("message") or {}
+                if not isinstance(msg, dict):
+                    raise Exception("DeepSeek response message is not an object")
                 content = msg.get("content", "")
                 if isinstance(content, list):
                     parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
@@ -852,6 +865,8 @@ JSON 结构：
                 if not text:
                     raise Exception("DashScope 返回空响应")
                 usage = data.get("usage") or {}
+                if not isinstance(usage, dict):
+                    usage = {}
                 return text, {
                     "provider": "dashscope",
                     "model": self.dashscope_model,
@@ -885,7 +900,7 @@ JSON 结构：
                     "max_tokens": max_tokens,
                     "stream": False,
                 }
-                if expect_json:
+                if expect_json and self.deepseek_json_response_format:
                     payload["response_format"] = {"type": "json_object"}
                 if self.deepseek_thinking_enabled:
                     payload["thinking"] = {"type": "enabled"}
@@ -896,8 +911,14 @@ JSON 结构：
                 response = self.http_session.post(self.deepseek_api_url, json=payload, headers=headers, timeout=self.deepseek_http_timeout)
                 response.raise_for_status()
                 data = response.json()
+                if not isinstance(data, dict):
+                    raise Exception(f"DeepSeek returned non-object JSON response: {type(data).__name__}")
                 choice = ((data.get("choices") or [{}])[0] or {})
+                if not isinstance(choice, dict):
+                    raise Exception("DeepSeek response choice is not an object")
                 msg = choice.get("message") or {}
+                if not isinstance(msg, dict):
+                    raise Exception("DeepSeek response message is not an object")
                 content = msg.get("content", "")
                 if isinstance(content, list):
                     parts = [str(it.get("text", "")) for it in content if isinstance(it, dict)]
@@ -906,6 +927,8 @@ JSON 结构：
                 if not text:
                     raise Exception("DeepSeek 返回空响应")
                 usage = data.get("usage") or {}
+                if not isinstance(usage, dict):
+                    usage = {}
                 return text, {
                     "provider": "deepseek",
                     "model": self.deepseek_model,
@@ -917,12 +940,31 @@ JSON 结构：
             except requests.HTTPError as exc:
                 status = getattr(getattr(exc, "response", None), "status_code", "unknown")
                 response_text = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
-                retry_after_raw = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
+                headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+                retry_after_raw = headers.get("Retry-After", "")
                 retry_after = self._parse_retry_after_seconds(retry_after_raw)
                 suffix = f" | response={response_text[:500]}" if response_text else ""
                 if retry_after is not None:
                     raise Exception(f"DeepSeek HTTP {status}, retry_after={retry_after}{suffix}")
                 raise Exception(f"DeepSeek HTTP {status}: {str(exc)}{suffix}")
+            except requests.RequestException as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                response_text = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
+                headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+                retry_after = self._parse_retry_after_seconds(headers.get("Retry-After", ""))
+                suffix = f" | response={response_text[:500]}" if response_text else ""
+                if retry_after is not None:
+                    raise Exception(f"DeepSeek request error {status}, retry_after={retry_after}: {str(exc)}{suffix}")
+                raise Exception(f"DeepSeek request error {status}: {str(exc)}{suffix}")
+            except requests.RequestException as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+                response_text = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
+                headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+                retry_after = self._parse_retry_after_seconds(headers.get("Retry-After", ""))
+                suffix = f" | response={response_text[:500]}" if response_text else ""
+                if retry_after is not None:
+                    raise Exception(f"DeepSeek request error {status}, retry_after={retry_after}: {str(exc)}{suffix}")
+                raise Exception(f"DeepSeek request error {status}: {str(exc)}{suffix}")
             except requests.RequestException as exc:
                 raise Exception(f"DeepSeek request error: {str(exc)}")
 
