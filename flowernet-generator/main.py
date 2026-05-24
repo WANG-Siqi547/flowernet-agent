@@ -122,8 +122,8 @@ _provider = "ollama"
 _model = None
 _init_error = None
 
-def init_generator(provider: str = "azure", model: str = None):
-    """初始化生成器（支持链式降级，如 Azure -> Ollama）"""
+def init_generator(provider: str = "deepseek", model: str = None):
+    """初始化生成器。"""
     global generator, _provider, _model, _init_error
     
     try:
@@ -185,7 +185,7 @@ def ensure_generator_initialized():
         if generator is not None:
             return generator
         return init_generator(
-            provider=os.getenv("GENERATOR_PROVIDER", "sensenova"),
+            provider=os.getenv("GENERATOR_PROVIDER", "deepseek"),
             model=os.getenv("GENERATOR_MODEL", None),
         )
 
