@@ -168,6 +168,25 @@ def _task_error_text(value: Any, fallback: str) -> str:
             text = str(value.get(key) or "").strip()
             if text and text.lower() != "none":
                 return text
+        failed = value.get("failed_subsections")
+        if isinstance(failed, list) and failed:
+            parts = []
+            for item in failed[:3]:
+                if not isinstance(item, dict):
+                    continue
+                section_id = str(item.get("section_id") or "").strip()
+                subsection_id = str(item.get("subsection_id") or "").strip()
+                reason = str(item.get("reason") or item.get("error") or "").strip()
+                label = "::".join(part for part in (section_id, subsection_id) if part)
+                if reason:
+                    parts.append(f"{label}: {reason}" if label else reason)
+            if parts:
+                return "subsection_failures: " + " | ".join(parts)
+        last_status = value.get("last_status")
+        if isinstance(last_status, dict):
+            nested = _task_error_text(last_status, "")
+            if nested:
+                return nested
         return fallback
     text = str(value or "").strip()
     if text and text.lower() != "none":

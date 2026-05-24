@@ -1279,6 +1279,21 @@ class DocumentGenerationOrchestrator:
 
             # 文档级成功判定：存在失败小节则返回 partial/failed，避免掩盖真实质量问题
             document_result["success"] = len(document_result["failed_subsections"]) == 0
+            if not document_result["success"]:
+                failure_parts = []
+                for item in document_result.get("failed_subsections", [])[:3]:
+                    if not isinstance(item, dict):
+                        continue
+                    section_id = str(item.get("section_id") or "").strip()
+                    subsection_id = str(item.get("subsection_id") or "").strip()
+                    reason = str(item.get("reason") or item.get("error") or "subsection_failed").strip()
+                    label = "::".join(part for part in (section_id, subsection_id) if part)
+                    failure_parts.append(f"{label}: {reason}" if label else reason)
+                document_result["error"] = (
+                    "subsection_failures: " + " | ".join(failure_parts)
+                    if failure_parts
+                    else "document_generation_failed"
+                )
             
             print(f"\n{'='*70}")
             print(f"{'✅' if document_result['success'] else '❌'} 文档生成完成！")
