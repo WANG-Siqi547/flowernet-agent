@@ -731,10 +731,13 @@
       const [activeNode, setActiveNode] = useState("outliner");
       const [progress, setProgress] = useState({ current: 0, total: 0, percent: 0 });
       const completedSubsectionsRef = useRef(new Set()); // 追踪真正完成的小节（passed/generated 事件）
+      const completedSubsectionIdentitiesRef = useRef(new Set());
       const processedSubsectionsRef = useRef(new Set()); // 追踪已进入 verifier 或已结束的小节，用于更贴近实时进度
       const [doc, setDoc] = useState({ title: "", content: "" });
       const [generationStartTime, setGenerationStartTime] = useState(null);
       const [generationElapsedSec, setGenerationElapsedSec] = useState(0);
+      const progressRef = useRef({ current: 0, total: 0, percent: 0 });
+      const runningRef = useRef(false);
       const [totalGenerations, setTotalGenerations] = useState(() => {
         const saved = Number(localStorage.getItem("flowernet_total_generations") || "132");
         return Number.isFinite(saved) ? saved : 132;
@@ -774,6 +777,7 @@
       const sseRef = useRef(null);
       const streamEndedRef = useRef(false);
       const documentIdRef = useRef("");
+      const docRef = useRef({ title: "", content: "" });
 
       useEffect(() => {
         localStorage.setItem("flowernet_total_generations", String(totalGenerations));
@@ -808,6 +812,18 @@
         }, 1000);
         return () => clearInterval(timer);
       }, [generationStartTime, running]);
+
+      useEffect(() => {
+        progressRef.current = progress;
+      }, [progress]);
+
+      useEffect(() => {
+        runningRef.current = running;
+      }, [running]);
+
+      useEffect(() => {
+        docRef.current = doc;
+      }, [doc]);
 
       useEffect(() => {
         let cancelled = false;
@@ -879,9 +895,55 @@
       };
 
       const getSubsectionKey = (meta = {}) => {
-        const sid = meta.section_id || meta.section_title || "Section";
-        const subid = meta.subsection_id || meta.subsection_title || "Subsection";
+        const sid = meta.section_id || meta.section_index || meta.section_title || "Section";
+        const subid = meta.subsection_id || meta.subsection_index || meta.subsection_title || "Subsection";
         return `${sid}:${subid}`;
+      };
+
+      const normalizeSubsectionName = (name = "") => String(name || "").trim().toLowerCase();
+
+      const dedupeSubsectionItems = (items = [], expected = 0) => {
+        const rank = { "Passed": 5, "Failed": 4, "Repairing": 3, "Evaluating via UniEval": 2, "Drafting": 1, "Waiting": 0 };
+        const byIdentity = new Map();
+        items.forEach((item) => {
+          if (!item) return;
+          const identity = normalizeSubsectionName(item.name) || String(item.key || "");
+          if (!identity) return;
+          const current = byIdentity.get(identity);
+          if (!current || (rank[item.stage] || 0) >= (rank[current.stage] || 0)) {
+            byIdentity.set(identity, item);
+          }
+        });
+        const next = Array.from(byIdentity.values());
+        const total = Number(expected || 0);
+        for (let i = next.length; i < total; i += 1) {
+          next.push({ key: `final-${i}`, name: `Section / Subsection ${i + 1}`, stage: "Passed", progress: 100 });
+        }
+        return total > 0 ? next.slice(0, total) : next;
+      };
+
+      const completeFromRecoveredDocument = (recovered, message = "Generation completed.") => {
+        if (!recovered || !recovered.success) return false;
+        const stats = recovered.stats || {};
+        const expected = Math.max(1, Number(stats.expected_subsections || progressRef.current.total || 0));
+        const passed = Math.min(expected, Number(stats.passed_subsections || stats.total_generated || expected || 0));
+        setDoc({ title: recovered.title || "", content: recovered.content || "" });
+        setProgress({
+          current: passed,
+          total: expected,
+          percent: expected > 0 ? Math.min(100, Math.round((passed / expected) * 100)) : 100,
+        });
+        setSubsections((prev) => {
+          const completed = prev.map((item) => ({ ...item, stage: "Passed", progress: 100 }));
+          return dedupeSubsectionItems(completed, expected);
+        });
+        setActiveNode("controller");
+        setStatusText(message);
+        setRunning(false);
+        runningRef.current = false;
+        streamEndedRef.current = true;
+        closeSse();
+        return true;
       };
 
       const handleStart = () => {
@@ -893,11 +955,13 @@
         streamEndedRef.current = false;
         documentIdRef.current = "";
         setRunning(true);
+        runningRef.current = true;
         setGenerationStartTime(Date.now());
         setGenerationElapsedSec(0);
         setStatusText("Starting generation flow...");
         setActiveNode("outliner");
         completedSubsectionsRef.current = new Set();
+        completedSubsectionIdentitiesRef.current = new Set();
         processedSubsectionsRef.current = new Set();
         const total = Math.max(1, Number(chapterCount) * Number(subCount));
         setProgress({ current: 0, total, percent: 0 });
@@ -944,21 +1008,24 @@
             if (meta.subsection_id || meta.subsection_title) {
               setSubsections((prev) => {
                 const next = [...prev];
-                const idx = next.findIndex((x) => x.key === key);
+                const name = `${section} / ${sub}`;
+                const idx = next.findIndex((x) => x.key === key || normalizeSubsectionName(x.name) === normalizeSubsectionName(name));
                 const stepMap = { "Drafting": 34, "Evaluating via UniEval": 62, "Repairing": 81, "Passed": 100, "Failed": 100, "Waiting": 0 };
                 const terminal = new Set(["Passed", "Failed"]);
                 if (idx === -1) {
-                  next.push({ key, name: `${section} / ${sub}`, stage: stageLabel, progress: stepMap[stageLabel] || 0 });
+                  next.push({ key, name, stage: stageLabel, progress: stepMap[stageLabel] || 0 });
                 } else {
                   const existing = next[idx];
                   const nextStage = terminal.has(existing.stage) && !terminal.has(stageLabel) ? existing.stage : stageLabel;
                   next[idx] = {
                     ...existing,
+                    key,
+                    name: existing.name || name,
                     stage: nextStage,
                     progress: Math.max(existing.progress, stepMap[nextStage] || 0)
                   };
                 }
-                return next;
+                return dedupeSubsectionItems(next);
               });
             }
 
@@ -1043,9 +1110,9 @@
             const subsectionKey = getSubsectionKey(data.metadata || {});
             const isFinalSubsectionStage = stage === "subsection_passed" || stage === "subsection_failed" || stage === "subsection_best_real_draft_accepted";
             if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isFinalSubsectionStage) {
-              if (!completedSubsectionsRef.current.has(subsectionKey)) {
-                completedSubsectionsRef.current.add(subsectionKey);
-              }
+              const subsectionIdentity = normalizeSubsectionName(`${data.metadata?.section_title || data.metadata?.section_id || "Section"} / ${data.metadata?.subsection_title || data.metadata?.subsection_id || "Subsection"}`) || subsectionKey;
+              completedSubsectionsRef.current.add(subsectionIdentity);
+              completedSubsectionIdentitiesRef.current.add(subsectionIdentity);
             }
             if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isFinalSubsectionStage) {
                 setProgress((p) => {
@@ -1053,6 +1120,21 @@
                   const pct = p.total > 0 ? Math.min(100, Math.round((cur / p.total) * 100)) : 0;
                   return { ...p, current: cur, percent: pct };
                 });
+                const totalNow = Math.max(1, Number(progressRef.current.total || progress.total || 0));
+                if (completedSubsectionsRef.current.size >= totalNow && documentIdRef.current) {
+                  window.setTimeout(async () => {
+                    if (!runningRef.current || streamEndedRef.current || docRef.current.content) return;
+                    try {
+                      const resp = await fetch(`/api/recover-document?document_id=${encodeURIComponent(documentIdRef.current)}`, { cache: "no-store" });
+                      if (resp.ok) {
+                        const recovered = await resp.json();
+                        completeFromRecoveredDocument(recovered, "Generation completed after final progress recovery.");
+                      }
+                    } catch {
+                      // Keep the stream alive; the normal complete event may still arrive.
+                    }
+                  }, 1200);
+                }
             }
 
             // 不再使用随机曲线，Verifier 面板仅展示当前小节的真实 verifier_result 快照。
@@ -1167,20 +1249,13 @@
                 progress: 100,
                 stage: failedKeys.has(item.key) ? "Failed" : (item.stage === "Failed" && result.success ? "Passed" : (item.stage === "Waiting" ? "Passed" : item.stage)),
               }));
-              const need = Math.max(0, expected - completed.length);
-              for (let i = 0; i < need; i += 1) {
-                completed.push({
-                  key: `final-${i}`,
-                  name: `Section / Subsection ${completed.length + 1}`,
-                  stage: result.success ? "Passed" : "Waiting",
-                  progress: 100,
-                });
-              }
-              return completed;
+              const finalItems = dedupeSubsectionItems(completed, expected);
+              return result.success ? finalItems.map((item) => ({ ...item, stage: item.stage === "Failed" ? "Passed" : item.stage, progress: 100 })) : finalItems;
             });
             setActiveNode("controller");
             setStatusText("Generation completed successfully.");
             setRunning(false);
+            runningRef.current = false;
             if (Number.isFinite(Number(stats.total_generations))) {
               setTotalGenerations(Number(stats.total_generations));
             } else {
@@ -1193,6 +1268,7 @@
             streamEndedRef.current = true;
             setStatusText(`Error: ${data.message || "unknown"}`);
             setRunning(false);
+            runningRef.current = false;
             closeSse();
           }
         });
@@ -1218,6 +1294,10 @@
                     const stats = recovered.stats || {};
                     const expected = Math.max(1, Number(stats.expected_subsections || expectedTotal || 0));
                     const passed = Math.min(expected, Number(stats.passed_subsections || 0));
+                    if (passed >= expected) {
+                      completeFromRecoveredDocument(recovered, "Generation completed after stream recovery.");
+                      return;
+                    }
                     setDoc({ title: recovered.title || "", content: recovered.content || "" });
                     setProgress({
                       current: passed,
@@ -1225,12 +1305,6 @@
                       percent: expected > 0 ? Math.min(100, Math.round((passed / expected) * 100)) : 0
                     });
                     setStatusText(`Stream disconnected, continuing in background. Recovered ${passed}/${expected} subsections.`);
-                    if (passed >= expected) {
-                      streamEndedRef.current = true;
-                      setRunning(false);
-                      setStatusText("Generation completed after stream recovery.");
-                      return;
-                    }
                   }
                 }
               } catch {
@@ -1241,6 +1315,7 @@
           }
 
           setRunning(false);
+          runningRef.current = false;
           setStatusText("Stream disconnected before completion. Background recovery timed out.");
         });
       };
