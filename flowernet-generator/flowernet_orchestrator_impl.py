@@ -117,9 +117,10 @@ class DocumentGenerationOrchestrator:
         self.verifier_http_timeout = max(30, int(os.getenv("VERIFIER_HTTP_TIMEOUT", "60")))
         self.verifier_max_retries = max(3, int(os.getenv("VERIFIER_MAX_RETRIES", "3")))
         self.verifier_retry_delay = max(2.0, float(os.getenv("VERIFIER_RETRY_DELAY", "3.0")))
-        self.verifier_unavailable_best_effort = os.getenv("VERIFIER_UNAVAILABLE_BEST_EFFORT", "false").lower() == "true"
+        self.verifier_unavailable_best_effort = os.getenv("VERIFIER_UNAVAILABLE_BEST_EFFORT", "true").lower() == "true"
+        self.accept_best_real_draft = os.getenv("ACCEPT_BEST_REAL_DRAFT", "true").lower() == "true"
         self.generator_max_tokens = max(400, int(os.getenv("ORCH_GENERATOR_MAX_TOKENS", "2000")))
-        self.min_draft_chars = max(200, int(os.getenv("ORCH_MIN_DRAFT_CHARS", "800")))
+        self.min_draft_chars = max(200, int(os.getenv("ORCH_MIN_DRAFT_CHARS", "500")))
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -196,6 +197,64 @@ class DocumentGenerationOrchestrator:
             "all_drafts": all_drafts or [],
             "forced_pass": False,
             "force_reason": "",
+            "controller_triggered": controller_triggered,
+            "controller_retry_count": controller_retry_count,
+            "metrics": metrics or {},
+        }
+
+    def _is_meaningful_real_draft(self, draft: str, outline: str = "") -> bool:
+        text = str(draft or "").strip()
+        return (
+            bool(text)
+            and len(text) >= self.min_draft_chars
+            and not self._is_outline_like(text, outline)
+        )
+
+    def _subsection_best_real_draft_result(
+        self,
+        *,
+        reason: str,
+        draft: str,
+        final_outline: str = "",
+        iterations: int = 0,
+        verification: Optional[Dict[str, Any]] = None,
+        all_drafts: Optional[List[str]] = None,
+        metrics: Optional[Dict[str, int]] = None,
+        rag_search_result: Optional[Dict[str, Any]] = None,
+        rag_used: bool = False,
+        rag_selected_query: str = "",
+        controller_triggered: bool = False,
+        controller_retry_count: int = 0,
+        controller_last_result: Optional[Dict[str, Any]] = None,
+        bandit: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        rag_search_result = rag_search_result or {"success": False, "results": []}
+        controller_last_result = controller_last_result or {}
+        verification_payload = dict(verification or {})
+        verification_payload.update({
+            "accepted_by_best_real_draft": True,
+            "best_real_draft_reason": reason,
+            "forced_pass": False,
+        })
+        return {
+            "success": True,
+            "draft": str(draft or "").strip(),
+            "final_outline": final_outline,
+            "iterations": iterations,
+            "source_results": rag_search_result.get("results", []),
+            "rag_used": rag_used,
+            "rag_search_success": bool(rag_search_result.get("success", False)),
+            "rag_result_count": len(rag_search_result.get("results", []) or []),
+            "rag_selected_query": rag_selected_query,
+            "controller_effective": bool(controller_last_result.get("effective", False)),
+            "controller_source": str(controller_last_result.get("source", "") or ""),
+            "verification": verification_payload,
+            "bandit": bandit or {},
+            "all_drafts": all_drafts or [],
+            "forced_pass": False,
+            "force_reason": "",
+            "best_effort": True,
+            "best_effort_reason": reason,
             "controller_triggered": controller_triggered,
             "controller_retry_count": controller_retry_count,
             "metrics": metrics or {},
@@ -1012,6 +1071,8 @@ class DocumentGenerationOrchestrator:
                             history_order = len(passed_history)
                             forced_pass = bool(subsection_gen_result.get("forced_pass", False))
                             force_reason = str(subsection_gen_result.get("force_reason", "") or "")
+                            best_effort = bool(subsection_gen_result.get("best_effort", False))
+                            best_effort_reason = str(subsection_gen_result.get("best_effort_reason", "") or "")
                             generated_content = subsection_gen_result.get("draft", "")
                             forced_should_fail = forced_pass and (not self.allow_forced_pass)
                             controller_triggered = bool(subsection_gen_result.get("controller_triggered", False))
@@ -1061,6 +1122,8 @@ class DocumentGenerationOrchestrator:
                                         "outline": subsection_gen_result.get("final_outline", subsection_outline),
                                         "forced_pass": forced_pass,
                                         "force_reason": force_reason,
+                                        "best_effort": best_effort,
+                                        "best_effort_reason": best_effort_reason,
                                         "controller_triggered": controller_triggered,
                                         "controller_retry_count": controller_retry_count,
                                         "source_results": subsection_gen_result.get("source_results", []),
@@ -1108,6 +1171,8 @@ class DocumentGenerationOrchestrator:
                                         "verification": verification,
                                         "forced_pass": forced_pass,
                                         "force_reason": force_reason,
+                                        "best_effort": best_effort,
+                                        "best_effort_reason": best_effort_reason,
                                         "controller_triggered": controller_triggered,
                                         "controller_retry_count": controller_retry_count,
                                     },
@@ -1124,6 +1189,8 @@ class DocumentGenerationOrchestrator:
                                 "bandit": subsection_gen_result.get("bandit", {}),
                                 "forced_pass": forced_pass,
                                 "force_reason": force_reason,
+                                "best_effort": best_effort,
+                                "best_effort_reason": best_effort_reason,
                                 "controller_triggered": controller_triggered,
                                 "controller_retry_count": controller_retry_count,
                                 "rag_used": rag_used,
@@ -1635,11 +1702,48 @@ class DocumentGenerationOrchestrator:
                 if best_candidate and best_candidate.get("draft"):
                     best_verification = best_candidate.get("verification", {})
                     if timeout_triggered:
-                        pass_message = f"单小节耗时已达 {self.subsection_max_seconds}s，停止当前小节；不进行兜底通过"
+                        pass_message = f"单小节耗时已达 {self.subsection_max_seconds}s，接收最佳真实草稿"
                         pass_reason = "subsection_timeout"
                     else:
-                        pass_message = f"达到最大检测次数 {effective_attempt_cap}，停止当前小节；不进行兜底通过"
+                        pass_message = f"达到最大检测次数 {effective_attempt_cap}，接收最佳真实草稿"
                         pass_reason = "max_attempts_reached"
+                    if self.accept_best_real_draft and self._is_meaningful_real_draft(best_candidate.get("draft", ""), best_candidate.get("outline", current_outline)):
+                        self._emit_progress_event(
+                            document_id=document_id,
+                            section_id=section_id,
+                            subsection_id=subsection_id,
+                            stage="subsection_best_real_draft_accepted",
+                            message=pass_message,
+                            metadata={
+                                "iteration": iterations - 1,
+                                "best_iteration": best_candidate.get("iteration", iterations - 1),
+                                "relevancy_index": best_verification.get("relevancy_index", 0),
+                                "redundancy_index": best_verification.get("redundancy_index", 1),
+                                "quality_score": best_verification.get("quality_score", 0),
+                                "elapsed_seconds": round(elapsed_subsection, 2),
+                                "reason": pass_reason,
+                            },
+                        )
+                        return self._subsection_best_real_draft_result(
+                            reason=pass_reason,
+                            draft=best_candidate.get("draft", ""),
+                            final_outline=best_candidate.get("outline", current_outline),
+                            iterations=iterations - 1,
+                            verification=best_verification,
+                            all_drafts=all_drafts,
+                            metrics=metrics,
+                            rag_search_result={
+                                **rag_search_result,
+                                "results": best_candidate.get("source_results", rag_search_result.get("results", [])),
+                                "success": best_candidate.get("rag_search_success", rag_search_result.get("success", False)),
+                            },
+                            rag_used=bool(best_candidate.get("rag_used", rag_used)),
+                            rag_selected_query=str(best_candidate.get("rag_selected_query", rag_selected_query) or ""),
+                            controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                            controller_retry_count=controller_retry_count,
+                            controller_last_result=controller_last_result,
+                            bandit=best_candidate.get("bandit", {}),
+                        )
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,
@@ -1689,11 +1793,7 @@ class DocumentGenerationOrchestrator:
                     # 完全没有draft时，返回空内容而不是outline
                     fallback_draft = ""
                     fallback_note = "（内容生成失败，仍在恢复中）"
-                fallback_is_meaningful = (
-                    bool(str(fallback_draft or "").strip())
-                    and len(str(fallback_draft or "").strip()) >= self.min_draft_chars
-                    and not self._is_outline_like(fallback_draft, current_outline)
-                )
+                fallback_is_meaningful = self._is_meaningful_real_draft(fallback_draft, current_outline)
                 verifier_unavailable_only = (
                     int(metrics.get("verifier_error", 0) or 0) > 0
                     and int(metrics.get("verifier_failed", 0) or 0) == 0
@@ -1732,8 +1832,28 @@ class DocumentGenerationOrchestrator:
                     pass
 
                 placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
-                if best_effort_due_to_verifier:
-                    placeholder_reason = "verifier_unavailable"
+                if fallback_is_meaningful and (self.accept_best_real_draft or best_effort_due_to_verifier):
+                    placeholder_reason = "verifier_unavailable" if best_effort_due_to_verifier else ("subsection_timeout_best_real_draft" if timeout_triggered else "max_attempts_best_real_draft")
+                    return self._subsection_best_real_draft_result(
+                        reason=placeholder_reason,
+                        draft=fallback_draft,
+                        final_outline=current_outline,
+                        iterations=iterations - 1,
+                        verification={
+                            "relevancy_index": 0.0,
+                            "redundancy_index": 1.0,
+                            "feedback": placeholder_reason,
+                            "verifier_unavailable": verifier_unavailable_only,
+                        },
+                        all_drafts=all_drafts,
+                        metrics=metrics,
+                        rag_search_result=rag_search_result,
+                        rag_used=rag_used,
+                        rag_selected_query=rag_selected_query,
+                        controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                        controller_retry_count=controller_retry_count,
+                        controller_last_result=controller_last_result,
+                    )
                 return self._subsection_failure_result(
                     reason=placeholder_reason,
                     draft=fallback_draft,
@@ -1874,6 +1994,42 @@ class DocumentGenerationOrchestrator:
                     except Exception:
                         pass
                     
+                    if self.accept_best_real_draft and self._is_meaningful_real_draft(fallback_text, current_outline):
+                        self._emit_progress_event(
+                            document_id=document_id,
+                            section_id=section_id,
+                            subsection_id=subsection_id,
+                            stage="subsection_best_real_draft_accepted",
+                            message="Generator 降级重试后仍失败，接收此前最佳真实草稿",
+                            metadata={
+                                "iteration": iterations,
+                                "max_generator_failures": max_generator_failures,
+                                "error": fail_error,
+                                "degraded_mode": True,
+                                "has_fallback_draft": len(all_drafts) > 0,
+                                "fallback_note": fallback_note,
+                            },
+                        )
+                        return self._subsection_best_real_draft_result(
+                            reason="generator_repeated_failure_best_real_draft",
+                            draft=fallback_text,
+                            final_outline=current_outline,
+                            iterations=iterations,
+                            verification={
+                                "relevancy_index": 0.0,
+                                "redundancy_index": 1.0,
+                                "feedback": "generator_repeated_failure_best_real_draft",
+                            },
+                            all_drafts=all_drafts,
+                            metrics=metrics,
+                            rag_search_result=rag_search_result,
+                            rag_used=rag_used,
+                            rag_selected_query=rag_selected_query,
+                            controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                            controller_retry_count=controller_retry_count,
+                            controller_last_result=controller_last_result,
+                        )
+
                     self._emit_progress_event(
                         document_id=document_id,
                         section_id=section_id,

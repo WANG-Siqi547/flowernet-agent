@@ -136,7 +136,7 @@ services:
       - key: OUTLINER_PROVIDER_CHAIN
         value: deepseek
       - key: OUTLINER_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
       - key: OUTLINER_OPENROUTER_MODEL
         value: qwen/qwen3-coder:free
       - key: OUTLINER_GEMINI_MODEL
@@ -164,7 +164,7 @@ services:
       - key: OUTLINER_SENSENOVA_API_KEY
         sync: false
       - key: OUTLINER_DEEPSEEK_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
       - key: OUTLINER_DEEPSEEK_BASE_URL
         value: https://api.deepseek.com
       - key: OUTLINER_DEEPSEEK_API_URL
@@ -176,7 +176,7 @@ services:
       - key: OUTLINER_DEEPSEEK_THINKING_ENABLED
         value: "false"
       - key: DEEPSEEK_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
       - key: DEEPSEEK_BASE_URL
         value: https://api.deepseek.com
       - key: DEEPSEEK_API_URL
@@ -269,7 +269,7 @@ services:
       - key: GENERATOR_PROVIDER_CHAIN
         value: deepseek
       - key: GENERATOR_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
       - key: GENERATOR_OPENROUTER_MODEL
         value: qwen/qwen3-coder:free
       - key: GENERATOR_GEMINI_MODEL
@@ -297,7 +297,7 @@ services:
       - key: GENERATOR_SENSENOVA_API_KEY
         sync: false
       - key: GENERATOR_DEEPSEEK_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
       - key: GENERATOR_DEEPSEEK_BASE_URL
         value: https://api.deepseek.com
       - key: GENERATOR_DEEPSEEK_API_URL
@@ -309,7 +309,7 @@ services:
       - key: GENERATOR_DEEPSEEK_THINKING_ENABLED
         value: "false"
       - key: DEEPSEEK_MODEL
-        value: deepseek-chat
+        value: deepseek-v4-flash
       - key: DEEPSEEK_BASE_URL
         value: https://api.deepseek.com
       - key: DEEPSEEK_API_URL
@@ -415,7 +415,7 @@ services:
       - key: ORCH_COMPACT_MAX_TOKENS
         value: "1800"
       - key: ORCH_MIN_DRAFT_CHARS
-        value: "800"
+        value: "500"
       - key: RAG_FORCE_CITATION
         value: "true"
       - key: SERIALIZE_DOCUMENT_TASKS
@@ -473,7 +473,7 @@ services:
     region: singapore
     plan: free
     dockerfilePath: ./flowernet-web/Dockerfile
-    dockerContext: ./flowernet-web
+    dockerContext: .
     envVars:
       - key: PORT
         value: 10000
@@ -485,6 +485,8 @@ services:
         value: https://flowernet-generator.onrender.com
       - key: PUBLIC_BASE_URL
         value: https://flowernet-web.onrender.com
+      - key: FLOWERNET_STATE_DIR
+        value: /tmp/flowernet_state
       - key: DOWNSTREAM_BACKOFF
         value: "2.0"
       - key: DOWNSTREAM_MAX_BACKOFF

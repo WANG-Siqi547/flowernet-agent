@@ -102,7 +102,52 @@ except ImportError:
     METRICS_CATEGORIES = {}
     FLOWERNET_FEATURES = {}
 
-from flowernet_agent_stack import get_checkpoint_store
+try:
+    from flowernet_agent_stack import get_checkpoint_store
+except ImportError:
+    class _LocalCheckpointStore:
+        def __init__(self):
+            state_dir = os.getenv("FLOWERNET_STATE_DIR", "/tmp/flowernet_state")
+            os.makedirs(state_dir, exist_ok=True)
+            self.path = os.path.join(state_dir, "poffices_checkpoints.json")
+            self._lock = threading.Lock()
+
+        def _load(self) -> Dict[str, Any]:
+            try:
+                with open(self.path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
+
+        def _save(self, data: Dict[str, Any]) -> None:
+            tmp = f"{self.path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False)
+            os.replace(tmp, self.path)
+
+        def set(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> None:
+            expires_at = time.time() + ttl_seconds if ttl_seconds else None
+            with self._lock:
+                data = self._load()
+                data[key] = {"value": value, "expires_at": expires_at}
+                self._save(data)
+
+        def get(self, key: str) -> Any:
+            with self._lock:
+                data = self._load()
+                entry = data.get(key)
+                if not isinstance(entry, dict):
+                    return None
+                expires_at = entry.get("expires_at")
+                if expires_at and time.time() > float(expires_at):
+                    data.pop(key, None)
+                    self._save(data)
+                    return None
+                return entry.get("value")
+
+    def get_checkpoint_store():
+        return _LocalCheckpointStore()
 
 
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
@@ -180,7 +225,8 @@ CITATION_HTTP_SESSION.trust_env = False
 
 POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
-POFFICES_CHECKPOINT_STORE = get_checkpoint_store()
+POFFICES_CHECKPOINT_STORE = None
+POFFICES_CHECKPOINT_STORE_LOCK = threading.Lock()
 RECENT_PIPELINE_SECONDS = deque(maxlen=20)
 RECENT_ITERATION_SECONDS = deque(maxlen=20)
 METRICS_LOCK = threading.Lock()
@@ -192,9 +238,19 @@ def _poffices_task_key(task_id: str) -> str:
     return f"poffices_task:{task_id}"
 
 
+def _get_poffices_checkpoint_store():
+    global POFFICES_CHECKPOINT_STORE
+    if POFFICES_CHECKPOINT_STORE is not None:
+        return POFFICES_CHECKPOINT_STORE
+    with POFFICES_CHECKPOINT_STORE_LOCK:
+        if POFFICES_CHECKPOINT_STORE is None:
+            POFFICES_CHECKPOINT_STORE = get_checkpoint_store()
+    return POFFICES_CHECKPOINT_STORE
+
+
 def _persist_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
     try:
-        POFFICES_CHECKPOINT_STORE.set(
+        _get_poffices_checkpoint_store().set(
             _poffices_task_key(task_id),
             {k: v for k, v in dict(task).items() if k != "_thread_started"},
             ttl_seconds=7 * 24 * 3600,
@@ -219,7 +275,7 @@ def _restore_poffices_task(task_id: str) -> Optional[Dict[str, Any]]:
         if existing:
             return dict(existing)
     try:
-        restored = POFFICES_CHECKPOINT_STORE.get(_poffices_task_key(task_id))
+        restored = _get_poffices_checkpoint_store().get(_poffices_task_key(task_id))
     except Exception as exc:
         print(f"[Poffices] checkpoint restore failed for {task_id}: {exc}")
         restored = None
@@ -4857,7 +4913,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
                 detail = _clean_error_text((gen_resp or {}).get("error") if isinstance(gen_resp, dict) else "", "生成服务连接失败")
-                msg = json.dumps({'type': 'error', 'message': f'{detail}；已生成 {len(history_items)} 个小节，但未完成全文，已停止返回部分兜底内容'})
+                msg = json.dumps({'type': 'error', 'message': f'{detail}；已生成 {len(history_items)} 个小节，但未完成全文，已停止返回不完整文档'})
                 yield f"data: {msg}\n\n"
                 return
             else:
@@ -4888,16 +4944,10 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 if history_resp.status_code == 200:
                     history_items = history_resp.json().get("history", [])
                     if len(history_items) > 0:
-                        # 有部分小节生成成功，返回部分结果
-                        msg = json.dumps({'type': 'progress', 'message': '⚠️ 生成超时，返回已完成的部分内容...'})
+                        # 不把未完成全文伪装成成功结果；保留进度，要求用户继续轮询。
+                        msg = json.dumps({'type': 'error', 'message': f'生成仍在运行或超时；已生成 {len(history_items)} 个小节，但未完成全文，请稍后刷新任务状态'})
                         yield f"data: {msg}\n\n"
-                        gen_resp = {
-                            "success": True,
-                            "passed_subsections": len(history_items),
-                            "failed_subsections": [],
-                            "total_iterations": 0,
-                            "generation_time": f"{time.time() - (timeout - stream_timeout):.2f}s"
-                        }
+                        return
                     else:
                         msg = json.dumps({'type': 'error', 'message': '生成未能开始，请检查生成服务'})
                         yield f"data: {msg}\n\n"
@@ -4911,7 +4961,7 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
                 err_msg = _clean_error_text(gen_resp.get('error'), '文档生成失败')
-                msg = json.dumps({'type': 'error', 'message': f'{err_msg}；已生成 {len(history_items)} 个小节，但未完成全文，已停止返回部分兜底内容'})
+                msg = json.dumps({'type': 'error', 'message': f'{err_msg}；已生成 {len(history_items)} 个小节，但未完成全文，已停止返回不完整文档'})
                 yield f"data: {msg}\n\n"
                 return
             else:

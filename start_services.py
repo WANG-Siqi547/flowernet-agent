@@ -75,6 +75,15 @@ def main():
         "PROVIDER_MAX_BACKOFF": env_from_file.get("PROVIDER_MAX_BACKOFF", "20.0"),
         "PROVIDER_JITTER": env_from_file.get("PROVIDER_JITTER", "0.15"),
         "PROVIDER_HTTP_TIMEOUT": env_from_file.get("PROVIDER_HTTP_TIMEOUT", "15"),
+        "DEEPSEEK_MODEL": env_from_file.get("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        "GENERATOR_MODEL": env_from_file.get("GENERATOR_MODEL", "deepseek-v4-flash"),
+        "OUTLINER_MODEL": env_from_file.get("OUTLINER_MODEL", "deepseek-v4-flash"),
+        "GENERATOR_DEEPSEEK_MODEL": env_from_file.get("GENERATOR_DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        "OUTLINER_DEEPSEEK_MODEL": env_from_file.get("OUTLINER_DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        "GENERATOR_PROVIDER": env_from_file.get("GENERATOR_PROVIDER", "deepseek"),
+        "OUTLINER_PROVIDER": env_from_file.get("OUTLINER_PROVIDER", "deepseek"),
+        "GENERATOR_PROVIDER_CHAIN": env_from_file.get("GENERATOR_PROVIDER_CHAIN", "deepseek"),
+        "OUTLINER_PROVIDER_CHAIN": env_from_file.get("OUTLINER_PROVIDER_CHAIN", "deepseek"),
         "MAX_SUBSECTION_ATTEMPTS": env_from_file.get("MAX_SUBSECTION_ATTEMPTS", "3"),
         "MAX_GENERATOR_FAILURES_PER_SUBSECTION": env_from_file.get("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "2"),
         "DOC_RETRY_BASE_DELAY": env_from_file.get("DOC_RETRY_BASE_DELAY", "1.0"),
@@ -83,7 +92,7 @@ def main():
         "GENERATOR_HTTP_TIMEOUT": env_from_file.get("GENERATOR_HTTP_TIMEOUT", "60"),
         "VERIFIER_HTTP_TIMEOUT": env_from_file.get("VERIFIER_HTTP_TIMEOUT", "60"),
         "VERIFIER_MAX_RETRIES": env_from_file.get("VERIFIER_MAX_RETRIES", "3"),
-        "REQUEST_TIMEOUT": env_from_file.get("REQUEST_TIMEOUT", "120"),
+        "REQUEST_TIMEOUT": env_from_file.get("REQUEST_TIMEOUT", "7200"),
     }
     
     # 启动服务
@@ -111,7 +120,7 @@ def main():
         web_env.update({
             "OUTLINER_URL": "http://localhost:8003",
             "GENERATOR_URL": "http://localhost:8002",
-            "REQUEST_TIMEOUT": web_env.get("REQUEST_TIMEOUT", "120"),
+            "REQUEST_TIMEOUT": web_env.get("REQUEST_TIMEOUT", "7200"),
             "DOWNSTREAM_BACKOFF": web_env.get("DOWNSTREAM_BACKOFF", "2.0"),
             "DOWNSTREAM_MAX_BACKOFF": web_env.get("DOWNSTREAM_MAX_BACKOFF", "60.0"),
             "DOWNSTREAM_JITTER": web_env.get("DOWNSTREAM_JITTER", "0.15"),

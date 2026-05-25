@@ -95,7 +95,7 @@ class FlowerNetGenerator:
             "GENERATOR_SENSENOVA_API_URL",
             os.getenv("SENSENOVA_API_URL", "https://api.sensenova.cn/v1/llm/chat-completions")
         ).rstrip("/")
-        self.deepseek_model = os.getenv("GENERATOR_DEEPSEEK_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-chat"))
+        self.deepseek_model = os.getenv("GENERATOR_DEEPSEEK_MODEL", os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"))
         self.deepseek_api_key = os.getenv("GENERATOR_DEEPSEEK_API_KEY", os.getenv("DEEPSEEK_API_KEY", "")).strip()
         self.deepseek_base_url = os.getenv(
             "GENERATOR_DEEPSEEK_BASE_URL",
