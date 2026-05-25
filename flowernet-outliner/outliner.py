@@ -1250,12 +1250,20 @@ JSON 结构：
                 )
             except Exception as exc:
                 print(f"❌ 详细大纲生成失败: {exc}")
+                derived = self._derive_detailed_outline_from_base_structure(
+                    structure=structure,
+                    user_background=user_background,
+                    user_requirements=user_requirements,
+                    reason=str(exc),
+                )
                 return {
-                    "success": False,
-                    "error": f"detailed_outline_generation_failed: {exc}",
+                    "success": True,
+                    "structure": derived,
                     "metadata": {
                         "provider": self.last_provider_used,
                         "model": self.model,
+                        "detail_recovery": "base_structure_derived",
+                        "detail_recovery_reason": str(exc)[:240],
                     },
                 }
             detailed.setdefault("title", structure.get("title", ""))
@@ -1338,6 +1346,83 @@ JSON 结构：
                     "output_tokens": llm_metadata.get("output_tokens", 0),
                 },
             }
+
+    def _derive_detailed_outline_from_base_structure(
+        self,
+        *,
+        structure: Dict[str, Any],
+        user_background: str,
+        user_requirements: str,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """Recover detailed outlines from the first-stage model structure."""
+        base_sections = structure.get("sections", []) if isinstance(structure.get("sections"), list) else []
+        topic = str(
+            structure.get("title")
+            or self._extract_requirement_field(user_requirements, ["文档主题", "主题"], "文档主题")
+        ).strip()
+        audience = str(user_background or "目标读者").strip()
+        constraints = self._extract_extra_constraints(user_requirements)
+        normalized_sections: List[Dict[str, Any]] = []
+
+        for section_index, base_section in enumerate(base_sections, start=1):
+            if not isinstance(base_section, dict):
+                continue
+            section_id = str(base_section.get("id") or f"section_{section_index}").strip()
+            section_title = str(base_section.get("title") or section_id).strip()
+            section_description = str(
+                base_section.get("description")
+                or f"说明“{section_title}”在“{topic}”中的作用。"
+            ).strip()
+            base_subsections = base_section.get("subsections", []) if isinstance(base_section.get("subsections"), list) else []
+            normalized_subsections: List[Dict[str, Any]] = []
+
+            for subsection_index, base_subsection in enumerate(base_subsections, start=1):
+                if not isinstance(base_subsection, dict):
+                    continue
+                subsection_id = str(base_subsection.get("id") or f"{section_id}_{subsection_index}").strip()
+                subsection_title = str(base_subsection.get("title") or subsection_id).strip()
+                subsection_description = str(
+                    base_subsection.get("description")
+                    or f"围绕“{subsection_title}”展开，服务于章节“{section_title}”。"
+                ).strip()
+                outline_parts = [
+                    f"本小节聚焦“{subsection_title}”，面向{audience}展开。",
+                    f"先界定其在“{section_title}”中的位置，再说明核心问题、关键机制、实践路径与适用边界。",
+                    f"写作时应紧扣主题“{topic}”，承接章节定位：“{section_description}”。",
+                    f"需要覆盖的基础说明：{subsection_description}",
+                    "避免重复其他小节内容，优先给出清晰论证链、具体方法和质量判断标准。",
+                ]
+                if constraints:
+                    outline_parts.append(f"同时遵守附加约束：{constraints}")
+
+                normalized_subsections.append({
+                    "id": subsection_id,
+                    "title": subsection_title,
+                    "description": subsection_description,
+                    "outline": " ".join(outline_parts),
+                })
+
+            normalized_sections.append({
+                "id": section_id,
+                "title": section_title,
+                "description": section_description,
+                "section_outline": (
+                    f"本章围绕“{section_title}”展开，服务于全文主题“{topic}”。"
+                    f"先建立问题背景与概念框架，再按小节顺序展开机制、方法、应用与边界，"
+                    f"确保面向{audience}的论证连贯、具体、可执行。"
+                ),
+                "subsections": normalized_subsections,
+            })
+
+        return {
+            "title": topic,
+            "sections": normalized_sections,
+            "outline_recovery": {
+                "source": "base_structure",
+                "reason": reason[:240],
+            },
+        }
     
     def generate_content_prompts(
         self,
