@@ -26,13 +26,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 try:
     from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+    from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm, inch
     from reportlab.lib.fonts import addMapping
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     from reportlab.pdfbase import pdfmetrics
-    from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Preformatted, NextPageTemplate
+    from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Spacer, Preformatted, NextPageTemplate, Table, TableStyle
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
@@ -2171,6 +2172,61 @@ def _build_content_map_from_sections(sections: Optional[List[Dict[str, Any]]]) -
     return content_map
 
 
+def _build_chapter_asset_map(sections: Optional[List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+    asset_map: Dict[str, List[Dict[str, Any]]] = {}
+    for section in sections or []:
+        if not isinstance(section, dict):
+            continue
+        section_id = str(section.get("section_id") or section.get("id") or "")
+        assets = section.get("chapter_assets") or section.get("assets") or []
+        if not isinstance(assets, list):
+            continue
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            anchor = str(asset.get("insert_after_subsection_id") or "").strip()
+            if not anchor or not section_id:
+                continue
+            key = f"{section_id}::{anchor}"
+            asset_map.setdefault(key, []).append(asset)
+    return asset_map
+
+
+def _render_chapter_asset_markdown(asset: Dict[str, Any], ordinal: int) -> str:
+    asset_type = str(asset.get("type") or "").strip().lower()
+    title = str(asset.get("title") or f"Chapter asset {ordinal}").strip()
+    caption = str(asset.get("caption") or "").strip()
+    lines: List[str] = []
+    if asset_type == "table":
+        table_md = str(asset.get("markdown") or "").strip()
+        if not table_md:
+            return ""
+        lines.extend([
+            f"**Table {ordinal}. {title}**",
+            "",
+            table_md,
+        ])
+        if caption:
+            lines.extend(["", f"*{caption}*"])
+        return "\n".join(lines).strip()
+    if asset_type == "image_prompt":
+        prompt = str(asset.get("prompt") or "").strip()
+        alt_text = str(asset.get("alt_text") or caption or title).strip()
+        if not prompt:
+            return ""
+        lines.extend([
+            f"**Figure {ordinal}. {title}**",
+            "",
+            f"> Image generation prompt: {prompt}",
+        ])
+        if caption:
+            lines.append(f"> Caption: {caption}")
+        if alt_text:
+            lines.append(f"> Alt text: {alt_text}")
+        return "\n".join(lines).strip()
+    return ""
+
+
 def build_markdown_document(
     title: str,
     structure: Dict[str, Any],
@@ -2180,6 +2236,7 @@ def build_markdown_document(
     extra_requirements: str = "",
 ) -> str:
     content_map = _build_content_map_from_sections(generated_sections)
+    chapter_asset_map = _build_chapter_asset_map(generated_sections)
     history_map = _build_content_map_from_history(history)
     for key, value in history_map.items():
         content_map[key] = value
@@ -3649,6 +3706,7 @@ def build_markdown_document(
         "",
         _build_keywords(),
     ]
+    chapter_asset_ordinal = 1
     lines.append("")
     for section_index, section in enumerate(structure.get("sections", []), 1):
         section_id = section.get("id", "")
@@ -3683,6 +3741,12 @@ def build_markdown_document(
             lines.append("")
             lines.append(subsection_text)
             lines.append("")
+            for asset in chapter_asset_map.get(key, []):
+                rendered_asset = _render_chapter_asset_markdown(asset, chapter_asset_ordinal)
+                if rendered_asset:
+                    lines.append(rendered_asset)
+                    lines.append("")
+                    chapter_asset_ordinal += 1
 
 
     _append_references(lines, reference_entries)
@@ -4028,6 +4092,7 @@ def _iter_document_blocks(content: str) -> List[Dict[str, str]]:
     paragraph_lines: List[str] = []
     code_lines: List[str] = []
     equation_lines: List[str] = []
+    table_lines: List[str] = []
     in_code = False
     in_equation = False
 
@@ -4040,6 +4105,24 @@ def _iter_document_blocks(content: str) -> List[Dict[str, str]]:
             blocks.append({"type": "paragraph", "text": paragraph_text})
         paragraph_lines = []
 
+    def flush_table() -> None:
+        nonlocal table_lines
+        if not table_lines:
+            return
+        rows: List[List[str]] = []
+        for table_line in table_lines:
+            cells = [cell.strip() for cell in table_line.strip().strip("|").split("|")]
+            if cells and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells):
+                continue
+            if cells:
+                rows.append(cells)
+        if len(rows) >= 2:
+            blocks.append({"type": "table", "rows": json.dumps(rows, ensure_ascii=False)})
+        else:
+            for row in rows:
+                blocks.append({"type": "paragraph", "text": _normalize_render_text(" | ".join(row))})
+        table_lines = []
+
     for raw_line in str(content or "").splitlines():
         line = raw_line.rstrip()
         stripped = line.strip()
@@ -4051,6 +4134,7 @@ def _iter_document_blocks(content: str) -> List[Dict[str, str]]:
                 in_code = False
             else:
                 flush_paragraph()
+                flush_table()
                 in_equation = False
                 equation_lines = []
                 in_code = True
@@ -4067,6 +4151,7 @@ def _iter_document_blocks(content: str) -> List[Dict[str, str]]:
                 in_equation = False
             else:
                 flush_paragraph()
+                flush_table()
                 in_equation = True
             continue
 
@@ -4076,37 +4161,50 @@ def _iter_document_blocks(content: str) -> List[Dict[str, str]]:
 
         if not stripped:
             flush_paragraph()
+            flush_table()
             continue
 
         if stripped in {"---", "***"}:
             flush_paragraph()
+            flush_table()
             blocks.append({"type": "separator", "text": ""})
             continue
 
         heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if heading_match:
             flush_paragraph()
+            flush_table()
             blocks.append({"type": "heading", "level": str(len(heading_match.group(1))), "text": _normalize_render_text(heading_match.group(2))})
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            flush_paragraph()
+            table_lines.append(stripped)
             continue
 
         list_match = re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)(.+)$", stripped)
         if list_match:
             flush_paragraph()
+            flush_table()
             blocks.append({"type": "list_item", "text": _normalize_render_text(list_match.group(1)), "ordered": "true" if re.match(r"^\d", stripped) else "false"})
             continue
 
         reference_match = re.match(r"^\[\d+\]\s+.+$", stripped)
         if reference_match:
             flush_paragraph()
+            flush_table()
             blocks.append({"type": "reference", "text": _normalize_render_text(stripped)})
             continue
 
         if stripped.startswith("<a id="):
+            flush_table()
             continue
 
+        flush_table()
         paragraph_lines.append(stripped)
 
     flush_paragraph()
+    flush_table()
 
     if code_lines:
         blocks.append({"type": "code", "text": "\n".join(code_lines).rstrip("\n")})
@@ -4240,6 +4338,33 @@ def _render_docx_document(title: str, content: str) -> BytesIO:
             run.font.name = "Times New Roman"
             run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
             run.font.size = Pt(10.5)
+        elif block_type == "table":
+            try:
+                rows = json.loads(block.get("rows", "[]"))
+            except Exception:
+                rows = []
+            if isinstance(rows, list) and rows:
+                valid_rows = [row for row in rows if isinstance(row, list)]
+                if not valid_rows:
+                    continue
+                max_cols = max(len(row) for row in valid_rows)
+                table = document.add_table(rows=len(rows), cols=max_cols)
+                table.style = "Table Grid"
+                for r_idx, row in enumerate(rows):
+                    row_cells = row if isinstance(row, list) else []
+                    for c_idx in range(max_cols):
+                        cell_text = str(row_cells[c_idx] if c_idx < len(row_cells) else "")
+                        cell = table.cell(r_idx, c_idx)
+                        cell.text = ""
+                        paragraph = cell.paragraphs[0]
+                        paragraph.paragraph_format.space_after = Pt(0)
+                        run = paragraph.add_run(cell_text)
+                        run.font.name = "Times New Roman"
+                        run._element.rPr.rFonts.set(qn("w:eastAsia"), "SimSun")
+                        run.font.size = Pt(9.5)
+                        if r_idx == 0:
+                            run.bold = True
+                document.add_paragraph("")
         elif block_type == "reference":
             _add_docx_reference_paragraph(document, text)
         elif block_type == "equation":
@@ -4448,6 +4573,36 @@ def _render_pdf_document(title: str, content: str) -> BytesIO:
                 story.append(Paragraph(text, styles["DocBody"]))
         elif block_type == "list_item":
             story.append(Paragraph(f"• {text}", styles["DocBody"]))
+        elif block_type == "table":
+            try:
+                rows = json.loads(block.get("rows", "[]"))
+            except Exception:
+                rows = []
+            if isinstance(rows, list) and rows:
+                valid_rows = [row for row in rows if isinstance(row, list)]
+                if not valid_rows:
+                    continue
+                max_cols = max(len(row) for row in valid_rows)
+                table_data = []
+                for row in rows:
+                    row_cells = row if isinstance(row, list) else []
+                    table_data.append([
+                        Paragraph(xml_escape(str(row_cells[idx] if idx < len(row_cells) else "")), styles["DocBody"])
+                        for idx in range(max_cols)
+                    ])
+                col_width = max(0.6 * inch, (column_width - 0.08 * inch) / max(1, max_cols))
+                flow_table = Table(table_data, colWidths=[col_width] * max_cols, hAlign="LEFT")
+                flow_table.setStyle(TableStyle([
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#94a3b8")),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef2f7")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ]))
+                story.append(flow_table)
+                story.append(Spacer(1, 0.04 * inch))
         elif block_type == "reference":
             story.append(Paragraph(text, styles["DocReference"]))
         elif block_type == "equation":
@@ -5128,6 +5283,8 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 "token_usage": gen_resp.get("token_usage", {}),
                 "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0),
                 "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0),
+                "chapter_assets": gen_resp.get("chapter_assets", []) if isinstance(gen_resp.get("chapter_assets"), list) else [],
+                "chapter_asset_count": len(gen_resp.get("chapter_assets", [])) if isinstance(gen_resp.get("chapter_assets"), list) else 0,
                 **extract_document_quality_metrics(gen_resp if isinstance(gen_resp, dict) else {}),
             },
         }

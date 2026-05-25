@@ -109,6 +109,8 @@ class DocumentGenerationOrchestrator:
         self.orch_generator_backoff = max(0.2, float(os.getenv("ORCH_GENERATOR_BACKOFF", "1.0")))
         self.orch_generator_max_backoff = max(1.0, float(os.getenv("ORCH_GENERATOR_MAX_BACKOFF", "10.0")))
         self.generator_http_timeout = max(30, int(os.getenv("GENERATOR_HTTP_TIMEOUT", "60")))
+        self.chapter_assets_enabled = os.getenv("CHAPTER_ASSETS_ENABLED", "true").lower() == "true"
+        self.chapter_assets_max_tokens = max(500, int(os.getenv("CHAPTER_ASSETS_MAX_TOKENS", "1600")))
         # Compact prompts are only useful as provider-failure fallbacks. Using them on
         # normal controller retries drops outline/evidence detail and can make quality worse.
         self.orch_compact_generation_enabled = os.getenv("ORCH_COMPACT_GENERATION_ENABLED", "false").lower() == "true"
@@ -385,6 +387,7 @@ class DocumentGenerationOrchestrator:
             "bandit_last_selection_mode": "",
             "bandit_last_constraints": {},
             "bandit_recent_events": [],
+            "chapter_assets": [],
         }
 
     def _accumulate_quality_summary(self, summary: Dict[str, Any], verification: Dict[str, Any]) -> None:
@@ -556,6 +559,205 @@ class DocumentGenerationOrchestrator:
             return {}
         except Exception:
             return {}
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Dict[str, Any]:
+        raw = str(text or "").strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"\s*```$", "", raw)
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            pass
+
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(raw[start:end + 1])
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    @staticmethod
+    def _normalize_markdown_table(table_markdown: str) -> str:
+        lines = [line.strip() for line in str(table_markdown or "").splitlines() if line.strip()]
+        table_lines = [line for line in lines if line.startswith("|") and line.endswith("|")]
+        if len(table_lines) < 2:
+            return ""
+        if not re.match(r"^\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$", table_lines[1]):
+            cells = [cell.strip() for cell in table_lines[0].strip("|").split("|")]
+            separator = "|" + "|".join([" --- " for _ in cells]) + "|"
+            table_lines.insert(1, separator)
+        return "\n".join(table_lines[:12]).strip()
+
+    def _build_section_text_for_assets(self, section_result: Dict[str, Any]) -> str:
+        parts: List[str] = []
+        for subsection in section_result.get("subsections", []) or []:
+            if not isinstance(subsection, dict) or not subsection.get("success"):
+                continue
+            title = str(subsection.get("subsection_title") or "").strip()
+            content = str(subsection.get("content") or "").strip()
+            if not content:
+                continue
+            if title:
+                parts.append(f"### {title}")
+            parts.append(content)
+        return "\n\n".join(parts).strip()
+
+    def _plan_chapter_assets(
+        self,
+        *,
+        document_id: str,
+        section_id: str,
+        section_title: str,
+        section_result: Dict[str, Any],
+        document_title: str,
+        user_background: str,
+        user_requirements: str,
+    ) -> List[Dict[str, Any]]:
+        if not self.chapter_assets_enabled:
+            return []
+        if not section_result.get("subsections"):
+            return []
+        if not all(bool(item.get("success")) for item in section_result.get("subsections", []) if isinstance(item, dict)):
+            return []
+
+        chapter_text = self._build_section_text_for_assets(section_result)
+        if len(chapter_text) < 600:
+            return []
+
+        subsection_titles = [
+            str(item.get("subsection_title") or item.get("subsection_id") or "").strip()
+            for item in section_result.get("subsections", [])
+            if isinstance(item, dict)
+        ]
+        subsection_ids = [
+            str(item.get("subsection_id") or "").strip()
+            for item in section_result.get("subsections", [])
+            if isinstance(item, dict)
+        ]
+        prompt = f"""
+You are FlowerNet's chapter-level asset planner.
+
+The following chapter has fully passed text verification. Decide whether the chapter needs one or two useful in-document assets. Use only information grounded in the passed chapter text. Do not invent external facts.
+
+Document title: {document_title}
+Chapter id: {section_id}
+Chapter title: {section_title}
+Reader background: {user_background}
+Extra requirements: {user_requirements}
+Available insertion anchors by subsection id: {", ".join(subsection_ids)}
+Subsection titles: {", ".join(subsection_titles)}
+
+Passed chapter text:
+{chapter_text[:9000]}
+
+Return strict JSON only:
+{{
+  "assets": [
+    {{
+      "type": "table",
+      "title": "specific table title",
+      "caption": "one sentence explaining why this table belongs here",
+      "insert_after_subsection_id": "one of the available subsection ids",
+      "markdown": "| Column A | Column B |\\n| --- | --- |\\n| ... | ... |"
+    }},
+    {{
+      "type": "image_prompt",
+      "title": "specific figure title",
+      "caption": "publication-style figure caption grounded in the chapter",
+      "insert_after_subsection_id": "one of the available subsection ids",
+      "prompt": "detailed prompt for a future image-generation model; do not claim an image has already been generated",
+      "alt_text": "concise accessibility description"
+    }}
+  ]
+}}
+
+Rules:
+- Prefer one table when the chapter compares concepts, mechanisms, stages, variables, methods, or evidence.
+- Prefer one image_prompt when a conceptual diagram, workflow, architecture, or process map would help.
+- Return an empty assets array if neither would add real value.
+- Maximum 2 assets total.
+- Tables must be concise, 3-6 columns and 3-8 rows.
+- Never include placeholder values, fake citations, or template text.
+""".strip()
+
+        try:
+            self._emit_progress_event(
+                document_id=document_id,
+                section_id=section_id,
+                stage="chapter_asset_start",
+                message=f"章节已通过，开始规划图表资产: {section_title}",
+                metadata={"section_title": section_title},
+            )
+            result = self._call_generator(prompt, max_tokens=self.chapter_assets_max_tokens)
+            if not isinstance(result, dict) or not result.get("success"):
+                return []
+            parsed = self._extract_json_object(str(result.get("draft") or result.get("content") or ""))
+            raw_assets = parsed.get("assets") if isinstance(parsed, dict) else []
+            if not isinstance(raw_assets, list):
+                return []
+
+            allowed_anchor_ids = {sid for sid in subsection_ids if sid}
+            default_anchor = subsection_ids[-1] if subsection_ids else ""
+            normalized: List[Dict[str, Any]] = []
+            for idx, asset in enumerate(raw_assets[:2], 1):
+                if not isinstance(asset, dict):
+                    continue
+                asset_type = str(asset.get("type") or "").strip().lower()
+                if asset_type not in {"table", "image_prompt"}:
+                    continue
+                anchor = str(asset.get("insert_after_subsection_id") or "").strip()
+                if anchor not in allowed_anchor_ids:
+                    anchor = default_anchor
+                title = str(asset.get("title") or "").strip()[:160]
+                caption = str(asset.get("caption") or "").strip()[:500]
+                if not title or not caption:
+                    continue
+                item: Dict[str, Any] = {
+                    "asset_id": f"{section_id}_asset_{idx}",
+                    "type": asset_type,
+                    "title": title,
+                    "caption": caption,
+                    "insert_after_subsection_id": anchor,
+                    "section_id": section_id,
+                    "section_title": section_title,
+                }
+                if asset_type == "table":
+                    table = self._normalize_markdown_table(str(asset.get("markdown") or ""))
+                    if not table:
+                        continue
+                    item["markdown"] = table
+                else:
+                    image_prompt = str(asset.get("prompt") or "").strip()[:1200]
+                    alt_text = str(asset.get("alt_text") or "").strip()[:300]
+                    if not image_prompt:
+                        continue
+                    item["prompt"] = image_prompt
+                    item["alt_text"] = alt_text or caption
+                normalized.append(item)
+
+            if normalized:
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    stage="chapter_asset_ready",
+                    message=f"章节图表资产规划完成: {section_title}",
+                    metadata={"section_title": section_title, "asset_count": len(normalized), "assets": normalized},
+                )
+            return normalized
+        except Exception as exc:
+            self._emit_progress_event(
+                document_id=document_id,
+                section_id=section_id,
+                stage="chapter_asset_failed",
+                message=f"章节图表资产规划失败: {section_title}",
+                metadata={"section_title": section_title, "error": str(exc)[:240]},
+            )
+            return []
 
     def _is_outline_like(self, content: str, outline: str = "") -> bool:
         """简单判断 content 是否更像大纲/提示而非正文，供兜底选择时排除大纲型草稿。
@@ -1358,6 +1560,17 @@ class DocumentGenerationOrchestrator:
                         )
                         continue
                 
+                chapter_assets = self._plan_chapter_assets(
+                    document_id=document_id,
+                    section_id=section_id,
+                    section_title=section_title,
+                    section_result=section_result,
+                    document_title=title,
+                    user_background=user_background,
+                    user_requirements=user_requirements,
+                )
+                section_result["chapter_assets"] = chapter_assets
+                document_result["chapter_assets"].extend(chapter_assets)
                 document_result["sections"].append(section_result)
             
             elapsed = (datetime.now() - start_time).total_seconds()
@@ -1541,6 +1754,7 @@ class DocumentGenerationOrchestrator:
                 "bandit_last_selection_mode": str(document_result.get("bandit_last_selection_mode", "") or ""),
                 "bandit_last_constraints": document_result.get("bandit_last_constraints", {}),
                 "bandit_recent_events": document_result.get("bandit_recent_events", []),
+                "chapter_assets": document_result.get("chapter_assets", []),
                 "error": str(e),
                 "warning": f"document_exception_fallback: {str(e)[:180]}",
             }
@@ -3098,15 +3312,16 @@ class DocumentGenerationOrchestrator:
         ]
         return any(token in lowered for token in transient_tokens)
     
-    def _call_generator(self, prompt: str) -> Dict[str, Any]:
+    def _call_generator(self, prompt: str, max_tokens: Optional[int] = None) -> Dict[str, Any]:
         """调用 Generator API（优先使用本地实例）"""
         print(f"      [_call_generator] Starting (local_gen={self._local_generator is not None})")
+        effective_max_tokens = int(max_tokens or self.generator_max_tokens)
         if self._local_generator is not None:
             try:
                 print(f"      [_call_generator] Calling local generator.generate_draft...")
                 start = time.time()
                 call_prompt = prompt
-                call_tokens = self.generator_max_tokens
+                call_tokens = effective_max_tokens
                 used_compact_prompt = False
                 if (
                     self.orch_compact_generation_enabled
@@ -3114,7 +3329,7 @@ class DocumentGenerationOrchestrator:
                     and hasattr(self._local_generator, "_build_compact_generation_prompt")
                 ):
                     call_prompt = self._local_generator._build_compact_generation_prompt(prompt)
-                    call_tokens = min(self.generator_max_tokens, self.orch_compact_max_tokens)
+                    call_tokens = min(effective_max_tokens, self.orch_compact_max_tokens)
                     used_compact_prompt = True
                     print(
                         "      [_call_generator] Using compact prompt "
@@ -3143,7 +3358,7 @@ class DocumentGenerationOrchestrator:
                 )
                 response = self.session.post(
                     f"{self.generator_url}/generate",
-                    json={"prompt": prompt, "max_tokens": self.generator_max_tokens},
+                    json={"prompt": prompt, "max_tokens": effective_max_tokens},
                     timeout=self.generator_http_timeout,
                 )
 

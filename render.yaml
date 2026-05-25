@@ -406,6 +406,10 @@ services:
         value: "20.0"
       - key: ORCH_GENERATOR_MAX_TOKENS
         value: "2000"
+      - key: CHAPTER_ASSETS_ENABLED
+        value: "true"
+      - key: CHAPTER_ASSETS_MAX_TOKENS
+        value: "1600"
       - key: ORCH_COMPACT_GENERATION_ENABLED
         value: "false"
       - key: GENERATOR_COMPACT_FALLBACK_ENABLED
