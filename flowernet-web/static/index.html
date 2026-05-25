@@ -821,6 +821,7 @@
       const docRef = useRef({ title: "", content: "" });
       const banditEventsRef = useRef([]);
       const finalRecoveryStartedRef = useRef(false);
+      const outlineReadyRef = useRef(false);
 
       useEffect(() => {
         localStorage.setItem("flowernet_total_generations", String(totalGenerations));
@@ -1035,6 +1036,7 @@
         streamEndedRef.current = false;
         documentIdRef.current = "";
         finalRecoveryStartedRef.current = false;
+        outlineReadyRef.current = false;
         setRunning(true);
         runningRef.current = true;
         setGenerationStartTime(Date.now());
@@ -1080,6 +1082,7 @@
             const meta = data.metadata || {};
             if (stage === "outline_document_ready" && meta.document_id) {
               documentIdRef.current = String(meta.document_id);
+              outlineReadyRef.current = true;
             }
             setActiveNode(parseStage(stage));
             const section = meta.section_title || meta.section_id || "Section";
@@ -1246,6 +1249,11 @@
             setStatusText(String(data.message || "Starting generation flow..."));
           }
 
+          if (data.type === "outline") {
+            outlineReadyRef.current = true;
+            setStatusText(String(data.message || "Outline generated."));
+          }
+
           if (data.type === "heartbeat") {
             setStatusText(String(data.message || "Still generating..."));
           }
@@ -1372,7 +1380,7 @@
           closeSse();
 
           const docId = documentIdRef.current;
-          if (docId) {
+          if (docId && outlineReadyRef.current) {
             setStatusText("Stream disconnected. Continuing recovery polling...");
             const expectedTotal = Math.max(1, Number(progress.total || total || 0));
             const recoveryDeadline = Date.now() + (2 * 60 * 60 * 1000);
@@ -1404,6 +1412,13 @@
               }
               await new Promise((resolve) => setTimeout(resolve, 15000));
             }
+          } else {
+            streamEndedRef.current = true;
+            finalRecoveryStartedRef.current = false;
+            setRunning(false);
+            runningRef.current = false;
+            setStatusText("Stream disconnected during outline generation. The outline was not saved; please retry after the remote outliner is healthy.");
+            return;
           }
 
           setRunning(false);

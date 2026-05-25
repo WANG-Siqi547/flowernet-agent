@@ -240,7 +240,11 @@ services:
       - key: OUTLINER_SERIALIZE_TASKS
         value: "true"
       - key: OUTLINER_TASK_WAIT_TIMEOUT
-        value: "0"
+        value: "60"
+      - key: OUTLINE_LOCK_WAIT_TIMEOUT
+        value: "60"
+      - key: OUTLINE_TASK_HARD_TIMEOUT
+        value: "420"
       - key: OUTLINER_FLOW_RETRIES
         value: "2"
       - key: OUTLINER_FLOW_BACKOFF
@@ -505,6 +509,12 @@ services:
         value: "10.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "5.0"
+      - key: OUTLINER_TASK_POLL_MAX_TIMEOUT
+        value: "420"
+      - key: OUTLINER_STREAM_MAX_WAIT
+        value: "480"
+      - key: OUTLINER_TASK_START_MAX_WAIT
+        value: "180"
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
       - key: WEB_DEFAULT_REL_THRESHOLD

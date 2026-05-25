@@ -4776,12 +4776,13 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         outline_thread.start()
         print(f"[Web] 🚀 启动异步 Outliner 线程（timeout={stream_timeout}s）")
         outline_wait_limit = min(stream_timeout, max(60, OUTLINER_STREAM_MAX_WAIT))
+        outline_started_at = time.time()
         outline_deadline = time.time() + outline_wait_limit
         last_outline_keepalive = time.time()
 
         while outline_thread.is_alive() and time.time() < outline_deadline:
             if time.time() - last_outline_keepalive > 10:
-                elapsed = int(time.time() - (outline_deadline - stream_timeout))
+                elapsed = int(time.time() - outline_started_at)
                 heartbeat = json.dumps({'type': 'heartbeat', 'message': f'⏳ 正在生成大纲（{elapsed}s）...'})
                 print(f"[Web] 💓 发送心跳 (已等待{elapsed}s)")
                 yield f"data: {heartbeat}\n\n"
