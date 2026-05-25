@@ -212,7 +212,7 @@ class DocumentGenerationOrchestrator:
 
     def _is_usable_real_draft(self, draft: str, outline: str = "") -> bool:
         text = str(draft or "").strip()
-        min_usable_chars = max(120, min(240, self.min_draft_chars))
+        min_usable_chars = max(40, min(120, self.min_draft_chars))
         return (
             bool(text)
             and len(text) >= min_usable_chars
@@ -1220,6 +1220,80 @@ class DocumentGenerationOrchestrator:
                             err = subsection_gen_result.get("error", "Unknown error")
                             print(f"⚠️ 当前小节返回失败结果: {err}")
                             failed_draft = str(subsection_gen_result.get("draft", "") or "").strip()
+                            if self.accept_best_real_draft and self._is_usable_real_draft(failed_draft, subsection_outline):
+                                verification = dict(subsection_gen_result.get("verification", {}) or {})
+                                verification.update({
+                                    "accepted_by_best_real_draft": True,
+                                    "best_real_draft_reason": str(err),
+                                    "forced_pass": False,
+                                })
+                                metrics = subsection_gen_result.get("metrics", {}) if isinstance(subsection_gen_result, dict) else {}
+                                self._accumulate_quality_summary(document_result, verification)
+                                self._accumulate_bandit_summary(document_result, subsection_gen_result)
+                                document_result["passed_subsections"] += 1
+                                if self.history_manager:
+                                    history_order = len(passed_history)
+                                    self.history_manager.add_entry(
+                                        document_id=document_id,
+                                        section_id=section_id,
+                                        subsection_id=subsection_id,
+                                        content=failed_draft,
+                                        metadata={
+                                            "iterations": subsection_gen_result.get("iterations", 0),
+                                            "verification": verification,
+                                            "outline": subsection_gen_result.get("final_outline", subsection_outline),
+                                            "best_effort": True,
+                                            "best_effort_reason": str(err),
+                                            "source_results": subsection_gen_result.get("source_results", []),
+                                        },
+                                    )
+                                    self.history_manager.add_passed_history(
+                                        document_id=document_id,
+                                        section_id=section_id,
+                                        subsection_id=subsection_id,
+                                        content=failed_draft,
+                                        order_index=history_order,
+                                    )
+                                section_result["subsections"].append({
+                                    "subsection_id": subsection_id,
+                                    "subsection_title": subsection_title,
+                                    "content": failed_draft,
+                                    "outline": subsection_gen_result.get("final_outline", subsection_outline),
+                                    "success": True,
+                                    "iterations": subsection_gen_result.get("iterations", 0),
+                                    "verification": verification,
+                                    "bandit": subsection_gen_result.get("bandit", {}),
+                                    "forced_pass": False,
+                                    "force_reason": "",
+                                    "best_effort": True,
+                                    "best_effort_reason": str(err),
+                                    "rag_used": bool(subsection_gen_result.get("rag_used", False)),
+                                    "rag_search_success": bool(subsection_gen_result.get("rag_search_success", False)),
+                                    "controller_effective": bool(subsection_gen_result.get("controller_effective", False)),
+                                    "source_results": subsection_gen_result.get("source_results", []),
+                                    "token_usage": {
+                                        "prompt_tokens": int(metrics.get("prompt_tokens", 0) or 0),
+                                        "output_tokens": int(metrics.get("output_tokens", 0) or 0),
+                                        "total_tokens": int(metrics.get("total_tokens", 0) or 0),
+                                        "prompt_cache_hit_tokens": int(metrics.get("prompt_cache_hit_tokens", 0) or 0),
+                                        "prompt_cache_miss_tokens": int(metrics.get("prompt_cache_miss_tokens", 0) or 0),
+                                    },
+                                    "length": len(failed_draft),
+                                })
+                                self._emit_progress_event(
+                                    document_id=document_id,
+                                    section_id=section_id,
+                                    subsection_id=subsection_id,
+                                    stage="subsection_passed",
+                                    message=f"小节保留最佳真实草稿: {section_title} > {subsection_title}",
+                                    metadata={
+                                        "iterations": subsection_gen_result.get("iterations", 0),
+                                        "verification": verification,
+                                        "best_effort": True,
+                                        "best_effort_reason": str(err),
+                                    },
+                                )
+                                continue
                             section_result["subsections"].append({
                                 "subsection_id": subsection_id,
                                 "subsection_title": subsection_title,

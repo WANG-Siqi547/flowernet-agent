@@ -872,7 +872,7 @@
         if (stage === "subsection_start" || stage === "generator_start") return "Drafting";
         if (stage === "verifier_start") return "Evaluating via UniEval";
         if (stage === "verifier_failed" || stage === "controller_start") return "Repairing";
-        if (stage === "subsection_passed" || stage === "verifier_passed") return "Passed";
+        if (stage === "subsection_passed" || stage === "verifier_passed" || stage === "subsection_best_real_draft_accepted") return "Passed";
         if (stage === "subsection_forced_pass" || stage === "verifier_forced_pass") return "Failed";
         if (stage === "subsection_failed") return "Failed";
         return "Waiting";
@@ -1038,25 +1038,18 @@
               }
             }
 
-            // verifier_result means one full generator->verifier cycle has completed for this subsection.
-            // Count it as processed for the top progress indicator, while terminal events still own final status.
+            // Only terminal subsection events advance document progress. Verifier events are
+            // iteration-level signals and must not make the document progress jump ahead.
             const subsectionKey = getSubsectionKey(data.metadata || {});
-            const isProcessedSubsectionStage = stage === "verifier_result" || stage === "verifier_passed" || stage === "verifier_failed" || stage === "subsection_passed" || stage === "subsection_failed";
-            if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isProcessedSubsectionStage) {
-              if (!processedSubsectionsRef.current.has(subsectionKey)) {
-                processedSubsectionsRef.current.add(subsectionKey);
-              }
-            }
-            const isFinalSubsectionStage = stage === "subsection_passed" || stage === "subsection_failed";
+            const isFinalSubsectionStage = stage === "subsection_passed" || stage === "subsection_failed" || stage === "subsection_best_real_draft_accepted";
             if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isFinalSubsectionStage) {
               if (!completedSubsectionsRef.current.has(subsectionKey)) {
                 completedSubsectionsRef.current.add(subsectionKey);
-                processedSubsectionsRef.current.add(subsectionKey);
               }
             }
-            if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isProcessedSubsectionStage) {
+            if ((data.metadata?.subsection_id || data.metadata?.subsection_title) && isFinalSubsectionStage) {
                 setProgress((p) => {
-                  const cur = Math.min(p.total || 0, Math.max(completedSubsectionsRef.current.size, processedSubsectionsRef.current.size));
+                  const cur = Math.min(p.total || 0, completedSubsectionsRef.current.size);
                   const pct = p.total > 0 ? Math.min(100, Math.round((cur / p.total) * 100)) : 0;
                   return { ...p, current: cur, percent: pct };
                 });
@@ -1291,12 +1284,15 @@
       const qualityMean = running
         ? Math.max(qualityPeak, currentQualityMean, Number(qualitySummary.quality_score_avg || 0))
         : Math.max(currentQualityMean, Number(qualitySummary.quality_score_avg || 0));
-      const activeSubsectionIndex = subsections.findIndex((item) => ["Drafting", "Evaluating via UniEval", "Repairing"].includes(item.stage));
-      const activeOrdinal = activeSubsectionIndex >= 0 ? activeSubsectionIndex + 1 : 0;
-      const displayCurrent = progress.current;
-      const displayPercent = progress.percent;
+      const totalSubsections = Math.max(0, Number(progress.total || 0));
+      const displayCurrent = Math.min(totalSubsections, Math.max(0, Number(progress.current || 0)));
+      const displayPercent = totalSubsections > 0 ? Math.min(100, Math.round((displayCurrent / totalSubsections) * 100)) : Math.min(100, Math.max(0, Number(progress.percent || 0)));
+      const activeSubsectionIndex = running && displayCurrent < totalSubsections
+        ? subsections.findIndex((item) => ["Drafting", "Evaluating via UniEval", "Repairing"].includes(item.stage))
+        : -1;
+      const activeOrdinal = activeSubsectionIndex >= 0 ? Math.min(totalSubsections, activeSubsectionIndex + 1) : 0;
       const normalizedStatusText = running
-        ? `进度: ${activeOrdinal > 0 ? `正在处理第 ${activeOrdinal}/${progress.total || 0} 小节；` : ""}已验证/处理 ${progress.current}/${progress.total || 0} (${displayPercent}%)`
+        ? `进度: ${activeOrdinal > 0 ? `正在处理第 ${activeOrdinal}/${totalSubsections} 小节；` : ""}已完成 ${displayCurrent}/${totalSubsections} (${displayPercent}%)`
         : statusText;
 
       return (
@@ -1365,7 +1361,7 @@
                       <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
                         <motion.div animate={{ width: `${displayPercent}%` }} className="h-full bg-gradient-to-r from-coral to-peach" />
                       </div>
-                      <div className="text-xs text-slate-600">{running ? `${activeOrdinal > 0 ? `active ${activeOrdinal}/${progress.total || 0} · ` : ""}verified ${progress.current}/${progress.total || 0}` : `${progress.current}/${progress.total || 0} subsections`} · {displayPercent}%</div>
+                      <div className="text-xs text-slate-600">{running ? `${activeOrdinal > 0 ? `active ${activeOrdinal}/${totalSubsections} · ` : ""}completed ${displayCurrent}/${totalSubsections}` : `${displayCurrent}/${totalSubsections} subsections`} · {displayPercent}%</div>
                       <div className="grid grid-cols-2 gap-2">
                         <button onClick={handleStart} disabled={running} className="col-span-2 min-h-12 rounded-xl bg-slate-900 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap">{running ? "Running..." : "Start"}</button>
                         <button onClick={handleDownload} disabled={!doc.content} className="min-h-11 rounded-xl bg-emerald-600 text-white text-sm font-semibold px-3 py-2 disabled:opacity-50 whitespace-nowrap leading-tight">DOCX</button>
