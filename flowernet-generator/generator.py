@@ -649,8 +649,7 @@ class FlowerNetGenerator:
                 "max_tokens": max_tokens,
                 "stream": False,
             }
-            if self.deepseek_thinking_enabled:
-                payload["thinking"] = {"type": "enabled"}
+            payload["thinking"] = {"type": "enabled" if self.deepseek_thinking_enabled else "disabled"}
             headers = {
                 "Authorization": f"Bearer {self.deepseek_api_key}",
                 "Content-Type": "application/json",
@@ -672,9 +671,11 @@ class FlowerNetGenerator:
                 content = "".join(parts)
             draft_text = str(content).strip()
             if not draft_text:
+                finish_reason = choice.get("finish_reason", "")
+                reasoning_chars = len(str(msg.get("reasoning_content") or msg.get("reasoning") or ""))
                 return {
                     "success": False,
-                    "error": "DeepSeek empty response",
+                    "error": f"DeepSeek empty response (finish_reason={finish_reason}, reasoning_chars={reasoning_chars})",
                     "draft": ""
                 }
 

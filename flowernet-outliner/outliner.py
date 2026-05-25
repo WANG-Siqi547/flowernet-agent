@@ -911,8 +911,7 @@ JSON 结构：
                 }
                 if expect_json and self.deepseek_json_response_format:
                     payload["response_format"] = {"type": "json_object"}
-                if self.deepseek_thinking_enabled:
-                    payload["thinking"] = {"type": "enabled"}
+                payload["thinking"] = {"type": "enabled" if self.deepseek_thinking_enabled else "disabled"}
                 headers = {
                     "Authorization": f"Bearer {self.deepseek_api_key}",
                     "Content-Type": "application/json",
@@ -934,7 +933,9 @@ JSON 结构：
                     content = "".join(parts)
                 text = str(content).strip()
                 if not text:
-                    raise Exception("DeepSeek 返回空响应")
+                    finish_reason = choice.get("finish_reason", "")
+                    reasoning_chars = len(str(msg.get("reasoning_content") or msg.get("reasoning") or ""))
+                    raise Exception(f"DeepSeek 返回空响应 (finish_reason={finish_reason}, reasoning_chars={reasoning_chars})")
                 usage = data.get("usage") or {}
                 if not isinstance(usage, dict):
                     usage = {}
