@@ -210,6 +210,15 @@ class DocumentGenerationOrchestrator:
             and not self._is_outline_like(text, outline)
         )
 
+    def _is_usable_real_draft(self, draft: str, outline: str = "") -> bool:
+        text = str(draft or "").strip()
+        min_usable_chars = max(120, min(240, self.min_draft_chars))
+        return (
+            bool(text)
+            and len(text) >= min_usable_chars
+            and not self._is_outline_like(text, outline)
+        )
+
     def _subsection_best_real_draft_result(
         self,
         *,
@@ -1663,6 +1672,47 @@ class DocumentGenerationOrchestrator:
         while True:
             if self._deadline_exceeded():
                 reason = "document_deadline_exceeded_before_subsection_generation"
+                if (
+                    self.accept_best_real_draft
+                    and best_candidate
+                    and self._is_usable_real_draft(best_candidate.get("draft", ""), best_candidate.get("outline", current_outline))
+                ):
+                    best_verification = best_candidate.get("verification", {})
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="subsection_best_real_draft_accepted",
+                        message="文档总时限已到，接收当前小节最佳真实草稿",
+                        metadata={
+                            "iteration": iterations,
+                            "best_iteration": best_candidate.get("iteration", iterations),
+                            "reason": reason,
+                            "relevancy_index": best_verification.get("relevancy_index", 0),
+                            "redundancy_index": best_verification.get("redundancy_index", 1),
+                            "quality_score": best_verification.get("quality_score", 0),
+                        },
+                    )
+                    return self._subsection_best_real_draft_result(
+                        reason=reason,
+                        draft=best_candidate.get("draft", ""),
+                        final_outline=best_candidate.get("outline", current_outline),
+                        iterations=iterations,
+                        verification=best_verification,
+                        all_drafts=all_drafts,
+                        metrics=metrics,
+                        rag_search_result={
+                            **rag_search_result,
+                            "results": best_candidate.get("source_results", rag_search_result.get("results", [])),
+                            "success": best_candidate.get("rag_search_success", rag_search_result.get("success", False)),
+                        },
+                        rag_used=bool(best_candidate.get("rag_used", rag_used)),
+                        rag_selected_query=str(best_candidate.get("rag_selected_query", rag_selected_query) or ""),
+                        controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
+                        controller_retry_count=controller_retry_count,
+                        controller_last_result=controller_last_result,
+                        bandit=best_candidate.get("bandit", {}),
+                    )
                 self._emit_progress_event(
                     document_id=document_id,
                     section_id=section_id,
@@ -1707,7 +1757,7 @@ class DocumentGenerationOrchestrator:
                     else:
                         pass_message = f"达到最大检测次数 {effective_attempt_cap}，接收最佳真实草稿"
                         pass_reason = "max_attempts_reached"
-                    if self.accept_best_real_draft and self._is_meaningful_real_draft(best_candidate.get("draft", ""), best_candidate.get("outline", current_outline)):
+                    if self.accept_best_real_draft and self._is_usable_real_draft(best_candidate.get("draft", ""), best_candidate.get("outline", current_outline)):
                         self._emit_progress_event(
                             document_id=document_id,
                             section_id=section_id,
@@ -1793,7 +1843,7 @@ class DocumentGenerationOrchestrator:
                     # 完全没有draft时，返回空内容而不是outline
                     fallback_draft = ""
                     fallback_note = "（内容生成失败，仍在恢复中）"
-                fallback_is_meaningful = self._is_meaningful_real_draft(fallback_draft, current_outline)
+                fallback_is_meaningful = self._is_usable_real_draft(fallback_draft, current_outline)
                 verifier_unavailable_only = (
                     int(metrics.get("verifier_error", 0) or 0) > 0
                     and int(metrics.get("verifier_failed", 0) or 0) == 0
@@ -1994,7 +2044,7 @@ class DocumentGenerationOrchestrator:
                     except Exception:
                         pass
                     
-                    if self.accept_best_real_draft and self._is_meaningful_real_draft(fallback_text, current_outline):
+                    if self.accept_best_real_draft and self._is_usable_real_draft(fallback_text, current_outline):
                         self._emit_progress_event(
                             document_id=document_id,
                             section_id=section_id,
