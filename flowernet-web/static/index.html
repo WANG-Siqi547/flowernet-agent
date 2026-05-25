@@ -820,6 +820,7 @@
       const documentIdRef = useRef("");
       const docRef = useRef({ title: "", content: "" });
       const banditEventsRef = useRef([]);
+      const finalRecoveryStartedRef = useRef(false);
 
       useEffect(() => {
         localStorage.setItem("flowernet_total_generations", String(totalGenerations));
@@ -966,6 +967,7 @@
 
       const completeFromRecoveredDocument = (recovered, message = "Generation completed.") => {
         if (!recovered || !recovered.success) return false;
+        if (!String(recovered.content || "").trim()) return false;
         const stats = recovered.stats || {};
         const expected = Math.max(1, Number(stats.expected_subsections || progressRef.current.total || 0));
         const passed = Math.min(expected, Number(stats.passed_subsections || stats.total_generated || expected || 0));
@@ -984,8 +986,44 @@
         setRunning(false);
         runningRef.current = false;
         streamEndedRef.current = true;
+        finalRecoveryStartedRef.current = false;
         closeSse();
         return true;
+      };
+
+      const startFinalRecoveryPolling = (reason = "final progress") => {
+        const docId = documentIdRef.current;
+        if (!docId || finalRecoveryStartedRef.current || streamEndedRef.current || docRef.current.content) return;
+        finalRecoveryStartedRef.current = true;
+        setStatusText("All subsections passed. Finalizing chapter assets and assembling document...");
+        const startedAt = Date.now();
+        const deadline = startedAt + (30 * 60 * 1000);
+
+        const poll = async () => {
+          if (!runningRef.current || streamEndedRef.current || docRef.current.content) {
+            finalRecoveryStartedRef.current = false;
+            return;
+          }
+          if (Date.now() > deadline) {
+            finalRecoveryStartedRef.current = false;
+            setStatusText(`Final document recovery is still pending after ${reason}. Waiting for the live stream...`);
+            return;
+          }
+          try {
+            const resp = await fetch(`/api/recover-document?document_id=${encodeURIComponent(docId)}`, { cache: "no-store" });
+            if (resp.ok) {
+              const recovered = await resp.json();
+              if (completeFromRecoveredDocument(recovered, "Generation completed after final document recovery.")) {
+                return;
+              }
+            }
+          } catch {
+            // Keep polling; the generator may still be assembling the final document.
+          }
+          window.setTimeout(poll, 5000);
+        };
+
+        window.setTimeout(poll, 1500);
       };
 
       const handleStart = () => {
@@ -996,6 +1034,7 @@
         closeSse();
         streamEndedRef.current = false;
         documentIdRef.current = "";
+        finalRecoveryStartedRef.current = false;
         setRunning(true);
         runningRef.current = true;
         setGenerationStartTime(Date.now());
@@ -1170,18 +1209,7 @@
                 });
                 const totalNow = Math.max(1, Number(progressRef.current.total || progress.total || 0));
                 if (completedSubsectionsRef.current.size >= totalNow && documentIdRef.current) {
-                  window.setTimeout(async () => {
-                    if (!runningRef.current || streamEndedRef.current || docRef.current.content) return;
-                    try {
-                      const resp = await fetch(`/api/recover-document?document_id=${encodeURIComponent(documentIdRef.current)}`, { cache: "no-store" });
-                      if (resp.ok) {
-                        const recovered = await resp.json();
-                        completeFromRecoveredDocument(recovered, "Generation completed after final progress recovery.");
-                      }
-                    } catch {
-                      // Keep the stream alive; the normal complete event may still arrive.
-                    }
-                  }, 1200);
+                  startFinalRecoveryPolling("all subsections passed");
                 }
             }
 
@@ -1204,6 +1232,9 @@
                 const percent = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
                 return { current, total, percent };
               });
+              if (metaCompleted >= metaTotal && documentIdRef.current) {
+                startFinalRecoveryPolling("progress metadata reached total");
+              }
             }
           }
 
@@ -1226,6 +1257,7 @@
           if (data.type === "complete") {
             console.log("🎉 [DEBUG] COMPLETE EVENT RECEIVED!", data);
             streamEndedRef.current = true;
+            finalRecoveryStartedRef.current = false;
             const result = data.result || {};
             const stats = result.stats || {};
             const dims = stats.quality_dimension_avgs || {};
