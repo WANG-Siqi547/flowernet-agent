@@ -721,6 +721,47 @@
           return appendBanditPoint(series, arm, reward);
         }, createEmptyBanditSeries());
       };
+      const summarizeBanditEvents = (events, fallback = {}) => {
+        const items = (Array.isArray(events) ? events : [])
+          .map((item) => {
+            const arm = String(item?.arm || item?.selected_arm || item?.chosen_arm || "").trim();
+            const rawReward = Number(item?.reward ?? 0);
+            return {
+              arm,
+              reward: Math.max(0, Math.min(1, Number.isFinite(rawReward) ? rawReward : 0)),
+              selection_mode: String(item?.selection_mode || item?.mode || ""),
+            };
+          })
+          .filter((item) => banditSeriesKeys.includes(item.arm));
+        if (!items.length) return fallback || {};
+
+        const counts = Object.fromEntries(banditSeriesKeys.map((key) => [key, 0]));
+        let rewardSum = 0;
+        let rewardCount = 0;
+        let lastMode = "";
+        const rewards = [];
+        items.forEach((item) => {
+          counts[item.arm] += 1;
+          rewardSum += item.reward;
+          rewardCount += 1;
+          rewards.push(item.reward);
+          if (item.selection_mode) lastMode = item.selection_mode;
+        });
+        const rmin = Math.min(...rewards);
+        const rmax = Math.max(...rewards);
+        const pad = Math.max(0.01, Math.abs(rmax - rmin) * 0.12, Math.abs(rmax) * 0.05);
+        const last = items[items.length - 1];
+        return {
+          ...(fallback || {}),
+          bandit_selected_arm_counts: counts,
+          bandit_reward_avg: rewardCount > 0 ? rewardSum / rewardCount : Number(fallback?.bandit_reward_avg || 0),
+          bandit_last_selected_arm: last?.arm || String(fallback?.bandit_last_selected_arm || ""),
+          bandit_last_selection_mode: lastMode || String(fallback?.bandit_last_selection_mode || ""),
+          bandit_event_count: rewardCount,
+          bandit_plot_y_min: Math.max(0, rmin - pad),
+          bandit_plot_y_max: Math.min(1, rmax + pad),
+        };
+      };
       const [topic, setTopic] = useState("");
       const [background, setBackground] = useState("Research student in AI systems");
       const [extra, setExtra] = useState("");
@@ -778,6 +819,7 @@
       const streamEndedRef = useRef(false);
       const documentIdRef = useRef("");
       const docRef = useRef({ title: "", content: "" });
+      const banditEventsRef = useRef([]);
 
       useEffect(() => {
         localStorage.setItem("flowernet_total_generations", String(totalGenerations));
@@ -973,6 +1015,7 @@
         setQualitySummary({ quality_score_avg: 0, quality_score_count: 0, unieval_available_subsections: 0, unieval_fallback_subsections: 0 });
         setBanditSeries(createEmptyBanditSeries());
         setBanditSummary({ bandit_selected_arm_counts: {}, bandit_reward_avg: 0, bandit_last_selected_arm: "", bandit_last_selection_mode: "", bandit_event_count: 0 });
+        banditEventsRef.current = [];
 
         const params = new URLSearchParams({
           topic,
@@ -1095,11 +1138,16 @@
                 bandit_plot_y_max: Number(meta.plot_y_max ?? prev.bandit_plot_y_max ?? 0.1),
               }));
               if (arm) {
+                banditEventsRef.current = [
+                  ...banditEventsRef.current,
+                  { arm, reward, selection_mode: selectionMode },
+                ].slice(-200);
                 setBanditSeries((s) => {
                   const next = appendBanditPoint(s, arm, reward);
                   console.log(`🎯 [Updated Bandit Series]`, next);
                   return next;
                 });
+                setBanditSummary((prev) => summarizeBanditEvents(banditEventsRef.current, prev));
               } else {
                 console.log(`⚠️ [Empty Arm] Skipping bandit update - arm is empty, reward=${reward}`);
               }
@@ -1209,19 +1257,31 @@
               unieval_fallback_subsections: Number(stats.unieval_fallback_subsections || 0),
             });
             setQualityPeak((prev) => Math.max(Number(prev || 0), Number(stats.quality_score_avg || 0)));
-            setBanditSummary((prev) => ({
-              ...prev,
-              bandit_selected_arm_counts: stats.bandit_selected_arm_counts || prev.bandit_selected_arm_counts || {},
-              bandit_reward_avg: Number(stats.bandit_reward_avg || prev.bandit_reward_avg || 0),
-              bandit_last_selected_arm: String(stats.bandit_last_selected_arm || prev.bandit_last_selected_arm || ""),
-              bandit_last_selection_mode: String(stats.bandit_last_selection_mode || prev.bandit_last_selection_mode || ""),
-              bandit_event_count: Object.values(stats.bandit_selected_arm_counts || {}).reduce((acc, n) => acc + Number(n || 0), 0) || Number(prev.bandit_event_count || 0),
-              bandit_plot_y_min: Number(stats.bandit_plot_y_min ?? stats.plot_y_min ?? prev.bandit_plot_y_min ?? 0.0),
-              bandit_plot_y_max: Number(stats.bandit_plot_y_max ?? stats.plot_y_max ?? prev.bandit_plot_y_max ?? 0.1),
-            }));
+            const statsBanditEvents = Array.isArray(stats.bandit_recent_events) ? stats.bandit_recent_events : [];
+            const liveBanditEvents = banditEventsRef.current || [];
+            const bestBanditEvents = statsBanditEvents.length ? statsBanditEvents : liveBanditEvents;
+            if (statsBanditEvents.length) {
+              banditEventsRef.current = statsBanditEvents.slice(-200);
+            }
+            setBanditSummary((prev) => {
+              const counts = stats.bandit_selected_arm_counts && Object.keys(stats.bandit_selected_arm_counts).length
+                ? stats.bandit_selected_arm_counts
+                : (prev.bandit_selected_arm_counts || {});
+              const merged = {
+                ...prev,
+                bandit_selected_arm_counts: counts,
+                bandit_reward_avg: Number(stats.bandit_reward_avg || prev.bandit_reward_avg || 0),
+                bandit_last_selected_arm: String(stats.bandit_last_selected_arm || prev.bandit_last_selected_arm || ""),
+                bandit_last_selection_mode: String(stats.bandit_last_selection_mode || prev.bandit_last_selection_mode || ""),
+                bandit_event_count: Object.values(counts || {}).reduce((acc, n) => acc + Number(n || 0), 0) || Number(prev.bandit_event_count || 0),
+                bandit_plot_y_min: Number(stats.bandit_plot_y_min ?? stats.plot_y_min ?? prev.bandit_plot_y_min ?? 0.0),
+                bandit_plot_y_max: Number(stats.bandit_plot_y_max ?? stats.plot_y_max ?? prev.bandit_plot_y_max ?? 0.1),
+              };
+              return bestBanditEvents.length ? summarizeBanditEvents(bestBanditEvents, merged) : merged;
+            });
             setBanditSeries((prev) => {
               const currentCount = banditSeriesKeys.reduce((sum, k) => sum + ((prev[k]?.length || 0)), 0);
-              const rebuilt = buildBanditSeriesFromEvents(stats.bandit_recent_events || []);
+              const rebuilt = buildBanditSeriesFromEvents(bestBanditEvents);
               const rebuiltCount = banditSeriesKeys.reduce((sum, k) => sum + ((rebuilt[k]?.length || 0)), 0);
               if (rebuiltCount > currentCount) {
                 return rebuilt;
