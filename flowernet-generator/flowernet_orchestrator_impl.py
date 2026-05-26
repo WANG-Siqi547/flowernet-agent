@@ -642,7 +642,7 @@ class DocumentGenerationOrchestrator:
         prompt = f"""
 You are FlowerNet's chapter-level asset planner.
 
-The following chapter has fully passed text verification. Decide whether the chapter needs one or two useful in-document assets. Use only information grounded in the passed chapter text. Do not invent external facts.
+The following chapter has fully passed text verification. Decide whether the chapter needs one useful in-document table. Use only information grounded in the passed chapter text. Do not invent external facts.
 
 Document title: {document_title}
 Chapter id: {section_id}
@@ -664,23 +664,15 @@ Return strict JSON only:
       "caption": "one sentence explaining why this table belongs here",
       "insert_after_subsection_id": "one of the available subsection ids",
       "markdown": "| Column A | Column B |\\n| --- | --- |\\n| ... | ... |"
-    }},
-    {{
-      "type": "image_prompt",
-      "title": "specific figure title",
-      "caption": "publication-style figure caption grounded in the chapter",
-      "insert_after_subsection_id": "one of the available subsection ids",
-      "prompt": "detailed prompt for a future image-generation model; do not claim an image has already been generated",
-      "alt_text": "concise accessibility description"
     }}
   ]
 }}
 
 Rules:
 - Prefer one table when the chapter compares concepts, mechanisms, stages, variables, methods, or evidence.
-- Prefer one image_prompt when a conceptual diagram, workflow, architecture, or process map would help.
-- Return an empty assets array if neither would add real value.
-- Maximum 2 assets total.
+- Do not return image prompts, figure prompts, diagrams, chart specifications, or non-table assets.
+- Return an empty assets array if a table would not add real value.
+- Maximum 1 asset total.
 - Tables must be concise, 3-6 columns and 3-8 rows.
 - Never include placeholder values, fake citations, or template text.
 """.strip()
@@ -704,11 +696,11 @@ Rules:
             allowed_anchor_ids = {sid for sid in subsection_ids if sid}
             default_anchor = subsection_ids[-1] if subsection_ids else ""
             normalized: List[Dict[str, Any]] = []
-            for idx, asset in enumerate(raw_assets[:2], 1):
+            for idx, asset in enumerate(raw_assets[:1], 1):
                 if not isinstance(asset, dict):
                     continue
                 asset_type = str(asset.get("type") or "").strip().lower()
-                if asset_type not in {"table", "image_prompt"}:
+                if asset_type != "table":
                     continue
                 anchor = str(asset.get("insert_after_subsection_id") or "").strip()
                 if anchor not in allowed_anchor_ids:
@@ -726,18 +718,10 @@ Rules:
                     "section_id": section_id,
                     "section_title": section_title,
                 }
-                if asset_type == "table":
-                    table = self._normalize_markdown_table(str(asset.get("markdown") or ""))
-                    if not table:
-                        continue
-                    item["markdown"] = table
-                else:
-                    image_prompt = str(asset.get("prompt") or "").strip()[:1200]
-                    alt_text = str(asset.get("alt_text") or "").strip()[:300]
-                    if not image_prompt:
-                        continue
-                    item["prompt"] = image_prompt
-                    item["alt_text"] = alt_text or caption
+                table = self._normalize_markdown_table(str(asset.get("markdown") or ""))
+                if not table:
+                    continue
+                item["markdown"] = table
                 normalized.append(item)
 
             if normalized:

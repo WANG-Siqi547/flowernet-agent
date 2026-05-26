@@ -2209,21 +2209,6 @@ def _render_chapter_asset_markdown(asset: Dict[str, Any], ordinal: int) -> str:
         if caption:
             lines.extend(["", f"*{caption}*"])
         return "\n".join(lines).strip()
-    if asset_type == "image_prompt":
-        prompt = str(asset.get("prompt") or "").strip()
-        alt_text = str(asset.get("alt_text") or caption or title).strip()
-        if not prompt:
-            return ""
-        lines.extend([
-            f"**Figure {ordinal}. {title}**",
-            "",
-            f"> Image generation prompt: {prompt}",
-        ])
-        if caption:
-            lines.append(f"> Caption: {caption}")
-        if alt_text:
-            lines.append(f"> Alt text: {alt_text}")
-        return "\n".join(lines).strip()
     return ""
 
 
