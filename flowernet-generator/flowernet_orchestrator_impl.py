@@ -790,13 +790,18 @@ Rules:
         if not self.history_manager:
             return
         try:
+            event_metadata = dict(metadata or {})
+            if section_id and not event_metadata.get("section_id"):
+                event_metadata["section_id"] = section_id
+            if subsection_id and not event_metadata.get("subsection_id"):
+                event_metadata["subsection_id"] = subsection_id
             self.history_manager.add_progress_event(
                 document_id=document_id,
                 section_id=section_id,
                 subsection_id=subsection_id,
                 stage=stage,
                 message=message,
-                metadata=metadata or {},
+                metadata=event_metadata,
             )
         except Exception as e:
             print(f"⚠️  写入流程事件失败: {e}")
@@ -2913,7 +2918,7 @@ Rules:
                     subsection_id=subsection_id,
                     stage="controller_result",
                     message=(
-                        f"第 {iterations} 轮：Controller 返回 {'有效' if (controller_result.get('success') and improved_outline and controller_changed) else '无效'} 改纲"
+                        f"第 {iterations} 轮：Controller 返回 {'有效' if controller_effective else '可用' if (controller_result.get('success') and improved_outline and controller_changed) else '无效'} 改纲"
                     ),
                     metadata={
                         "iteration": iterations,

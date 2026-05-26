@@ -5032,6 +5032,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                         detail_msg = event_item.get("message", "")
                         event_stage = event_item.get("stage", "")
                         event_meta = event_item.get("metadata", {})
+                        event_meta = dict(event_meta) if isinstance(event_meta, dict) else {}
+                        if event_item.get("section_id") and not event_meta.get("section_id"):
+                            event_meta["section_id"] = event_item.get("section_id")
+                        if event_item.get("subsection_id") and not event_meta.get("subsection_id"):
+                            event_meta["subsection_id"] = event_item.get("subsection_id")
                         if event_stage == "controller_result":
                             print(f"🎯 [Web SSE Forward] controller_result event: arm={event_meta.get('selected_arm')}, reward={event_meta.get('reward')}")
                         msg = json.dumps({
@@ -5138,6 +5143,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                     detail_msg = event_item.get("message", "")
                     event_stage = event_item.get("stage", "")
                     event_meta = event_item.get("metadata", {})
+                    event_meta = dict(event_meta) if isinstance(event_meta, dict) else {}
+                    if event_item.get("section_id") and not event_meta.get("section_id"):
+                        event_meta["section_id"] = event_item.get("section_id")
+                    if event_item.get("subsection_id") and not event_meta.get("subsection_id"):
+                        event_meta["subsection_id"] = event_item.get("subsection_id")
                     msg = json.dumps({
                         'type': 'detail',
                         'message': detail_msg,

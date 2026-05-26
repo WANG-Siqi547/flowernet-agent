@@ -47,6 +47,7 @@ DOMAIN_FILTER_SIMILARITY_THRESHOLD = float(os.getenv("DOMAIN_FILTER_SIMILARITY_T
 DOMAIN_FILTER_MIN_INDEX_TERMS = int(os.getenv("DOMAIN_FILTER_MIN_INDEX_TERMS", "3"))
 DOMAIN_FILTER_MODEL = os.getenv("DOMAIN_FILTER_MODEL", "sentence-transformers/paraphrase-MiniLM-L6-v2")
 DOMAIN_FILTER_SEMANTIC_ENABLED = os.getenv("DOMAIN_FILTER_SEMANTIC_ENABLED", "false").lower() == "true"
+DOMAIN_FILTER_SEMANTIC_ALLOW_NETWORK = os.getenv("DOMAIN_FILTER_SEMANTIC_ALLOW_NETWORK", "false").lower() == "true"
 
 
 class IndexTermsExtractor:
@@ -219,6 +220,13 @@ class DomainSimilarityScorer:
         self.model = None
         self.extractor = IndexTermsExtractor()
         if HAS_SENTENCE_TRANSFORMERS and DOMAIN_FILTER_SEMANTIC_ENABLED:
+            if not DOMAIN_FILTER_SEMANTIC_ALLOW_NETWORK and not os.path.isdir(DOMAIN_FILTER_MODEL):
+                logger.warning(
+                    "⚠️  Domain semantic model enabled but model is not a local directory; "
+                    "skipping load to avoid blocking final assembly on network/model download. "
+                    "Set DOMAIN_FILTER_MODEL to a local path or DOMAIN_FILTER_SEMANTIC_ALLOW_NETWORK=true."
+                )
+                return
             try:
                 self.model = SentenceTransformer(DOMAIN_FILTER_MODEL)
                 logger.info(f"✅ DomainSimilarityScorer loaded model: {DOMAIN_FILTER_MODEL}")

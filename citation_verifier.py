@@ -37,6 +37,7 @@ CITATION_STRICT_MODE = os.getenv("CITATION_STRICT_MODE", "false").lower() == "tr
 CITATION_MIN_REFERENCES = int(os.getenv("CITATION_MIN_REFERENCES", "4"))
 SEMANTIC_MODEL = os.getenv("CITATION_SEMANTIC_MODEL", "sentence-transformers/paraphrase-MiniLM-L6-v2")
 CITATION_SEMANTIC_ENABLED = os.getenv("CITATION_SEMANTIC_ENABLED", "false").lower() == "true"
+CITATION_SEMANTIC_ALLOW_NETWORK = os.getenv("CITATION_SEMANTIC_ALLOW_NETWORK", "false").lower() == "true"
 
 # Domain-to-keywords mapping for cross-domain drift detection
 DOMAIN_KEYWORDS = {
@@ -99,6 +100,13 @@ class DomainClassifier:
         self.topic_embedding = None
         self.model = None
         if HAS_SENTENCE_TRANSFORMERS and CITATION_SEMANTIC_ENABLED:
+            if not CITATION_SEMANTIC_ALLOW_NETWORK and not os.path.isdir(SEMANTIC_MODEL):
+                logger.warning(
+                    "Citation semantic model enabled but model is not a local directory; "
+                    "skipping load to avoid blocking final assembly on network/model download. "
+                    "Set CITATION_SEMANTIC_MODEL to a local path or CITATION_SEMANTIC_ALLOW_NETWORK=true."
+                )
+                return
             try:
                 self.model = SentenceTransformer(SEMANTIC_MODEL)
             except Exception as e:
