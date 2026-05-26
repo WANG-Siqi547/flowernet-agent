@@ -241,7 +241,9 @@ class FlowerNetOutliner:
         ]
         if any(re.search(pattern, text, flags=re.I) for pattern in label_artifact_patterns):
             return True
-        if len(text) > 64 and re.search(r"[。！？.!?，,；;]", text):
+        if len(text) > 120:
+            return True
+        if len(text) > 80 and re.search(r"[。！？.!?]", text):
             return True
         return False
 

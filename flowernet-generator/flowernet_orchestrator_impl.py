@@ -1150,6 +1150,7 @@ Rules:
             "bandit_last_selection_mode": "",
             "bandit_last_constraints": {},
             "bandit_recent_events": [],
+            "chapter_assets": [],
         }
         
         start_time = datetime.now()
