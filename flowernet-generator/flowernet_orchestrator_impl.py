@@ -1571,7 +1571,7 @@ Rules:
                     user_requirements=user_requirements,
                 )
                 section_result["chapter_assets"] = chapter_assets
-                document_result["chapter_assets"].extend(chapter_assets)
+                document_result.setdefault("chapter_assets", []).extend(chapter_assets)
                 document_result["sections"].append(section_result)
             
             elapsed = (datetime.now() - start_time).total_seconds()
