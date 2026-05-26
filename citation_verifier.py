@@ -36,6 +36,7 @@ CITATION_SEMANTIC_THRESHOLD = float(os.getenv("CITATION_SEMANTIC_THRESHOLD", "0.
 CITATION_STRICT_MODE = os.getenv("CITATION_STRICT_MODE", "false").lower() == "true"
 CITATION_MIN_REFERENCES = int(os.getenv("CITATION_MIN_REFERENCES", "4"))
 SEMANTIC_MODEL = os.getenv("CITATION_SEMANTIC_MODEL", "sentence-transformers/paraphrase-MiniLM-L6-v2")
+CITATION_SEMANTIC_ENABLED = os.getenv("CITATION_SEMANTIC_ENABLED", "false").lower() == "true"
 
 # Domain-to-keywords mapping for cross-domain drift detection
 DOMAIN_KEYWORDS = {
@@ -97,11 +98,13 @@ class DomainClassifier:
         self.detected_domains: Set[str] = set()
         self.topic_embedding = None
         self.model = None
-        if HAS_SENTENCE_TRANSFORMERS:
+        if HAS_SENTENCE_TRANSFORMERS and CITATION_SEMANTIC_ENABLED:
             try:
                 self.model = SentenceTransformer(SEMANTIC_MODEL)
             except Exception as e:
                 logger.warning(f"Failed to load semantic model: {e}, falling back to keyword matching")
+        elif HAS_SENTENCE_TRANSFORMERS:
+            logger.info("Citation semantic model disabled; using keyword matching")
     
     def classify(self, topic: str, section_outline: str = "", full_content: str = "") -> Set[str]:
         """Classify document into academic domains"""

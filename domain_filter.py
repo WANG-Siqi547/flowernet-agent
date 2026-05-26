@@ -46,6 +46,7 @@ DOMAIN_FILTER_ENABLED = os.getenv("DOMAIN_FILTER_ENABLED", "true").lower() == "t
 DOMAIN_FILTER_SIMILARITY_THRESHOLD = float(os.getenv("DOMAIN_FILTER_SIMILARITY_THRESHOLD", "0.30"))
 DOMAIN_FILTER_MIN_INDEX_TERMS = int(os.getenv("DOMAIN_FILTER_MIN_INDEX_TERMS", "3"))
 DOMAIN_FILTER_MODEL = os.getenv("DOMAIN_FILTER_MODEL", "sentence-transformers/paraphrase-MiniLM-L6-v2")
+DOMAIN_FILTER_SEMANTIC_ENABLED = os.getenv("DOMAIN_FILTER_SEMANTIC_ENABLED", "false").lower() == "true"
 
 
 class IndexTermsExtractor:
@@ -217,12 +218,14 @@ class DomainSimilarityScorer:
     def __init__(self):
         self.model = None
         self.extractor = IndexTermsExtractor()
-        if HAS_SENTENCE_TRANSFORMERS:
+        if HAS_SENTENCE_TRANSFORMERS and DOMAIN_FILTER_SEMANTIC_ENABLED:
             try:
                 self.model = SentenceTransformer(DOMAIN_FILTER_MODEL)
                 logger.info(f"✅ DomainSimilarityScorer loaded model: {DOMAIN_FILTER_MODEL}")
             except Exception as e:
                 logger.warning(f"⚠️  Failed to load semantic model: {e}")
+        elif HAS_SENTENCE_TRANSFORMERS:
+            logger.info("ℹ️ DomainSimilarityScorer semantic model disabled; using keyword matching")
 
     def compute_similarity(
         self,
