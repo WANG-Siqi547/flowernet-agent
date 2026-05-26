@@ -4680,7 +4680,7 @@ def index(request: Request) -> FileResponse:
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok", "service": "flowernet-web"}
+    return {"status": "ok", "service": "flowernet-web", "source_version": "2026-05-26-recovery-complete-v1"}
 
 
 @app.get("/api/stats")

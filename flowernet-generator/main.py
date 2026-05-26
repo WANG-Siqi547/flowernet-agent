@@ -542,7 +542,8 @@ async def health():
     """服务健康检查"""
     return {
         "status": "healthy" if generator else "degraded",
-        "generator_initialized": generator is not None
+        "generator_initialized": generator is not None,
+        "source_version": "2026-05-26-chapter-assets-v2",
     }
 
 
