@@ -921,11 +921,29 @@
       };
 
       const parseStage = (stage) => {
-        if (stage.includes("outline")) return "outliner";
-        if (stage.includes("generator") || stage.includes("subsection_start")) return "generator";
-        if (stage.includes("verifier")) return "verifier";
-        if (stage.includes("controller")) return "controller";
-        return "outliner";
+        const text = String(stage || "");
+        if (!text) return null;
+        if (text.includes("outline")) return "outliner";
+        if (
+          text.includes("generator") ||
+          text.includes("subsection_start") ||
+          text.includes("rag_") ||
+          text.includes("search")
+        ) return "generator";
+        if (
+          text.includes("verifier") ||
+          text.includes("subsection_passed") ||
+          text.includes("subsection_best_real_draft_accepted") ||
+          text.includes("subsection_forced_pass")
+        ) return "verifier";
+        if (
+          text.includes("controller") ||
+          text.includes("chapter_asset") ||
+          text.includes("document_complete") ||
+          text.includes("final") ||
+          text.includes("assembly")
+        ) return "controller";
+        return null;
       };
 
       const stageToLabel = (stage) => {
@@ -1084,7 +1102,8 @@
               documentIdRef.current = String(meta.document_id);
               outlineReadyRef.current = true;
             }
-            setActiveNode(parseStage(stage));
+            const parsedNode = parseStage(stage);
+            if (parsedNode) setActiveNode(parsedNode);
             const section = meta.section_title || meta.section_id || "Section";
             const sub = meta.subsection_title || meta.subsection_id || "Subsection";
             const key = getSubsectionKey(meta);
