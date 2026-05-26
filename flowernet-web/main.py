@@ -5068,6 +5068,13 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         if error_occurred:
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
+                recovered = _recover_partial_document(document_id=document_id, attempts=1, timeout_seconds=30)
+                if recovered.get("success") and recovered.get("content"):
+                    if isinstance(gen_resp, dict):
+                        recovered.setdefault("stats", {}).update(extract_document_quality_metrics(gen_resp))
+                    msg = json.dumps({'type': 'complete', 'result': recovered})
+                    yield f"data: {msg}\n\n"
+                    return
                 detail = _clean_error_text((gen_resp or {}).get("error") if isinstance(gen_resp, dict) else "", "生成服务连接失败")
                 msg = json.dumps({'type': 'error', 'message': f'{detail}；已生成 {len(history_items)} 个小节，但未完成全文，已停止返回不完整文档'})
                 yield f"data: {msg}\n\n"
@@ -5116,6 +5123,13 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
         if not gen_resp.get("success"):
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
+                recovered = _recover_partial_document(document_id=document_id, attempts=1, timeout_seconds=30)
+                if recovered.get("success") and recovered.get("content"):
+                    if isinstance(gen_resp, dict):
+                        recovered.setdefault("stats", {}).update(extract_document_quality_metrics(gen_resp))
+                    msg = json.dumps({'type': 'complete', 'result': recovered})
+                    yield f"data: {msg}\n\n"
+                    return
                 err_msg = _clean_error_text(gen_resp.get('error'), '文档生成失败')
                 msg = json.dumps({'type': 'error', 'message': f'{err_msg}；已生成 {len(history_items)} 个小节，但未完成全文，已停止返回不完整文档'})
                 yield f"data: {msg}\n\n"
