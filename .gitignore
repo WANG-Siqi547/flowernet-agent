@@ -72,6 +72,8 @@ docker-compose.local.yml
 *.pt
 *.pth
 models/
+!models/
+!models/*.json
 
 # 临时文件
 tmp/

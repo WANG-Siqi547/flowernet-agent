@@ -35,6 +35,11 @@ import time
 import os
 import random
 import re
+import sys
+
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
 
 try:
     from rag_search import RAGSearchEngine, SourceVerifier
@@ -51,6 +56,17 @@ try:
     from flowernet_agent_stack import get_vector_store
 except Exception:
     get_vector_store = None  # type: ignore
+
+try:
+    from flowernet_trained_models import (
+        load_json_model,
+        predict_reward_model,
+        resolve_model_path,
+    )
+except Exception:
+    load_json_model = None  # type: ignore
+    predict_reward_model = None  # type: ignore
+    resolve_model_path = None  # type: ignore
 
 
 class DocumentGenerationOrchestrator:
@@ -132,6 +148,12 @@ class DocumentGenerationOrchestrator:
         self._local_verifier = None
         self._local_controller = None
         self.deadline_monotonic: Optional[float] = None
+        self.reward_model_enabled = os.getenv("FLOWERNET_REWARD_MODEL_ENABLED", "true").lower() == "true"
+        self.reward_model_path = self._resolve_model_path(
+            os.getenv("FLOWERNET_REWARD_MODEL_PATH", os.path.join("models", "reward_model.json")),
+            "reward_model.json",
+        )
+        self._reward_model_cache: Dict[str, Any] = {"path": "", "mtime": 0.0, "model": None}
         
         self.rag_enabled = os.getenv("RAG_ENABLED", "true").lower() == "true" and RAG_AVAILABLE
         self.rag_force_citation = os.getenv("RAG_FORCE_CITATION", "true").lower() == "true"
@@ -776,6 +798,38 @@ Rules:
         """设置本地Generator实例，避免HTTP自调用"""
         self._local_generator = generator
         print("✅ Orchestrator已绑定本地Generator实例")
+
+    def _resolve_model_path(self, raw: str, default_name: str) -> str:
+        if resolve_model_path is not None:
+            return resolve_model_path(raw, default_name)
+        value = (raw or "").strip() or os.path.join("models", default_name)
+        if os.path.isabs(value):
+            return value
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), value)
+
+    def _load_reward_model(self) -> Optional[Dict[str, Any]]:
+        if not self.reward_model_enabled or load_json_model is None:
+            return None
+        try:
+            mtime = os.path.getmtime(self.reward_model_path)
+        except Exception:
+            return None
+        if (
+            str(self._reward_model_cache.get("path") or "") == self.reward_model_path
+            and abs(float(self._reward_model_cache.get("mtime") or 0.0) - mtime) < 1e-9
+        ):
+            cached = self._reward_model_cache.get("model")
+            return cached if isinstance(cached, dict) else None
+        model = load_json_model(self.reward_model_path, "reward_model")
+        self._reward_model_cache.update({"path": self.reward_model_path, "mtime": mtime, "model": model})
+        if model:
+            print(f"✅ Loaded FlowerNet reward model: {self.reward_model_path}")
+        return model
+
+    def _predict_reward_score(self, verification: Dict[str, Any], iteration: int) -> Dict[str, Any]:
+        if predict_reward_model is None:
+            return {"used": False, "score": 0.0, "features": []}
+        return predict_reward_model(self._load_reward_model(), verification, iteration=iteration)
 
     def _emit_progress_event(
         self,
@@ -2542,6 +2596,7 @@ Rules:
             semantic_dimensions = verify_result.get("quality_dimensions", {}) if isinstance(verify_result.get("quality_dimensions"), dict) else {}
             dimension_check = verify_result.get("quality_dimensions_check", {}) if isinstance(verify_result.get("quality_dimensions_check"), dict) else {}
             failed_dimensions = verify_result.get("quality_dimensions_failed", []) if isinstance(verify_result.get("quality_dimensions_failed"), list) else []
+            trained_reward = self._predict_reward_score(verify_result, iterations)
             source_check_full = dict(source_check) if isinstance(source_check, dict) else {}
             available_source_reference_count = len(rag_search_result.get("results", []) or [])
             source_reference_count = max(
@@ -2574,6 +2629,9 @@ Rules:
                     "source_check": source_check_full,
                     "source_check_passed": bool(source_check_full.get("passed", False)),
                     "source_reference_count": source_reference_count,
+                    "trained_reward_score": trained_reward.get("score", 0.0),
+                    "trained_reward_model_used": bool(trained_reward.get("used", False)),
+                    "trained_reward_model_version": trained_reward.get("model_version", ""),
                 },
             )
 
@@ -2645,6 +2703,7 @@ Rules:
                     "controller_source": controller_last_result.get("source", ""),
                     "verification": verify_result,
                     "bandit": bandit_debug,
+                    "trained_reward": trained_reward,
                     "all_drafts": all_drafts,
                     "forced_pass": False,
                     "force_reason": "",
@@ -2662,6 +2721,7 @@ Rules:
                     "controller_source": controller_last_result.get("source", ""),
                     "bandit": bandit_debug,
                     "source_results": rag_search_result.get("results", []),
+                    "trained_reward": trained_reward,
                 "draft": draft,
                 "outline": current_outline,
                 "iteration": iterations,
@@ -2679,11 +2739,14 @@ Rules:
                     cand_quality_threshold = float(verification.get("quality_threshold", quality_threshold) or quality_threshold or 0)
                     cand_failed_dims = verification.get("quality_dimensions_failed", [])
                     failed_dim_count = len(cand_failed_dims) if isinstance(cand_failed_dims, list) else 0
+                    trained = candidate.get("trained_reward", {}) if isinstance(candidate.get("trained_reward"), dict) else {}
+                    trained_score = float(trained.get("score", 0.0) or 0.0) if trained.get("used") else 0.0
                     return (
                         max(0.0, rel_threshold - cand_rel) * 1.25
                         + max(0.0, cand_red - red_threshold)
                         + max(0.0, cand_quality_threshold - cand_quality) * 0.85
                         + failed_dim_count * 0.08
+                        - trained_score * 0.20
                     )
 
                 best_gap = candidate_gap(best_candidate)
@@ -2717,6 +2780,8 @@ Rules:
                             "relevancy_index": best_verification.get("relevancy_index", 0),
                             "redundancy_index": best_verification.get("redundancy_index", 1),
                             "quality_score": best_verification.get("quality_score", 0),
+                            "trained_reward_score": (best_candidate.get("trained_reward", {}) if isinstance(best_candidate.get("trained_reward"), dict) else {}).get("score", 0.0),
+                            "trained_reward_model_used": bool((best_candidate.get("trained_reward", {}) if isinstance(best_candidate.get("trained_reward"), dict) else {}).get("used", False)),
                             "reason": "prevent_controller_regression",
                         },
                     )
@@ -2738,6 +2803,7 @@ Rules:
                             "force_reason": "prevent_controller_regression",
                         },
                         "bandit": best_candidate.get("bandit", {}),
+                        "trained_reward": best_candidate.get("trained_reward", {}),
                         "all_drafts": all_drafts,
                         "forced_pass": False,
                         "force_reason": "prevent_controller_regression",
@@ -2898,6 +2964,9 @@ Rules:
                 bandit_obj = controller_result.get("bandit") if isinstance(controller_result.get("bandit"), dict) else {}
                 selection_obj = bandit_obj.get("selection") if isinstance(bandit_obj.get("selection"), dict) else {}
                 _selection_mode = str(selection_obj.get("mode", "") or "")
+                _trained_policy_used = bool(selection_obj.get("trained_policy_used", False))
+                _trained_policy_version = str(selection_obj.get("trained_policy_version", "") or "")
+                _trained_policy_blend = float(selection_obj.get("trained_policy_blend", 0.0) or 0.0)
                 
                 # 关键：如果 controller 响应中没有 arm/reward，主动从最近 bandit 事件读取
                 # 这确保即使 controller 服务不返回这些字段，我们也能获取真实的 bandit 数据
@@ -2933,6 +3002,9 @@ Rules:
                         "selected_arm": _selected_arm,
                         "reward": float(_reward_val or 0.0),
                         "selection_mode": _selection_mode,
+                        "trained_policy_used": _trained_policy_used,
+                        "trained_policy_version": _trained_policy_version,
+                        "trained_policy_blend": _trained_policy_blend,
                         "improved_outline_chars": len(improved_outline),
                         "error": controller_error_text[:260],
                     },

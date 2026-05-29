@@ -1,8 +1,16 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, Tuple
-from controler import FlowerNetController
 import os
+import sys
+
+_SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(_SERVICE_DIR)
+for _path in (_SERVICE_DIR, _ROOT_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from controler import FlowerNetController
 import requests
 import re
 import time
@@ -12,6 +20,17 @@ import random
 import threading
 import math
 
+try:
+    from flowernet_trained_models import (
+        load_json_model,
+        predict_controller_arm_prior,
+        resolve_model_path,
+    )
+except Exception:
+    load_json_model = None  # type: ignore
+    predict_controller_arm_prior = None  # type: ignore
+    resolve_model_path = None  # type: ignore
+
 app = FastAPI(title="FlowerNet Controller API")
 
 # 初始化 Controller
@@ -19,6 +38,7 @@ controller = FlowerNetController()
 
 outliner_url = None
 BANDIT_LOCK = threading.Lock()
+TRAINED_POLICY_CACHE: Dict[str, Any] = {"path": "", "mtime": 0.0, "model": None}
 
 
 def _project_root_path(*parts: str) -> str:
@@ -114,6 +134,33 @@ def _dot(weights: List[float], features: List[float]) -> float:
 
 def _clip01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
+
+
+def _trained_controller_policy_path() -> str:
+    raw = os.getenv("CONTROLLER_TRAINED_POLICY_PATH", os.path.join("models", "controller_policy.json"))
+    if resolve_model_path is not None:
+        return resolve_model_path(raw, "controller_policy.json")
+    return raw if os.path.isabs(raw) else _project_root_path(raw)
+
+
+def _load_trained_controller_policy() -> Optional[Dict[str, Any]]:
+    if os.getenv("CONTROLLER_TRAINED_POLICY_ENABLED", "true").lower() != "true":
+        return None
+    if load_json_model is None:
+        return None
+    path = _trained_controller_policy_path()
+    try:
+        mtime = os.path.getmtime(path)
+    except Exception:
+        return None
+    if str(TRAINED_POLICY_CACHE.get("path") or "") == path and abs(float(TRAINED_POLICY_CACHE.get("mtime") or 0.0) - mtime) < 1e-9:
+        cached = TRAINED_POLICY_CACHE.get("model")
+        return cached if isinstance(cached, dict) else None
+    model = load_json_model(path, "controller_policy")
+    TRAINED_POLICY_CACHE.update({"path": path, "mtime": mtime, "model": model})
+    if model:
+        print(f"✅ Loaded trained controller policy: {path}")
+    return model
 
 
 def _extract_numeric_suffix(value: Optional[str]) -> float:
@@ -417,6 +464,8 @@ def _bandit_choose_arm(
     constraints = state.get("constraints") if isinstance(state.get("constraints"), dict) else {}
     lambda_latency = float(constraints.get("lambda_latency", 0.0))
     lambda_cost = float(constraints.get("lambda_cost", 0.0))
+    trained_policy = _load_trained_controller_policy()
+    trained_blend = max(0.0, min(1.0, float(os.getenv("CONTROLLER_TRAINED_POLICY_BLEND", "0.35"))))
 
     # Defect-aware preference map for explainable arm alignment.
     arm_alignment = {
@@ -441,7 +490,13 @@ def _bandit_choose_arm(
 
         # Risk-aware confidence shaping: high uncertainty pressure favors defect-specific arms.
         alignment_bonus = 0.15 * _clip01(float(arm_alignment.get(arm, 0.0)))
-        constrained_total = total - latency_penalty - cost_penalty + alignment_bonus
+        trained_prior = None
+        trained_bonus = 0.0
+        if trained_policy and predict_controller_arm_prior is not None:
+            trained_prior = predict_controller_arm_prior(trained_policy, arm, features)
+            if trained_prior is not None:
+                trained_bonus = trained_blend * float(trained_prior)
+        constrained_total = total - latency_penalty - cost_penalty + alignment_bonus + trained_bonus
 
         scores[arm] = {
             "total": round(constrained_total, 4),
@@ -451,6 +506,8 @@ def _bandit_choose_arm(
             "latency_penalty": round(latency_penalty, 4),
             "cost_penalty": round(cost_penalty, 4),
             "alignment_bonus": round(alignment_bonus, 4),
+            "trained_prior": round(float(trained_prior), 4) if trained_prior is not None else None,
+            "trained_bonus": round(trained_bonus, 4),
             "avg_latency": round(avg_latency, 4),
             "avg_cost": round(avg_cost, 4),
             "count": int(arm_state.get("count", 0)),
@@ -467,7 +524,14 @@ def _bandit_choose_arm(
         mode = "score_exploit"
 
     probs = _selection_probabilities(scores=scores, epsilon=epsilon)
-    return chosen_arm, {"mode": mode, "scores": scores, "propensity": probs}
+    return chosen_arm, {
+        "mode": mode,
+        "scores": scores,
+        "propensity": probs,
+        "trained_policy_used": bool(trained_policy),
+        "trained_policy_blend": trained_blend if trained_policy else 0.0,
+        "trained_policy_version": trained_policy.get("version", "") if trained_policy else "",
+    }
 
 
 def _bandit_update(
