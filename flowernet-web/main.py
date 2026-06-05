@@ -391,8 +391,10 @@ def _assert_expected_frontend() -> None:
     required_signatures = [
         "FlowerNet Agent Dashboard",
         "FlowerNet Agent: High-Quality Long Document Generation",
-        "Dashboard Core",
-        "Bandit Analytics",
+        "Section-Level Micro Tracking",
+        "Verifier Quality Control",
+        "FlowerNet Full Metrics Board",
+        "self-auditing scientific writing system",
     ]
     missing = [sig for sig in required_signatures if sig not in html_text]
     forbidden_signatures = [
