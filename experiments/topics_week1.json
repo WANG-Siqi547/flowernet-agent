@@ -1,0 +1,106 @@
+{
+  "name": "FlowerNet Week 1 Unified Topics",
+  "selection_seed": 42,
+  "target": {
+    "chapter_count": 2,
+    "subsection_count": 2,
+    "language": "Chinese",
+    "style": "research report with evidence-aware long-form structure"
+  },
+  "notes": [
+    "The first ten topics are FreshWiki-2024-style public-knowledge prompts selected deterministically for long-form factual writing coverage.",
+    "The final five topics are education-domain prompts required by the FlowerNet experiment plan."
+  ],
+  "topics": [
+    {
+      "id": "fw24_001",
+      "group": "freshwiki_2024",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "prompt": "请写一篇关于 2024 年 AI agents 与工具调用工作流发展的长篇研究报告，重点覆盖概念演进、典型架构、评估方法、应用场景、风险与未来趋势。"
+    },
+    {
+      "id": "fw24_002",
+      "group": "freshwiki_2024",
+      "topic": "Multimodal large language models in real-world products",
+      "prompt": "请写一篇关于多模态大语言模型在真实产品中落地的长篇研究报告，比较文本、图像、语音、视频能力的融合路径、产品形态、评估指标与局限。"
+    },
+    {
+      "id": "fw24_003",
+      "group": "freshwiki_2024",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "prompt": "请写一篇关于检索增强生成与引用质量控制的长篇研究报告，说明 RAG 流程、引用漂移、证据选择、验证机制和工程治理方案。"
+    },
+    {
+      "id": "fw24_004",
+      "group": "freshwiki_2024",
+      "topic": "AI safety evaluations for frontier models",
+      "prompt": "请写一篇关于前沿 AI 模型安全评估的长篇研究报告，覆盖红队测试、能力评估、对齐风险、政策监管与企业治理实践。"
+    },
+    {
+      "id": "fw24_005",
+      "group": "freshwiki_2024",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "prompt": "请写一篇关于开源大语言模型生态与部署权衡的长篇研究报告，讨论模型选择、推理成本、量化、私有化部署、许可与质量评估。"
+    },
+    {
+      "id": "fw24_006",
+      "group": "freshwiki_2024",
+      "topic": "Synthetic data for model training and evaluation",
+      "prompt": "请写一篇关于合成数据在模型训练与评估中的作用的长篇研究报告，分析数据生成、过滤、偏差、质量控制、训练收益和失败模式。"
+    },
+    {
+      "id": "fw24_007",
+      "group": "freshwiki_2024",
+      "topic": "Long-context models and long-document generation",
+      "prompt": "请写一篇关于长上下文模型与长文档生成的长篇研究报告，覆盖上下文扩展、规划式写作、长程一致性、评估基准和工程瓶颈。"
+    },
+    {
+      "id": "fw24_008",
+      "group": "freshwiki_2024",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "prompt": "请写一篇关于 AI 在科学发现与文献综合中的应用的长篇研究报告，分析自动检索、假设生成、实验设计、证据整合和可靠性问题。"
+    },
+    {
+      "id": "fw24_009",
+      "group": "freshwiki_2024",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "prompt": "请写一篇关于企业知识助手与工作流自动化的长篇研究报告，讨论知识库接入、权限、安全、Agent 编排、ROI 与失败案例。"
+    },
+    {
+      "id": "fw24_010",
+      "group": "freshwiki_2024",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "prompt": "请写一篇关于大语言模型生成长篇报告评估方法的研究报告，重点比较自动指标、LLM-as-judge、人类评审、事实性、冗余和结构一致性。"
+    },
+    {
+      "id": "edu_001",
+      "group": "education",
+      "topic": "Personalized learning systems powered by AI",
+      "prompt": "请写一篇关于 AI 驱动个性化学习系统的长篇研究报告，覆盖学习者建模、推荐策略、反馈机制、教育公平、隐私和效果评估。"
+    },
+    {
+      "id": "edu_002",
+      "group": "education",
+      "topic": "AI tutors in higher education",
+      "prompt": "请写一篇关于高校场景下 AI 导师系统的长篇研究报告，比较问答辅导、写作反馈、实验指导、学术诚信与教师协同。"
+    },
+    {
+      "id": "edu_003",
+      "group": "education",
+      "topic": "Assessment and feedback automation in schools",
+      "prompt": "请写一篇关于学校评估与反馈自动化的长篇研究报告，分析自动批改、形成性评价、学习分析、教师工作流和伦理风险。"
+    },
+    {
+      "id": "edu_004",
+      "group": "education",
+      "topic": "AI literacy curriculum design",
+      "prompt": "请写一篇关于 AI 素养课程设计的长篇研究报告，覆盖课程目标、能力框架、项目式学习、评估方式、教师培训与政策支持。"
+    },
+    {
+      "id": "edu_005",
+      "group": "education",
+      "topic": "Learning analytics for student support",
+      "prompt": "请写一篇关于学习分析支持学生发展的长篇研究报告，讨论数据来源、预警模型、干预策略、可解释性、隐私保护和真实部署效果。"
+    }
+  ]
+}

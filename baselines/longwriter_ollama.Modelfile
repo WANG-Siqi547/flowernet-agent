@@ -1,0 +1,15 @@
+FROM ../models/longwriter-llama3.1-8b-gguf/LongWriter-llama3.1-8b-Q4_K_M.gguf
+
+PARAMETER num_ctx 32768
+PARAMETER temperature 0.7
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.05
+
+TEMPLATE """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+You are LongWriter, a long-form writing model. Generate structured, coherent, evidence-aware long documents. Do not include placeholder text.
+<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+{{ .Prompt }}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+"""

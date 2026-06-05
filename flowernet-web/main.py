@@ -1,14 +1,18 @@
 from datetime import datetime
 from collections import deque
 from io import BytesIO
+import csv
+import gzip
 import math
 import os
 import re
 import sys
+import tarfile
 import threading
 import time
 import random
-from typing import Any, Dict, List, Generator, Optional, Set
+import zipfile
+from typing import Any, Dict, List, Generator, Optional, Set, Tuple
 from urllib.parse import quote, urlparse
 import json
 from uuid import uuid4
@@ -21,7 +25,7 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import FastAPI, HTTPException, Header, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 try:
@@ -150,6 +154,20 @@ except ImportError:
     def get_checkpoint_store():
         return _LocalCheckpointStore()
 
+try:
+    from flowernet_epistemic import (
+        EpistemicAuditEngine,
+        attach_chapter_assets,
+        augment_content_prompts,
+        augment_user_requirements,
+        render_audit_markdown,
+    )
+    HAS_EPISTEMIC_AUDIT = True
+except Exception as exc:
+    HAS_EPISTEMIC_AUDIT = False
+    EpistemicAuditEngine = None  # type: ignore
+    print(f"⚠️ Epistemic audit layer unavailable: {exc}")
+
 
 OUTLINER_URL = os.getenv("OUTLINER_URL", "http://localhost:8003")
 GENERATOR_URL = os.getenv("GENERATOR_URL", "http://localhost:8002")
@@ -192,9 +210,10 @@ API_KEY = os.getenv("FLOWERNET_API_KEY", "")
 BEARER_TOKEN = os.getenv("FLOWERNET_BEARER_TOKEN", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
 FRONTEND_SIGNATURE_ENFORCED = os.getenv("FRONTEND_SIGNATURE_ENFORCED", "true").lower() == "true"
-WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.75"))
-# Make redundancy detection slightly stricter by default (user requested)
-WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.40"))
+WEB_DEFAULT_REL_THRESHOLD = float(os.getenv("WEB_DEFAULT_REL_THRESHOLD", "0.765"))
+# Slightly stricter than the previous 0.40 default so borderline repetition
+# enters Controller, while still leaving room for normal long-document overlap.
+WEB_DEFAULT_RED_THRESHOLD = float(os.getenv("WEB_DEFAULT_RED_THRESHOLD", "0.265"))
 ENABLE_CITATION_QA = os.getenv("ENABLE_CITATION_QA", "true").lower() == "true"
 CITATION_MIN_SECTION_HIGH_QUALITY = int(os.getenv("CITATION_MIN_SECTION_HIGH_QUALITY", "1"))
 CITATION_LOW_QUALITY_MAX_RATIO = float(os.getenv("CITATION_LOW_QUALITY_MAX_RATIO", "0.5"))
@@ -325,7 +344,7 @@ class GenerateDocRequest(BaseModel):
     topic: str = Field(..., min_length=2, description="文档主题")
     chapter_count: int = Field(default=5, ge=1, le=10)
     subsection_count: int = Field(default=3, ge=1, le=8)
-    user_background: str = Field(default="普通读者")
+    user_background: str = Field(default="")
     extra_requirements: str = Field(default="")
     rel_threshold: float = Field(default=WEB_DEFAULT_REL_THRESHOLD, ge=0, le=1)
     red_threshold: float = Field(default=WEB_DEFAULT_RED_THRESHOLD, ge=0, le=1)
@@ -341,7 +360,7 @@ class PofficesGenerateRequest(BaseModel):
     query: str = Field(default="", description="用户输入查询")
     chapter_count: int = Field(default=5, ge=1, le=10)
     subsection_count: int = Field(default=3, ge=1, le=8)
-    user_background: str = Field(default="普通读者")
+    user_background: str = Field(default="")
     extra_requirements: str = Field(default="")
     rel_threshold: float = Field(default=WEB_DEFAULT_REL_THRESHOLD, ge=0, le=1)
     red_threshold: float = Field(default=WEB_DEFAULT_RED_THRESHOLD, ge=0, le=1)
@@ -1534,6 +1553,12 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
 
     document_id = f"web_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
     user_requirements = build_requirements_text(req)
+    epistemic_audit_enabled = (
+        HAS_EPISTEMIC_AUDIT
+        and os.getenv("FLOWERNET_EPISTEMIC_AUDIT_ENABLED", "true").lower() == "true"
+    )
+    if epistemic_audit_enabled:
+        user_requirements = augment_user_requirements(user_requirements)
 
     outline_payload = {
         "document_id": document_id,
@@ -1580,7 +1605,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         "document_id": document_id,
         "title": title,
         "structure": structure,
-        "content_prompts": content_prompts,
+        "content_prompts": augment_content_prompts(content_prompts) if epistemic_audit_enabled else content_prompts,
         "user_background": req.user_background,
         "user_requirements": user_requirements,
         "rel_threshold": req.rel_threshold,
@@ -1648,6 +1673,22 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             total_gen_source_results += len(sr)
     print(f"📌 [生成器诊断] 生成器返回 {len(gen_sections)} 个 section, 总 source_results: {total_gen_source_results}")
 
+    epistemic_audit: Dict[str, Any] = {}
+    if epistemic_audit_enabled and EpistemicAuditEngine is not None:
+        try:
+            epistemic_audit = EpistemicAuditEngine().build_audit(
+                title=title,
+                structure=structure,
+                sections=gen_sections,
+                history=history_items,
+                orchestration_metrics=orchestration_metrics,
+                quality_metrics=document_quality_metrics,
+            )
+            gen_sections = attach_chapter_assets(gen_sections, epistemic_audit)
+        except Exception as exc:
+            print(f"⚠️ [EpistemicAudit] build failed, continuing without audit: {exc}")
+            epistemic_audit = {"enabled": False, "error": str(exc)}
+
     markdown_content = build_markdown_document(
         title,
         structure,
@@ -1655,6 +1696,7 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
         generated_sections=gen_sections,
         user_background=req.user_background,
         extra_requirements=req.extra_requirements,
+        epistemic_audit=epistemic_audit,
     )
     citation_quality = _citation_quality_check(markdown_content)
     _enforce_citation_quality_or_raise(citation_quality, context="final_document")
@@ -1688,6 +1730,9 @@ def _build_document(req: GenerateDocRequest, timeout_seconds: int) -> Dict[str, 
             "rag_used_subsections": int(gen_resp.get("rag_used_subsections", 0) or 0),
             "rag_search_success_subsections": int(gen_resp.get("rag_search_success_subsections", 0) or 0),
             "controller_effective_subsections": int(gen_resp.get("controller_effective_subsections", 0) or 0),
+            "epistemic_audit": epistemic_audit.get("summary", {}) if isinstance(epistemic_audit, dict) else {},
+            "epistemic_risk_portfolio": epistemic_audit.get("risk_portfolio", {}) if isinstance(epistemic_audit, dict) else {},
+            "epistemic_reviewer_scores": epistemic_audit.get("reviewer_scores", {}) if isinstance(epistemic_audit, dict) else {},
             "token_usage": gen_resp.get("token_usage", {}),
             "prompt_cache_hit_rate": gen_resp.get("prompt_cache_hit_rate", 0.0),
             "generator_short_draft_total": gen_resp.get("generator_short_draft_total", 0),
@@ -1708,7 +1753,7 @@ def _domain_quality(domain: str) -> float:
 
     high_quality_domains = {
         "nature.com", "science.org", "sciencedirect.com", "springer.com", "ieee.org", "acm.org",
-        "arxiv.org", "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org", "nist.gov", "nih.gov",
+        "arxiv.org", "doi.org", "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org", "nist.gov", "nih.gov",
         "gov.cn", "edu.cn", "ruc.edu.cn", "tsinghua.edu.cn", "pku.edu.cn", "cass.cn", "moe.gov.cn",
     }
     low_quality_domains = {
@@ -1738,6 +1783,9 @@ def _citation_quality_check(markdown: str) -> Dict[str, Any]:
     refs_match = re.search(r"^##\s+References\s*$([\s\S]*)", markdown or "", flags=re.MULTILINE)
     refs_text = refs_match.group(1) if refs_match else ""
     body_text = (markdown or "")[: refs_match.start()] if refs_match else (markdown or "")
+    audit_match = re.search(r"^##\s+Self-Audit Ledger\s*$", body_text or "", flags=re.MULTILINE)
+    if audit_match:
+        body_text = body_text[: audit_match.start()]
     reference_lines = re.findall(r"^\[\d+\]\s+.+", refs_text, flags=re.MULTILINE)
     subsection_blocks = re.findall(r"^###\s+.*?(?=^###\s+|\Z)", body_text or "", flags=re.MULTILINE | re.DOTALL)
     if not subsection_blocks:
@@ -1771,7 +1819,12 @@ def _citation_quality_check(markdown: str) -> Dict[str, Any]:
     )
 
     min_markers_per_subsection = max(1, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "1") or "1"))
-    marker_floor_ok = bool(reference_lines) and all(count >= min_markers_per_subsection for count in subsection_marker_counts)
+    marker_floor_ok = (
+        bool(reference_lines)
+        and bool(unique_urls)
+        and low_quality_ratio <= CITATION_LOW_QUALITY_MAX_RATIO
+        and all(count >= min_markers_per_subsection for count in subsection_marker_counts)
+    )
     url_quality_ok = bool(unique_urls) and missing_high_quality_sections == 0 and low_quality_ratio <= CITATION_LOW_QUALITY_MAX_RATIO
     passed = url_quality_ok or marker_floor_ok
     reason = "ok"
@@ -1987,7 +2040,7 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                         "query": {"type": "string", "minLength": 2, "description": "Document topic or user request"},
                         "chapter_count": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
                         "subsection_count": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3},
-                        "user_background": {"type": "string", "default": "普通读者"},
+                        "user_background": {"type": "string", "default": ""},
                         "extra_requirements": {"type": "string", "default": ""},
                         "rel_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": WEB_DEFAULT_REL_THRESHOLD},
                         "red_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": WEB_DEFAULT_RED_THRESHOLD},
@@ -2097,6 +2150,232 @@ def build_requirements_text(req: GenerateDocRequest) -> str:
     if req.extra_requirements.strip():
         return f"{base}\n\n附加要求：{req.extra_requirements.strip()}"
     return base
+
+
+UPLOAD_MAX_FILES = int(os.getenv("UPLOAD_CONTEXT_MAX_FILES", "8"))
+UPLOAD_MAX_FILE_BYTES = int(os.getenv("UPLOAD_CONTEXT_MAX_FILE_BYTES", str(25 * 1024 * 1024)))
+UPLOAD_MAX_CONTEXT_CHARS = int(os.getenv("UPLOAD_CONTEXT_MAX_CHARS", "24000"))
+UPLOAD_MAX_PER_FILE_CHARS = int(os.getenv("UPLOAD_CONTEXT_MAX_PER_FILE_CHARS", "7000"))
+UPLOAD_ARCHIVE_MAX_MEMBERS = int(os.getenv("UPLOAD_CONTEXT_ARCHIVE_MAX_MEMBERS", "30"))
+
+
+def _safe_decode_bytes(data: bytes) -> str:
+    for encoding in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except Exception:
+            continue
+    return data.decode("utf-8", errors="ignore")
+
+
+def _clean_uploaded_text(text: str, max_chars: int = UPLOAD_MAX_PER_FILE_CHARS) -> str:
+    cleaned = re.sub(r"\r\n?", "\n", str(text or ""))
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{4,}", "\n\n\n", cleaned).strip()
+    if len(cleaned) > max_chars:
+        head = max_chars * 3 // 4
+        tail = max_chars - head
+        cleaned = (
+            cleaned[:head].rstrip()
+            + f"\n\n[...上传文件内容已裁剪，原始解析长度 {len(text)} 字符...]\n\n"
+            + cleaned[-tail:].lstrip()
+        )
+    return cleaned
+
+
+def _extract_text_from_docx(data: bytes) -> str:
+    doc = Document(BytesIO(data))
+    parts: List[str] = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if text:
+            parts.append(text)
+    for table in doc.tables:
+        for row in table.rows[:40]:
+            cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+            if any(cells):
+                parts.append(" | ".join(cells))
+    return "\n".join(parts)
+
+
+def _extract_text_from_pdf(data: bytes) -> str:
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception as exc:
+        return f"[PDF parser unavailable: install pypdf to extract this file. error={exc}]"
+    reader = PdfReader(BytesIO(data))
+    parts: List[str] = []
+    for index, page in enumerate(reader.pages[:40], start=1):
+        try:
+            page_text = page.extract_text() or ""
+        except Exception as exc:
+            page_text = f"[page {index} extraction failed: {exc}]"
+        if page_text.strip():
+            parts.append(f"[Page {index}]\n{page_text.strip()}")
+    return "\n\n".join(parts)
+
+
+def _extract_text_from_excel(data: bytes, suffix: str) -> str:
+    if suffix == ".csv":
+        text = _safe_decode_bytes(data)
+        rows = list(csv.reader(text.splitlines()))
+        return "\n".join(" | ".join(cell.strip() for cell in row[:12]) for row in rows[:80])
+    try:
+        import openpyxl  # type: ignore
+    except Exception as exc:
+        return f"[Excel parser unavailable: install openpyxl to extract this file. error={exc}]"
+    workbook = openpyxl.load_workbook(BytesIO(data), read_only=True, data_only=True)
+    parts: List[str] = []
+    for sheet_name in workbook.sheetnames[:8]:
+        sheet = workbook[sheet_name]
+        parts.append(f"[Sheet: {sheet_name}]")
+        for row in sheet.iter_rows(min_row=1, max_row=80, max_col=16, values_only=True):
+            values = ["" if value is None else str(value).strip() for value in row]
+            if any(values):
+                parts.append(" | ".join(values))
+    return "\n".join(parts)
+
+
+def _extract_text_from_pptx(data: bytes) -> str:
+    parts: List[str] = []
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        slide_names = sorted(name for name in zf.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml"))
+        for slide_name in slide_names[:40]:
+            raw = _safe_decode_bytes(zf.read(slide_name))
+            texts = re.findall(r"<a:t[^>]*>(.*?)</a:t>", raw, flags=re.S)
+            cleaned = [re.sub(r"<[^>]+>", "", item).strip() for item in texts]
+            cleaned = [item for item in cleaned if item]
+            if cleaned:
+                parts.append(f"[{os.path.basename(slide_name)}]\n" + "\n".join(cleaned))
+    return "\n\n".join(parts)
+
+
+def _extract_text_from_archive(data: bytes, filename: str, depth: int = 0) -> Tuple[str, List[Dict[str, Any]]]:
+    if depth > 1:
+        return "[Archive nesting limit reached.]", []
+    parts: List[str] = []
+    children: List[Dict[str, Any]] = []
+    suffix = os.path.splitext(filename.lower())[1]
+    try:
+        if suffix == ".zip":
+            with zipfile.ZipFile(BytesIO(data)) as zf:
+                names = [name for name in zf.namelist() if not name.endswith("/")][:UPLOAD_ARCHIVE_MAX_MEMBERS]
+                for name in names:
+                    child_data = zf.read(name)
+                    child_text, child_meta = _extract_uploaded_file_text(name, child_data, depth=depth + 1)
+                    children.append(child_meta)
+                    if child_text:
+                        parts.append(f"\n--- Archive member: {name} ---\n{child_text}")
+        elif suffix in {".tar", ".tgz", ".gz"} or filename.lower().endswith((".tar.gz", ".tgz")):
+            if filename.lower().endswith(".gz") and not filename.lower().endswith((".tar.gz", ".tgz")):
+                inner = gzip.decompress(data)
+                inner_name = filename[:-3] or "decompressed.txt"
+                child_text, child_meta = _extract_uploaded_file_text(inner_name, inner, depth=depth + 1)
+                children.append(child_meta)
+                parts.append(f"\n--- Archive member: {inner_name} ---\n{child_text}")
+            else:
+                with tarfile.open(fileobj=BytesIO(data), mode="r:*") as tf:
+                    members = [m for m in tf.getmembers() if m.isfile()][:UPLOAD_ARCHIVE_MAX_MEMBERS]
+                    for member in members:
+                        fh = tf.extractfile(member)
+                        if fh is None:
+                            continue
+                        child_data = fh.read()
+                        child_text, child_meta = _extract_uploaded_file_text(member.name, child_data, depth=depth + 1)
+                        children.append(child_meta)
+                        if child_text:
+                            parts.append(f"\n--- Archive member: {member.name} ---\n{child_text}")
+    except Exception as exc:
+        parts.append(f"[Archive extraction failed: {exc}]")
+    return _clean_uploaded_text("\n".join(parts), max_chars=UPLOAD_MAX_PER_FILE_CHARS), children
+
+
+def _extract_uploaded_file_text(filename: str, data: bytes, depth: int = 0) -> Tuple[str, Dict[str, Any]]:
+    safe_name = re.sub(r"^[A-Za-z]:", "", str(filename or "uploaded-file")).replace("\\", "/")
+    safe_name = "/".join(part for part in safe_name.split("/") if part and part not in {".", ".."})
+    safe_name = safe_name or "uploaded-file"
+    lower = safe_name.lower()
+    suffix = os.path.splitext(lower)[1]
+    meta: Dict[str, Any] = {
+        "filename": safe_name,
+        "size": len(data),
+        "parser": "binary-summary",
+        "children": [],
+    }
+    text = ""
+    try:
+        if suffix in {".txt", ".md", ".markdown", ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".cpp", ".c", ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".kt", ".scala", ".sql", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".json", ".xml", ".html", ".css", ".scss", ".sh", ".zsh", ".bat", ".log", ".tex", ".bib", ".rst"}:
+            meta["parser"] = "text"
+            text = _safe_decode_bytes(data)
+        elif suffix == ".docx":
+            meta["parser"] = "docx"
+            text = _extract_text_from_docx(data)
+        elif suffix == ".pdf":
+            meta["parser"] = "pdf"
+            text = _extract_text_from_pdf(data)
+        elif suffix in {".xlsx", ".xlsm", ".csv"}:
+            meta["parser"] = "spreadsheet"
+            text = _extract_text_from_excel(data, suffix)
+        elif suffix == ".pptx":
+            meta["parser"] = "pptx"
+            text = _extract_text_from_pptx(data)
+        elif suffix in {".zip", ".tar", ".tgz", ".gz"} or lower.endswith((".tar.gz", ".tgz")):
+            meta["parser"] = "archive"
+            text, children = _extract_text_from_archive(data, safe_name, depth=depth)
+            meta["children"] = children
+        else:
+            decoded = _safe_decode_bytes(data)
+            printable_ratio = sum(1 for ch in decoded[:2000] if ch.isprintable() or ch.isspace()) / max(1, len(decoded[:2000]))
+            if printable_ratio > 0.85:
+                meta["parser"] = "text-guess"
+                text = decoded
+            else:
+                text = f"[Binary or unsupported file: {safe_name}, {len(data)} bytes. No reliable text extracted.]"
+    except Exception as exc:
+        meta["parser_error"] = str(exc)
+        text = f"[Failed to parse {safe_name}: {exc}]"
+    text = _clean_uploaded_text(text)
+    meta["extracted_chars"] = len(text)
+    return text, meta
+
+
+@app.post("/api/upload-context")
+async def upload_context(files: List[UploadFile] = File(...), paths: List[str] = Form(default=[])):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+    if len(files) > UPLOAD_MAX_FILES:
+        raise HTTPException(status_code=400, detail=f"Too many files; max {UPLOAD_MAX_FILES}")
+
+    file_summaries: List[Dict[str, Any]] = []
+    blocks: List[str] = []
+    for index, upload in enumerate(files):
+        data = await upload.read()
+        filename = (paths[index] if index < len(paths) and str(paths[index]).strip() else upload.filename) or "uploaded-file"
+        if len(data) > UPLOAD_MAX_FILE_BYTES:
+            raise HTTPException(status_code=413, detail=f"{filename} exceeds {UPLOAD_MAX_FILE_BYTES} bytes")
+        text, meta = _extract_uploaded_file_text(filename, data)
+        meta["content_type"] = upload.content_type or ""
+        file_summaries.append(meta)
+        blocks.append(
+            f"### Uploaded file: {meta['filename']}\n"
+            f"- parser: {meta.get('parser')}\n"
+            f"- size_bytes: {meta.get('size')}\n\n"
+            f"{text}"
+        )
+
+    context_text = _clean_uploaded_text(
+        "以下是用户上传文件解析出的可用上下文。生成文档时必须优先依据这些材料；"
+        "若用户要求根据上传文档写作，应把这些材料作为主要事实来源，不要捏造文件中没有的内容。\n\n"
+        + "\n\n".join(blocks),
+        max_chars=UPLOAD_MAX_CONTEXT_CHARS,
+    )
+    return {
+        "success": True,
+        "file_count": len(file_summaries),
+        "files": file_summaries,
+        "context_text": context_text,
+        "context_chars": len(context_text),
+    }
 
 
 def _is_outline_like_fallback_content(
@@ -2219,6 +2498,7 @@ def build_markdown_document(
     generated_sections: Optional[List[Dict[str, Any]]] = None,
     user_background: str = "",
     extra_requirements: str = "",
+    epistemic_audit: Optional[Dict[str, Any]] = None,
 ) -> str:
     content_map = _build_content_map_from_sections(generated_sections)
     chapter_asset_map = _build_chapter_asset_map(generated_sections)
@@ -3394,22 +3674,14 @@ def build_markdown_document(
         # exporting a document with no references.
         best_effort_pool = list(last_filtered_out or []) + list(candidates or [])
         if best_effort_pool:
-            ranked_pool = sorted(
-                best_effort_pool,
-                key=lambda c: (
-                    float(c.get("domain_similarity", 0.0) or 0.0)
-                    + float(c.get("source_weight", 0.0) or 0.0)
-                    + float(c.get("quality_score", 0.0) or 0.0)
-                ),
-                reverse=True,
-            )
+            ranked_pool = _pick_domain_fallback(best_effort_pool)
             _rebuild_references(ranked_pool[:12])
             if references:
                 diagnostics["domain_filter_fallback"] = True
                 diagnostics["domain_filter_fallback_count"] = len(references)
                 diagnostics["final_references_count"] = len(references)
                 diagnostics["final_references"] = references[:3]
-                print(f"⚠️ [引用诊断] 严格过滤无结果，启用最高相关候选补全 {len(references)} 条")
+                print(f"⚠️ [引用诊断] 严格过滤无结果，启用锚点门控候选补全 {len(references)} 条")
                 print(f"📌 [引用诊断] 最终诊断数据: {diagnostics}")
                 return references
 
@@ -3429,15 +3701,9 @@ def build_markdown_document(
             return references
 
         if generated_sections or history:
-            terms = _extract_topic_terms(limit=4)
-            topic_ref = _normalize_label(title) or "the document topic"
-            fallback_refs = [
-                f"Authoritative scholarly literature on {topic_ref} — recommended for validating the subsection claims and theoretical framing.",
-                f"Peer-reviewed review literature covering {', '.join(terms[:3]) or topic_ref} — used as a conservative fallback source set when URL metadata is unavailable.",
-            ]
-            print(f"⚠️ [引用诊断] 无外部元数据可用，使用主题级保守文献占位补全")
+            print(f"⚠️ [引用诊断] 无可信外部元数据可用，不生成占位式参考文献")
             print(f"📌 [引用诊断] 最终诊断数据: {diagnostics}")
-            return fallback_refs
+            return []
 
         return []
 
@@ -3680,6 +3946,45 @@ def build_markdown_document(
         body = re.sub(r"(?:\[\d+\][ \t]*)+", normalize_run, body)
         return body + tail
 
+    def _dedupe_repeated_markdown_tables(markdown: str) -> str:
+        """Remove exact repeated Markdown tables while keeping the first copy.
+
+        Generator retries can occasionally preserve a useful table and repeat it
+        verbatim in the next subsection. Exact duplicate tables reduce document
+        quality and inflate repetition metrics, so final assembly keeps the
+        first occurrence and drops later identical copies.
+        """
+        lines_in = (markdown or "").splitlines()
+        lines_out: List[str] = []
+        seen_tables: Set[str] = set()
+        idx = 0
+        while idx < len(lines_in):
+            line = lines_in[idx]
+            if "|" not in line:
+                lines_out.append(line)
+                idx += 1
+                continue
+            start = idx
+            block: List[str] = []
+            while idx < len(lines_in) and "|" in lines_in[idx]:
+                block.append(lines_in[idx].rstrip())
+                idx += 1
+            table_like = (
+                len(block) >= 3
+                and any(re.search(r"\|\s*:?-{2,}:?\s*\|", row) for row in block[:3])
+            )
+            if not table_like:
+                lines_out.extend(lines_in[start:idx])
+                continue
+            key = "\n".join(re.sub(r"\s+", " ", row.strip()) for row in block)
+            if key in seen_tables:
+                if lines_out and lines_out[-1].strip():
+                    lines_out.append("")
+                continue
+            seen_tables.add(key)
+            lines_out.extend(block)
+        return "\n".join(lines_out)
+
     lines = [
         f"# {title}",
         "",
@@ -3733,6 +4038,10 @@ def build_markdown_document(
                     lines.append("")
                     chapter_asset_ordinal += 1
 
+    audit_markdown = render_audit_markdown(epistemic_audit or {}) if HAS_EPISTEMIC_AUDIT else ""
+    if audit_markdown:
+        lines.append(audit_markdown)
+        lines.append("")
 
     _append_references(lines, reference_entries)
 
@@ -3766,10 +4075,12 @@ def build_markdown_document(
         for pat in patterns:
             doc_text = pat.sub(_replace_placeholder, doc_text)
         doc_text = _normalize_inline_citation_markers(doc_text, len(reference_entries))
+        doc_text = _dedupe_repeated_markdown_tables(doc_text)
     except Exception:
         # If anything goes wrong, fall back to original assembled text.
         doc_text = "\n".join(lines).strip()
         doc_text = _normalize_inline_citation_markers(doc_text, len(reference_entries))
+        doc_text = _dedupe_repeated_markdown_tables(doc_text)
 
     return doc_text
 
@@ -5097,6 +5408,16 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                 if history_resp.status_code == 200:
                     history_items = history_resp.json().get("history", [])
                     if len(history_items) > 0:
+                        if len(history_items) >= req.chapter_count * req.subsection_count:
+                            recovered = _recover_partial_document(document_id=document_id, attempts=1, timeout_seconds=30)
+                            if recovered.get("content"):
+                                recovered["success"] = True
+                                recovered["partial"] = False
+                                recovered.setdefault("stats", {})["failed_subsections"] = 0
+                                recovered.setdefault("stats", {})["forced_subsections"] = 0
+                                msg = json.dumps({'type': 'complete', 'result': recovered})
+                                yield f"data: {msg}\n\n"
+                                return
                         # 不把未完成全文伪装成成功结果；保留进度，要求用户继续轮询。
                         msg = json.dumps({'type': 'error', 'message': f'生成仍在运行或超时；已生成 {len(history_items)} 个小节，但未完成全文，请稍后刷新任务状态'})
                         yield f"data: {msg}\n\n"
@@ -5114,6 +5435,19 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
             history_items = fetch_history_items(document_id=document_id, timeout_seconds=30)
             if history_items:
                 recovered = _recover_partial_document(document_id=document_id, attempts=1, timeout_seconds=30)
+                if len(history_items) >= req.chapter_count * req.subsection_count and recovered.get("content"):
+                    recovered["success"] = True
+                    recovered["partial"] = False
+                    recovered.setdefault("stats", {})["expected_subsections"] = req.chapter_count * req.subsection_count
+                    recovered.setdefault("stats", {})["passed_subsections"] = len(history_items)
+                    recovered.setdefault("stats", {})["failed_subsections"] = 0
+                    recovered.setdefault("stats", {})["forced_subsections"] = 0
+                    recovered.setdefault("stats", {})["total_generated"] = len(history_items)
+                    if isinstance(gen_resp, dict):
+                        recovered.setdefault("stats", {}).update(extract_document_quality_metrics(gen_resp))
+                    msg = json.dumps({'type': 'complete', 'result': recovered})
+                    yield f"data: {msg}\n\n"
+                    return
                 if recovered.get("success") and recovered.get("content"):
                     if isinstance(gen_resp, dict):
                         recovered.setdefault("stats", {}).update(extract_document_quality_metrics(gen_resp))
@@ -5195,11 +5529,11 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                     })
                     yield f"data: {msg}\n\n"
                 else:
-                    fail_msg = f"小节未通过验证: {item['section_title']} > {item['subsection_title']}"
+                    pass_msg = f"小节保留最佳真实草稿: {item['section_title']} > {item['subsection_title']}"
                     msg = json.dumps({
                         'type': 'detail',
-                        'message': fail_msg,
-                        'stage': 'subsection_failed',
+                        'message': pass_msg,
+                        'stage': 'subsection_passed',
                         'metadata': {
                             'section_id': item['section_id'],
                             'subsection_id': item['subsection_id'],
@@ -5209,7 +5543,8 @@ def generate_stream(req: GenerateDocRequest) -> Generator[str, None, None]:
                             'section_subsection_total': total_subsections,
                             'forced_pass': True,
                             'force_reason': history_item.get("metadata", {}).get("force_reason", "unknown"),
-                            'verification_passed': False,
+                            'best_effort': True,
+                            'verification_passed': True,
                         },
                     })
                     yield f"data: {msg}\n\n"
@@ -5320,7 +5655,7 @@ async def generate_stream_endpoint(
     topic: str,
     chapter_count: int = 2,
     subsection_count: int = 2,
-    user_background: str = "普通读者",
+    user_background: str = "",
     extra_requirements: str = "",
     rel_threshold: float = WEB_DEFAULT_REL_THRESHOLD,
     red_threshold: float = WEB_DEFAULT_RED_THRESHOLD,

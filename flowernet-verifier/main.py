@@ -226,7 +226,10 @@ class FlowerNetVerifier:
         outline = outline or ""
         history_list = history_list or []
 
-        keyword_coverage = self._safe_float((rel.get("details") or {}).get("keyword_coverage"), rel.get("score", 0.0))
+        keyword_coverage = max(
+            self._safe_float((rel.get("details") or {}).get("keyword_coverage"), rel.get("score", 0.0)),
+            self._safe_float((rel.get("details") or {}).get("anchor_coverage"), 0.0),
+        )
         rouge_l = self._safe_float((rel.get("details") or {}).get("rouge_l"), rel.get("score", 0.0))
         bm25_score = self._safe_float((rel.get("details") or {}).get("bm25_score"), rel.get("score", 0.0))
 
@@ -417,14 +420,15 @@ class FlowerNetVerifier:
 
     def _quality_dimension_thresholds(self) -> Dict[str, float]:
         """获取每个维度的阈值（可通过 JSON 覆盖，或使用默认值）"""
-        # 默认阈值保持适度严格，避免内容过早通过而没有进入 controller 修复环节
+        # 默认阈值保持适度严格，避免内容过早通过而没有进入 controller 修复环节。
+        # 小幅上调即可触发边缘小节修复，避免把正常小节也拖进多轮重写。
         default_thresholds = {
-            "topic_alignment": 0.53,
-            "coverage_completeness": 0.53,
-            "logical_coherence": 0.05,
-            "evidence_grounding": 0.33,
-            "novelty": 0.68,
-            "structure_clarity": 0.51,
+            "topic_alignment": 0.555,
+            "coverage_completeness": 0.555,
+            "logical_coherence": 0.075,
+            "evidence_grounding": 0.355,
+            "novelty": 0.685,
+            "structure_clarity": 0.535,
         }
         
         thresholds_raw = os.getenv("QUALITY_DIMENSION_THRESHOLDS_JSON", "").strip()
@@ -564,6 +568,98 @@ class FlowerNetVerifier:
         """实义词分词：过滤英文停用词和单字符 token，用于相似度计算"""
         tokens = [t.strip().lower() for t in jieba.cut(text)]
         return [t for t in tokens if len(t) > 1 and t not in _EN_STOPWORDS]
+
+    def _cjk_bigrams(self, text: str, max_items: int = 120) -> List[str]:
+        """Extract stable Chinese character bigrams for topic recall."""
+        generic = {
+            "本小", "小节", "当前", "大纲", "内容", "生成", "写作", "文档",
+            "主题", "要求", "分析", "讨论", "说明", "包括", "以及", "需要",
+            "避免", "重复", "章节", "标题", "原始", "任务", "质量",
+        }
+        items: List[str] = []
+        for chunk in re.findall(r"[\u4e00-\u9fff]{3,}", str(text or "")):
+            for i in range(0, max(0, len(chunk) - 1)):
+                gram = chunk[i:i + 2]
+                if gram in generic:
+                    continue
+                if gram not in items:
+                    items.append(gram)
+                if len(items) >= max_items:
+                    return items
+        return items
+
+    def _outline_title_anchor(self, outline: str) -> str:
+        text = str(outline or "").strip()
+        if not text:
+            return ""
+        quoted = re.search(r"[“\"]([^”\"]{4,80})[”\"]", text)
+        if quoted:
+            return quoted.group(1).strip()
+        first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        first_line = re.sub(r"^本小节聚焦", "", first_line).strip()
+        first_line = re.split(r"，|。|；|;|\n", first_line)[0].strip()
+        return first_line[:100]
+
+    def _content_outline_for_relevance(self, outline: str) -> str:
+        """Keep only the subsection's content mission for relevance scoring.
+
+        Generated outlines also carry format constraints, self-audit protocol
+        text, and whole-document instructions. Those are important for writing,
+        but using all of them as relevance targets unfairly lowers the score of
+        an otherwise on-topic subsection.
+        """
+        text = str(outline or "").strip()
+        if not text:
+            return ""
+        parts: List[str] = []
+        title = self._outline_title_anchor(text)
+        if title:
+            parts.append(title)
+        for pattern in [
+            r"需要覆盖的基础说明[:：](.*?)(?:避免重复|同时遵守|自审计|$)",
+            r"该节系统梳理(.*?)(?:避免重复|同时遵守|自审计|$)",
+            r"先界定其在(.*?)(?:写作时|需要覆盖|避免重复|同时遵守|$)",
+        ]:
+            match = re.search(pattern, text, flags=re.S)
+            if match:
+                parts.append(match.group(1).strip())
+        if not parts:
+            first = re.split(r"同时遵守|自审计|附加约束|Extra requirements", text, maxsplit=1)[0]
+            parts.append(first.strip())
+        scoped = "。".join(part for part in parts if part)
+        return scoped or text
+
+    def _topic_anchor_coverage(self, draft: str, outline: str) -> float:
+        """Robust topic coverage for Chinese technical prose."""
+        draft_lower = str(draft or "").lower()
+        topic_terms = [
+            term for term in self._topic_terms(outline=outline, context_text="", draft="")
+            if len(str(term).strip()) >= 2
+        ]
+        if topic_terms:
+            term_hits = sum(1 for term in topic_terms if str(term).lower() in draft_lower)
+            term_coverage = term_hits / max(1, len(topic_terms))
+        else:
+            term_coverage = 0.0
+
+        grams = self._cjk_bigrams(outline)
+        if grams:
+            gram_hits = sum(1 for gram in grams if gram in draft_lower)
+            gram_coverage = gram_hits / max(1, len(grams))
+        else:
+            gram_coverage = 0.0
+
+        title_anchor = self._outline_title_anchor(outline)
+        title_grams = self._cjk_bigrams(title_anchor, max_items=40)
+        if title_grams:
+            title_hits = sum(1 for gram in title_grams if gram in draft_lower)
+            title_coverage = title_hits / max(1, len(title_grams))
+        else:
+            title_coverage = 0.0
+
+        broad_coverage = 0.58 * term_coverage + 0.42 * gram_coverage
+        title_locked_coverage = 0.82 * title_coverage + 0.18 * gram_coverage
+        return self._clip01(max(broad_coverage, title_locked_coverage))
 
     def _topic_terms(self, outline: str, context_text: str, draft: str = "") -> List[str]:
         """Extract stable topic terms from the subsection task, falling back to draft only when needed."""
@@ -777,6 +873,25 @@ class FlowerNetVerifier:
                 continue
 
             domain_score = self._source_relevance_score(item, outline_tokens, topic_term_set)
+            href = str(item.get("href", "") or "").lower()
+            source_name = str(item.get("source", "") or "").lower()
+            semantic_source_score = self._safe_float(item.get("semantic_score"), 0.0)
+            topic_source_score = self._safe_float(item.get("topic_alignment_score"), 0.0)
+            trusted_technical_source = (
+                bool(item.get("curated_seed"))
+                or semantic_source_score >= 0.18
+                or topic_source_score >= 0.18
+                or any(
+                    domain in href or domain in source_name
+                    for domain in (
+                        "arxiv.org", "acm.org", "ieee.org", "aclweb.org",
+                        "openreview.net", "proceedings.neurips.cc", "proceedings.mlr.press",
+                        "doi.org",
+                    )
+                )
+            )
+            if trusted_technical_source:
+                continue
             if domain_score < domain_mismatch_threshold:
                 blacklist_matches.append({
                     "index": idx,
@@ -849,7 +964,8 @@ class FlowerNetVerifier:
         - ROUGE-L：最长公共子序列匹配，捕捉词序和短语一致性
         - BM25：用大纲自比得分作上限归一化，衡量草稿对大纲的词频相关程度
         """
-        outline_tokens = self._content_tokens(outline)
+        relevance_outline = self._content_outline_for_relevance(outline)
+        outline_tokens = self._content_tokens(relevance_outline)
         draft_tokens = self._content_tokens(draft)
 
         # 1. 关键词覆盖率（实义词）
@@ -864,7 +980,7 @@ class FlowerNetVerifier:
         # 用 recall 而非 F1：outline 通常远短于 draft，F1 会因 precision 被长文本压缩至趋近0，造成假阴性
         # recall = LCS / len(outline_tokens) 不受 draft 长度影响
         try:
-            rouge_l = self.scorer.score(outline, draft)['rougeL'].recall
+            rouge_l = self.scorer.score(relevance_outline, draft)['rougeL'].recall
         except Exception:
             rouge_l = 0.0
 
@@ -882,12 +998,16 @@ class FlowerNetVerifier:
         except Exception:
             bm25_score = 0.0
 
-        relevancy_score = (keyword_coverage * 0.4) + (rouge_l * 0.4) + (bm25_score * 0.2)
+        anchor_coverage = self._topic_anchor_coverage(draft=draft, outline=relevance_outline)
+        lexical_score = (keyword_coverage * 0.4) + (rouge_l * 0.4) + (bm25_score * 0.2)
+        anchor_score = (anchor_coverage * 0.72) + (keyword_coverage * 0.18) + (bm25_score * 0.10)
+        relevancy_score = max(lexical_score, anchor_score)
 
         return {
             "score": float(round(relevancy_score, 4)),
             "details": {
                 "keyword_coverage": float(round(keyword_coverage, 4)),
+                "anchor_coverage": float(round(anchor_coverage, 4)),
                 "rouge_l": float(round(rouge_l, 4)),
                 "bm25_score": float(round(bm25_score, 4)),
             },
@@ -953,8 +1073,8 @@ class FlowerNetVerifier:
         draft,
         outline,
         history_list,
-        rel_threshold=0.55,
-        red_threshold=0.70,
+        rel_threshold=0.765,
+        red_threshold=0.265,
         context_text: str = "",
         source_results: Optional[List[Dict[str, Any]]] = None,
         require_source_citations: bool = False,
@@ -993,7 +1113,7 @@ class FlowerNetVerifier:
         unieval_endpoint = os.getenv("UNIEVAL_ENDPOINT", "").strip()
         # If UniEval endpoint is absent, degrade to heuristic-only quality checks
         # instead of failing every verify request with HTTP 500.
-        require_multidim = require_multidim_env and bool(unieval_endpoint)
+        require_multidim = require_multidim_env
         
         # 尝试调用 UniEval，如果启用了多维检查且 UniEval 必须可用
         unieval_dimensions = self._try_unieval_dimensions(
@@ -1013,7 +1133,7 @@ class FlowerNetVerifier:
         # 用于兼容旧的总分逻辑，但主要用维度级阈值
         quality_score = self._composite_quality_score(semantic_dimensions)
         # 略微提高总体质量分数阈值，避免弱质量内容过早判定通过
-        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.60"), 0.60)
+        quality_threshold = self._safe_float(os.getenv("QUALITY_SCORE_THRESHOLD", "0.620"), 0.620)
         
         # 维度级阈值检查（新的主要判定逻辑）
         dimension_check = self._check_dimension_thresholds(semantic_dimensions)
@@ -1101,12 +1221,12 @@ class VerifyRequest(BaseModel):
     outline: str                # 对应的大纲/任务要求
     history: List[str] = []     # 之前已经生成的章节内容列表（用于查重）
     document_id: Optional[str] = None  # 如果不传 history，可用 document_id 从数据库读取
-    rel_threshold: Optional[float] = 0.50  # 可选：自定义相关性阈值
-    red_threshold: Optional[float] = 0.75  # 可选：自定义冗余度阈值
+    rel_threshold: Optional[float] = 0.765  # 可选：自定义相关性阈值
+    red_threshold: Optional[float] = 0.265  # 可选：自定义冗余度阈值
     context_text: str = ""
     source_results: List[Dict[str, Any]] = []
     require_source_citations: bool = False
-    min_source_citations: int = 1
+    min_source_citations: int = 3
 
 # 2. 初始化应用
 app = FastAPI(title="FlowerNet Verifying Layer API")

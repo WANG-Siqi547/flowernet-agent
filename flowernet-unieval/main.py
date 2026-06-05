@@ -29,6 +29,7 @@ class UniEvalService:
         self.bool_threshold = float(os.getenv("UNIEVAL_BOOL_THRESHOLD", "0.5"))
         self.load_timeout_sec = int(os.getenv("UNIEVAL_LOAD_TIMEOUT_SEC", "180"))
         self.lightweight_mode = os.getenv("UNIEVAL_LIGHTWEIGHT_MODE", "false").lower() in ("1", "true", "yes", "on")
+        self.auto_lightweight_fallback = os.getenv("UNIEVAL_AUTO_LIGHTWEIGHT_FALLBACK", "true").lower() in ("1", "true", "yes", "on")
         self.ready = False
         self.loading = False
         self.error = ""
@@ -51,6 +52,25 @@ class UniEvalService:
             self.loading = False
             self.error = ""
             print("[UniEval] lightweight mode enabled, skip transformer model load", flush=True)
+
+    def _enable_lightweight_fallback(self, reason: str) -> None:
+        reason = (reason or "model unavailable").strip()
+        self.last_error_at = time.time()
+        if not self.auto_lightweight_fallback:
+            self.ready = False
+            self.loading = False
+            self.error = reason
+            return
+
+        self.tokenizer = None
+        self.model = None
+        self.id2label = {}
+        self.lightweight_mode = True
+        self.ready = True
+        self.loading = False
+        self.last_ready_at = time.time()
+        self.error = f"transformer_unavailable_using_lightweight: {reason}"
+        print(f"[UniEval] {self.error}", flush=True)
 
     def _from_pretrained_kwargs(self, *, local_files_only: bool = False) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
@@ -117,9 +137,7 @@ class UniEvalService:
                                 sleep_seconds = max(0.5, self.model_retry_backoff * attempt)
                                 time.sleep(sleep_seconds)
 
-                self.error = last_error or "model load failed"
-                self.ready = False
-                print(f"[UniEval] model load failed: {self.error}", flush=True)
+                self._enable_lightweight_fallback(last_error or "model load failed")
             finally:
                 self.loading = False
 
@@ -135,10 +153,7 @@ class UniEvalService:
             return
 
         # A blocked model download/init should not keep the API in loading forever.
-        self.loading = False
-        if not self.error:
-            self.error = f"model warmup timeout after {self.load_timeout_sec}s"
-        print(f"[UniEval] warmup timeout: {self.error}", flush=True)
+        self._enable_lightweight_fallback(self.error or f"model warmup timeout after {self.load_timeout_sec}s")
 
     def warmup_async(self) -> None:
         if self.lightweight_mode:
@@ -337,6 +352,8 @@ def root() -> Dict[str, Any]:
         "bool_threshold": service.bool_threshold,
         "prefer_local_cache": service.prefer_local_cache,
         "allow_online_fetch": service.allow_online_fetch,
+        "auto_lightweight_fallback": service.auto_lightweight_fallback,
+        "lightweight_mode": service.lightweight_mode,
         "load_attempts": service.load_attempts,
         "last_ready_at": service.last_ready_at,
         "last_error_at": service.last_error_at,
@@ -361,6 +378,8 @@ def health_ready() -> Dict[str, Any]:
         "model": service.model_name,
         "model_revision": service.model_revision,
         "lightweight_mode": service.lightweight_mode,
+        "auto_lightweight_fallback": service.auto_lightweight_fallback,
+        "error": service.error,
     }
 
 

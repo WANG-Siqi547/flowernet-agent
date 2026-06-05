@@ -1,0 +1,26 @@
+.git
+.gitignore
+.DS_Store
+__pycache__/
+*.py[cod]
+*.log
+.env
+.env.*
+.venv/
+venv/
+env/
+
+# Experiment and report artifacts are not needed in Render service images.
+baselines/
+experiments/
+reports/
+results/
+
+# Local caches and model weights.
+.cache/
+models/
+*.bin
+*.pt
+*.pth
+*.safetensors
+node_modules/

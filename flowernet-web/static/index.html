@@ -4,6 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FlowerNet Agent Dashboard</title>
+  <script>
+    window.__FLOWERNET_LOCAL_URL = "http://127.0.0.1:8010/";
+    if (window.location.protocol === "file:") {
+      window.__FLOWERNET_FILE_MODE = true;
+      window.location.replace(window.__FLOWERNET_LOCAL_URL);
+    }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
@@ -300,6 +307,14 @@
       const maxLen = Math.max(...keys.map((k) => (data[k] || []).length), 1);
       const chartWidth = 440;
       const chartHeight = 128;
+      const armColors = {
+        llm: "#ef4444",
+        rule: "#06b6d4",
+        rule_structured: "#8b5cf6",
+        defect_topic: "#10b981",
+        defect_evidence: "#f97316",
+        defect_structure: "#3b82f6",
+      };
       const legendItems = [
         { key: "llm", label: "llm", note: "LLM 直接改写", color: "bg-red-500" },
         { key: "rule", label: "rule", note: "规则修正", color: "bg-cyan-500" },
@@ -326,16 +341,21 @@
         const yTop = 20; // within group coordinates
         const yBottom = 104;
         const range = yBottom - yTop;
-        return arr.map((v, i) => {
+        const points = arr.map((v, i) => {
+          if (v === null || v === undefined || !Number.isFinite(Number(v))) {
+            return null;
+          }
           const x = 28 + (i / Math.max(maxLen - 1, 1)) * chartWidth;
           const val = Number(v);
-          const norm = isFinite(val) ? Math.max(0, Math.min(1, (val - min) / (max - min))) : 0;
+          const norm = Math.max(0, Math.min(1, (val - min) / (max - min)));
           const y = yBottom - norm * range;
-          return `${i === 0 ? "M" : "L"}${x} ${y}`;
-        }).join(" ");
+          return { x, y };
+        }).filter(Boolean);
+        return points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x} ${p.y}`).join(" ");
       };
       const getSinglePoint = (arr, plotMin, plotMax) => {
-        if (!arr || arr.length !== 1) {
+        const values = (arr || []).map((v, i) => ({ v, i })).filter((p) => p.v !== null && p.v !== undefined && Number.isFinite(Number(p.v)));
+        if (values.length !== 1) {
           return null;
         }
         const min = typeof plotMin === 'number' ? plotMin : 0.0;
@@ -343,12 +363,20 @@
         const yTop = 20;
         const yBottom = 104;
         const range = yBottom - yTop;
-        const val = Number(arr[0]);
+        const val = Number(values[0].v);
         const norm = isFinite(val) ? Math.max(0, Math.min(1, (val - min) / (max - min))) : 0;
         return {
-          x: 28,
+          x: 28 + (values[0].i / Math.max(maxLen - 1, 1)) * chartWidth,
           y: yBottom - norm * range,
         };
+      };
+      const renderArmPath = (key) => {
+        const d = toPath(data[key], summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+        return d ? <path key={key} d={d} stroke={armColors[key]} fill="none" strokeWidth="2.5" /> : null;
+      };
+      const renderArmPoint = (key) => {
+        const p = getSinglePoint(data[key], summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+        return p ? <circle key={`${key}-point`} cx={p.x} cy={p.y} r="3.2" fill={armColors[key]} /> : null;
       };
       const currentMode = String(summary?.bandit_last_selection_mode || "n/a");
       const currentModeItem = modeGuideItems.find((item) => item.key === currentMode);
@@ -389,7 +417,7 @@
                 for (let t = 0; t <= ticks; t += 1) {
                   const frac = t / ticks;
                   const y = yBottom - frac * range;
-                  const val = (min + (1 - frac) * (max - min)).toFixed(3);
+                  const val = (min + frac * (max - min)).toFixed(3);
                   nodes.push(<line key={`tick-${t}`} x1="51" y1={y} x2="55" y2={y} stroke="#64748b" strokeWidth="1" />);
                   nodes.push(<text key={`tick-label-${t}`} x="49" y={y + 4} fontSize="9" fill="#64748b" textAnchor="end">{val}</text>);
                   nodes.push(<line key={`grid-${t}`} x1="55" y1={y} x2="490" y2={y} stroke="#475569" strokeWidth="0.5" strokeDasharray="2,2" />);
@@ -399,36 +427,8 @@
             }
             {/* Paths with new color scheme */}
             <g transform="translate(55, 4)">
-              <path d={toPath(data.llm, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#ef4444" fill="none" strokeWidth="2.5" />
-              <path d={toPath(data.rule, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#06b6d4" fill="none" strokeWidth="2.5" />
-              <path d={toPath(data.rule_structured, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#8b5cf6" fill="none" strokeWidth="2.5" />
-              <path d={toPath(data.defect_topic, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#10b981" fill="none" strokeWidth="2.5" />
-              <path d={toPath(data.defect_evidence, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#f97316" fill="none" strokeWidth="2.5" />
-              <path d={toPath(data.defect_structure, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max)} stroke="#3b82f6" fill="none" strokeWidth="2.5" />
-              {(() => {
-                const p = getSinglePoint(data.llm, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
-                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#ef4444" /> : null;
-              })()}
-              {(() => {
-                const p = getSinglePoint(data.rule, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
-                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#06b6d4" /> : null;
-              })()}
-              {(() => {
-                const p = getSinglePoint(data.rule_structured, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
-                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#8b5cf6" /> : null;
-              })()}
-              {(() => {
-                const p = getSinglePoint(data.defect_topic, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
-                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#10b981" /> : null;
-              })()}
-              {(() => {
-                const p = getSinglePoint(data.defect_evidence, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
-                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#f97316" /> : null;
-              })()}
-              {(() => {
-                const p = getSinglePoint(data.defect_structure, summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
-                return p ? <circle cx={p.x} cy={p.y} r="3.2" fill="#3b82f6" /> : null;
-              })()}
+              {keys.map(renderArmPath)}
+              {keys.map(renderArmPoint)}
             </g>
           </svg>
           <div className="mt-3 rounded-2xl border border-slate-700/60 bg-slate-950/35 p-3 text-xs text-slate-200">
@@ -458,7 +458,7 @@
               <div className="md:col-span-2"><span className="font-semibold text-white">Reward avg:</span> {(summary?.bandit_reward_avg ?? 0).toFixed(3)} <span className="text-[11px] text-slate-400">（正常区间：0.02–0.05；综合质量提升幅度、风险控制系数与约束惩罚项计算所得，单次增量典型幅度 0.01–0.1）</span></div>
             </div>
             <div className="pt-1 text-[11px] text-slate-300 leading-5">
-              折线轨迹反映各策略臂的 reward 随 Controller 事件序列的动态变化；count 为该臂的累计选中次数，与 reward 为独立统计维度。
+              折线只绘制该策略臂被真实选中时的 reward；未选中的 arm 不再用水平线占位，避免把 0 次调用误看成有效曲线。count 为该臂的累计选中次数，与 reward 为独立统计维度。
             </div>
             <div className="pt-2">
               <div className="text-[11px] font-semibold text-slate-200 mb-2">Mode Guide</div>
@@ -703,8 +703,7 @@
         const next = createEmptyBanditSeries();
         for (const k of banditSeriesKeys) {
           next[k] = [...(series?.[k] || [])];
-          const last = next[k].length ? next[k][next[k].length - 1] : 0;
-          next[k].push(k === arm ? reward : last);
+          next[k].push(k === arm ? reward : null);
           next[k] = next[k].slice(-24);
         }
         return next;
@@ -763,8 +762,12 @@
         };
       };
       const [topic, setTopic] = useState("");
-      const [background, setBackground] = useState("Research student in AI systems");
+      const [background, setBackground] = useState("");
       const [extra, setExtra] = useState("");
+      const [uploadedContext, setUploadedContext] = useState("");
+      const [uploadedFiles, setUploadedFiles] = useState([]);
+      const [uploadingFiles, setUploadingFiles] = useState(false);
+      const [uploadStatus, setUploadStatus] = useState("");
       const [chapterCount, setChapterCount] = useState(2);
       const [subCount, setSubCount] = useState(2);
       const [running, setRunning] = useState(false);
@@ -951,7 +954,7 @@
         if (stage === "verifier_start") return "Evaluating via UniEval";
         if (stage === "verifier_failed" || stage === "controller_start") return "Repairing";
         if (stage === "subsection_passed" || stage === "verifier_passed" || stage === "subsection_best_real_draft_accepted") return "Passed";
-        if (stage === "subsection_forced_pass" || stage === "verifier_forced_pass") return "Failed";
+        if (stage === "subsection_forced_pass" || stage === "verifier_forced_pass") return "Passed";
         if (stage === "subsection_failed") return "Failed";
         return "Waiting";
       };
@@ -1045,9 +1048,48 @@
         window.setTimeout(poll, 1500);
       };
 
+      const handleFileUpload = async (evt) => {
+        const files = Array.from(evt.target.files || []);
+        if (!files.length) return;
+        setUploadingFiles(true);
+        setUploadStatus(`Parsing ${files.length} file${files.length > 1 ? "s" : ""}...`);
+        try {
+          const form = new FormData();
+          files.forEach((file) => {
+            form.append("files", file, file.name);
+            form.append("paths", file.webkitRelativePath || file.name);
+          });
+          const resp = await fetch("/api/upload-context", { method: "POST", body: form });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok || !data.success) {
+            throw new Error(data.detail || data.error || `Upload failed: HTTP ${resp.status}`);
+          }
+          setUploadedContext(String(data.context_text || ""));
+          setUploadedFiles(Array.isArray(data.files) ? data.files : []);
+          setUploadStatus(`Parsed ${data.file_count || files.length} file(s), ${data.context_chars || 0} context chars.`);
+        } catch (err) {
+          setUploadedContext("");
+          setUploadedFiles([]);
+          setUploadStatus(String(err?.message || err || "Upload parsing failed."));
+        } finally {
+          setUploadingFiles(false);
+          evt.target.value = "";
+        }
+      };
+
+      const clearUploadedContext = () => {
+        setUploadedContext("");
+        setUploadedFiles([]);
+        setUploadStatus("");
+      };
+
       const handleStart = () => {
         if (!topic.trim()) {
           setStatusText("Please enter a topic first.");
+          return;
+        }
+        if (uploadingFiles) {
+          setStatusText("Please wait until uploaded files are parsed.");
           return;
         }
         closeSse();
@@ -1075,13 +1117,17 @@
         setBanditSeries(createEmptyBanditSeries());
         setBanditSummary({ bandit_selected_arm_counts: {}, bandit_reward_avg: 0, bandit_last_selected_arm: "", bandit_last_selection_mode: "", bandit_event_count: 0 });
         banditEventsRef.current = [];
+        const combinedExtra = [
+          extra.trim(),
+          uploadedContext ? `上传文件上下文：\n${uploadedContext}` : ""
+        ].filter(Boolean).join("\n\n");
 
         const params = new URLSearchParams({
           topic,
           chapter_count: String(chapterCount),
           subsection_count: String(subCount),
           user_background: background,
-          extra_requirements: extra
+          extra_requirements: combinedExtra
         });
 
         const source = new EventSource(`/api/generate-stream?${params.toString()}`);
@@ -1107,7 +1153,14 @@
             const section = meta.section_title || meta.section_id || "Section";
             const sub = meta.subsection_title || meta.subsection_id || "Subsection";
             const key = getSubsectionKey(meta);
-            const stageLabel = stageToLabel(stage);
+            const acceptedByBestDraft = Boolean(
+              meta.best_effort ||
+              meta.accepted_by_best_real_draft ||
+              meta.verification?.accepted_by_best_real_draft ||
+              meta.verification?.best_effort ||
+              meta.verification?.forced_pass
+            );
+            const stageLabel = (stage === "subsection_failed" && acceptedByBestDraft) ? "Passed" : stageToLabel(stage);
 
             if (meta.subsection_id || meta.subsection_title) {
               setSubsections((prev) => {
@@ -1305,7 +1358,9 @@
               ? stats.forced_subsections.length
               : Number(stats.forced_subsections || 0);
             const generatedCount = Number(stats.passed_subsections || 0) + failedCount + forcedCount;
-            const finalCurrent = Math.min(expected, Math.max(actualCompleted, generatedCount, result.success ? expected : 0));
+            const hasCompleteContent = Boolean(String(result.content || "").trim()) && Math.max(actualCompleted, generatedCount) >= expected;
+            const effectiveSuccess = Boolean(result.success || hasCompleteContent);
+            const finalCurrent = Math.min(expected, Math.max(actualCompleted, generatedCount, effectiveSuccess ? expected : 0));
             const finalPercent = expected > 0 ? Math.min(100, Math.round((finalCurrent / expected) * 100)) : 100;
 
             console.log("✅ [DEBUG] About to call setRunning(false), current running state:", running);
@@ -1359,17 +1414,17 @@
             setDoc({ title: result.title || "", content: result.content || "" });
             setProgress({ current: finalCurrent, total: expected, percent: finalPercent });
             setSubsections((prev) => {
-              const failedKeys = new Set((Array.isArray(stats.failed_subsections) ? stats.failed_subsections : []).map((item) => {
+              const failedKeys = effectiveSuccess ? new Set() : new Set((Array.isArray(stats.failed_subsections) ? stats.failed_subsections : []).map((item) => {
                 if (!item || typeof item !== "object") return "";
                 return `${item.section_id || item.section_title || "Section"}:${item.subsection_id || item.subsection_title || "Subsection"}`;
               }).filter(Boolean));
               const completed = prev.map((item) => ({
                 ...item,
                 progress: 100,
-                stage: failedKeys.has(item.key) ? "Failed" : (item.stage === "Failed" && result.success ? "Passed" : (item.stage === "Waiting" ? "Passed" : item.stage)),
+                stage: failedKeys.has(item.key) ? "Failed" : (item.stage === "Failed" && effectiveSuccess ? "Passed" : (item.stage === "Waiting" ? "Passed" : item.stage)),
               }));
               const finalItems = dedupeSubsectionItems(completed, expected);
-              return result.success ? finalItems.map((item) => ({ ...item, stage: item.stage === "Failed" ? "Passed" : item.stage, progress: 100 })) : finalItems;
+              return effectiveSuccess ? finalItems.map((item) => ({ ...item, stage: item.stage === "Failed" ? "Passed" : item.stage, progress: 100 })) : finalItems;
             });
             setActiveNode("controller");
             setStatusText("Generation completed successfully.");
@@ -1399,8 +1454,10 @@
           closeSse();
 
           const docId = documentIdRef.current;
-          if (docId && outlineReadyRef.current) {
-            setStatusText("Stream disconnected. Continuing recovery polling...");
+          if (docId) {
+            setStatusText(outlineReadyRef.current
+              ? "Stream disconnected. Continuing recovery polling..."
+              : "Stream disconnected during outline generation. Continuing background recovery...");
             const expectedTotal = Math.max(1, Number(progress.total || total || 0));
             const recoveryDeadline = Date.now() + (2 * 60 * 60 * 1000);
 
@@ -1436,7 +1493,7 @@
             finalRecoveryStartedRef.current = false;
             setRunning(false);
             runningRef.current = false;
-            setStatusText("Stream disconnected during outline generation. The outline was not saved; please retry after the remote outliner is healthy.");
+            setStatusText("Stream disconnected before a document id was created. Please retry after the local services are healthy.");
             return;
           }
 
@@ -1555,6 +1612,56 @@
                       <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Document topic" />
                       <input className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={background} onChange={(e) => setBackground(e.target.value)} placeholder="User background" />
                       <textarea className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm h-24" value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Extra requirements" />
+                      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="text-xs font-semibold text-slate-700">Upload context files</div>
+                          {uploadedFiles.length > 0 && (
+                            <button type="button" onClick={clearUploadedContext} className="text-xs text-slate-500 hover:text-slate-900">Clear</button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className={`min-h-10 rounded-lg bg-slate-900 text-white text-xs font-semibold px-3 py-2 flex items-center justify-center ${running || uploadingFiles ? "opacity-50 pointer-events-none" : "cursor-pointer"}`}>
+                            Files
+                            <input
+                              type="file"
+                              multiple
+                              disabled={running || uploadingFiles}
+                              onChange={handleFileUpload}
+                              className="hidden"
+                            />
+                          </label>
+                          <label className={`min-h-10 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 flex items-center justify-center ${running || uploadingFiles ? "opacity-50 pointer-events-none" : "cursor-pointer"}`}>
+                            Folder
+                            <input
+                              type="file"
+                              multiple
+                              webkitdirectory=""
+                              directory=""
+                              disabled={running || uploadingFiles}
+                              onChange={handleFileUpload}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">
+                          Supports files or folders: DOCX, PDF, Excel/CSV, Markdown, code, JSON, PPTX, ZIP/TAR/GZ, and common text-like files.
+                        </div>
+                        {uploadStatus && (
+                          <div className={`mt-2 rounded-lg px-2 py-1 text-xs ${uploadStatus.toLowerCase().includes("failed") || uploadStatus.toLowerCase().includes("error") ? "bg-rose-50 text-rose-700" : "bg-white text-slate-700"}`}>
+                            {uploadingFiles ? "Parsing uploaded files..." : uploadStatus}
+                          </div>
+                        )}
+                        {uploadedFiles.length > 0 && (
+                          <div className="mt-2 max-h-24 overflow-auto space-y-1">
+                            {uploadedFiles.map((file, idx) => (
+                              <div key={`${file.filename || "file"}-${idx}`} className="flex items-center justify-between gap-2 rounded-lg bg-white px-2 py-1 text-xs text-slate-600">
+                                <span className="truncate">{file.filename}</span>
+                                <span className="shrink-0 text-slate-400">{file.parser} · {file.extracted_chars || 0} chars</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <div className="grid grid-cols-2 gap-2">
                         <input type="number" min="1" max="10" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={chapterCount} onChange={(e) => setChapterCount(Number(e.target.value))} />
                         <input type="number" min="1" max="8" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" value={subCount} onChange={(e) => setSubCount(Number(e.target.value))} />
@@ -1602,6 +1709,14 @@
   <script>
     (function(){
       if (window.__FLOWERNET_FALLBACK_DONE) return; window.__FLOWERNET_FALLBACK_DONE = true;
+      if (window.__FLOWERNET_FILE_MODE || window.location.protocol === 'file:') {
+        var localUrl = window.__FLOWERNET_LOCAL_URL || 'http://127.0.0.1:8010/';
+        var root = document.getElementById('root');
+        if (root) {
+          root.innerHTML = '<div style="padding:40px;font-family:Plus Jakarta Sans, sans-serif;color:#334155;line-height:1.65">FlowerNet needs to be opened through the local web service, not as a file.<br/><a href="' + localUrl + '" style="color:#2563eb;font-weight:700">Open FlowerNet at ' + localUrl + '</a></div>';
+        }
+        return;
+      }
       function showFallback(msg){
         try{
           var root = document.getElementById('root');

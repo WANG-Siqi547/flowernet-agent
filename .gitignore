@@ -88,6 +88,9 @@ Thumbs.db
 *.pid
 .env.backup
 config.local.yml
+baselines/external/
+reports/**/~$*.docx
+results/**/week2_benchmark_outputs_full.before_*.json
 
 # Ngrok
 ngrok

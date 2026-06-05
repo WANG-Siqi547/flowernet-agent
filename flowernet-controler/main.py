@@ -74,12 +74,12 @@ def _default_bandit_state(feature_dim: int) -> Dict[str, Any]:
             "avg_cost": 0.0,
         },
         "arms": {
-            "llm": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0},
-            "rule": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0},
-            "rule_structured": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0},
-            "defect_topic": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0},
-            "defect_evidence": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0},
-            "defect_structure": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0},
+            "llm": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0, "ineffective_streak": 0},
+            "rule": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0, "ineffective_streak": 0},
+            "rule_structured": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0, "ineffective_streak": 0},
+            "defect_topic": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0, "ineffective_streak": 0},
+            "defect_evidence": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0, "ineffective_streak": 0},
+            "defect_structure": {"count": 0, "weights": [0.0] * feature_dim, "bias": 0.0, "avg_latency": 0.0, "avg_cost": 0.0, "ineffective_streak": 0},
         },
     }
 
@@ -250,6 +250,8 @@ def _build_dimension_guidance(feedback: Dict[str, Any]) -> List[str]:
         value = dims.get(dim_name)
         threshold = thresholds.get(dim_name)
         check = checks.get(dim_name) if isinstance(checks, dict) else {}
+        if not isinstance(check, dict):
+            check = {}
         if dim_name in dimension_messages:
             if isinstance(value, (int, float)) and isinstance(threshold, (int, float)):
                 guidance.append(
@@ -459,8 +461,10 @@ def _bandit_choose_arm(
     features: List[float],
     defect_graph: Dict[str, float],
 ) -> Tuple[str, Dict[str, Any]]:
-    epsilon = max(0.0, min(0.5, float(os.getenv("CONTROLLER_BANDIT_EPSILON", "0.08"))))
+    epsilon = max(0.0, min(0.5, float(os.getenv("CONTROLLER_BANDIT_EPSILON", "0.15"))))
     explore_c = max(0.0, float(os.getenv("CONTROLLER_BANDIT_EXPLORE_C", "0.12")))
+    cooldown_streak = max(1, int(os.getenv("CONTROLLER_ARM_COOLDOWN_STREAK", "2")))
+    min_alt_ratio = max(0.0, min(1.0, float(os.getenv("CONTROLLER_COOLDOWN_MIN_ALT_SCORE_RATIO", "0.55"))))
     constraints = state.get("constraints") if isinstance(state.get("constraints"), dict) else {}
     lambda_latency = float(constraints.get("lambda_latency", 0.0))
     lambda_cost = float(constraints.get("lambda_cost", 0.0))
@@ -516,18 +520,36 @@ def _bandit_choose_arm(
     if not scores:
         return available_arms[0], {"mode": "fallback", "scores": {}}
 
-    if random.random() < epsilon:
-        chosen_arm = random.choice(list(scores.keys()))
-        mode = "epsilon_explore"
-    else:
-        chosen_arm = max(scores.keys(), key=lambda a: scores[a]["total"])
-        mode = "score_exploit"
+    drift = state.get("drift") if isinstance(state.get("drift"), dict) else {}
+    recent_drift = int(state.get("total_rounds", 0) or 0) - int(drift.get("last_drift_round", 0) or 0) <= 3
+    effective_epsilon = min(0.5, epsilon * (2.0 if recent_drift else 1.0))
 
-    probs = _selection_probabilities(scores=scores, epsilon=epsilon)
+    if random.random() < effective_epsilon:
+        chosen_arm = random.choice(list(scores.keys()))
+        mode = "drift_recover" if recent_drift else "epsilon_explore"
+    else:
+        ranked = sorted(scores.keys(), key=lambda a: scores[a]["total"], reverse=True)
+        chosen_arm = ranked[0]
+        mode = "score_exploit"
+        chosen_state = state.get("arms", {}).get(chosen_arm, {}) if isinstance(state.get("arms"), dict) else {}
+        ineffective_streak = int(chosen_state.get("ineffective_streak", 0) or 0) if isinstance(chosen_state, dict) else 0
+        if ineffective_streak >= cooldown_streak and len(ranked) > 1:
+            best_total = max(1e-6, float(scores[chosen_arm]["total"]))
+            for alt in ranked[1:]:
+                alt_state = state.get("arms", {}).get(alt, {}) if isinstance(state.get("arms"), dict) else {}
+                alt_streak = int(alt_state.get("ineffective_streak", 0) or 0) if isinstance(alt_state, dict) else 0
+                if alt_streak < cooldown_streak and float(scores[alt]["total"]) >= best_total * min_alt_ratio:
+                    chosen_arm = alt
+                    mode = "cooldown_shift"
+                    break
+
+    probs = _selection_probabilities(scores=scores, epsilon=effective_epsilon)
     return chosen_arm, {
         "mode": mode,
         "scores": scores,
         "propensity": probs,
+        "epsilon": round(effective_epsilon, 4),
+        "cooldown_streak": cooldown_streak,
         "trained_policy_used": bool(trained_policy),
         "trained_policy_blend": trained_blend if trained_policy else 0.0,
         "trained_policy_version": trained_policy.get("version", "") if trained_policy else "",
@@ -543,6 +565,7 @@ def _bandit_update(
     observed_latency: float,
     observed_cost: float,
     uncertainty_pressure: float,
+    effective: bool = True,
 ) -> None:
     base_lr = max(0.001, min(0.2, float(os.getenv("CONTROLLER_BANDIT_LR", "0.05"))))
     # Higher uncertainty encourages faster adaptation under non-stationarity.
@@ -571,6 +594,8 @@ def _bandit_update(
     prev_cost = float(arm_state.get("avg_cost", 0.0))
     arm_state["avg_latency"] = float(observed_latency if prev_latency <= 0 else (1 - ema_alpha) * prev_latency + ema_alpha * observed_latency)
     arm_state["avg_cost"] = float(observed_cost if prev_cost <= 0 else (1 - ema_alpha) * prev_cost + ema_alpha * observed_cost)
+    weak_reward = reward < float(os.getenv("CONTROLLER_ARM_WEAK_REWARD_THRESHOLD", "0.025"))
+    arm_state["ineffective_streak"] = 0 if effective and not weak_reward else int(arm_state.get("ineffective_streak", 0) or 0) + 1
 
 
 def _get_outliner_session():
@@ -844,6 +869,36 @@ def _coherence_outline_signal(outline: str) -> float:
     return _clip01(0.45 * chain_score + 0.30 * transition_score + 0.25 * step_score)
 
 
+def _evidence_outline_signal(outline: str) -> float:
+    """Estimate whether an outline can realistically repair weak grounding.
+
+    A useful evidence repair outline should not merely say "add evidence"; it
+    should specify claim slots, acceptable evidence types, citation placement,
+    and anti-hallucination constraints. These features are cheap to score and
+    make the bandit reward reflect the actual generator-facing repair quality.
+    """
+    text = str(outline or "")
+    lower = text.lower()
+
+    claim_slot = 1.0 if re.search(r"主张|核心论点|claim|thesis|待验证命题", lower) else 0.0
+    evidence_slot = 1.0 if re.search(r"证据槽|证据计划|evidence slot|source slot|来源槽", lower) else 0.0
+    citation_slot = 1.0 if re.search(r"引用位置|引用标记|citation|\\[source\\]|\\[ref\\]|\\[来源\\]", lower) else 0.0
+    source_type = 1.0 if re.search(r"论文|报告|数据集|基准|实验|统计|案例|可靠来源|retrieved source|source_results", lower) else 0.0
+    guard = 1.0 if re.search(r"不得编造|不可虚构|缺少来源|无来源则|hallucination|unsupported", lower) else 0.0
+
+    numbered_slots = len(re.findall(r"证据槽\s*[A-Z0-9一二三四五六七八九十]*|evidence slot", lower))
+    slot_score = min(1.0, numbered_slots / 3.0)
+
+    return _clip01(
+        0.18 * claim_slot
+        + 0.22 * evidence_slot
+        + 0.18 * citation_slot
+        + 0.16 * source_type
+        + 0.16 * guard
+        + 0.10 * slot_score
+    )
+
+
 def _score_outline_candidate(
     candidate_outline: str,
     original_outline: str,
@@ -868,6 +923,7 @@ def _score_outline_candidate(
 
     structure = _structure_score(candidate_outline)
     coherence_signal = _coherence_outline_signal(candidate_outline)
+    evidence_signal = _evidence_outline_signal(candidate_outline)
 
     rel_gap = max(0.0, rel_threshold - rel_score)
     red_gap = max(0.0, red_score - red_threshold)
@@ -877,12 +933,14 @@ def _score_outline_candidate(
     topic_need = _clip01(max(rel_gap, float(defect_graph.get("topic", 0.0))))
     novelty_need = _clip01(max(red_gap, float(defect_graph.get("redundancy", 0.0))))
     structure_need = _clip01(float(defect_graph.get("structure", 0.0)))
+    evidence_need = _clip01(float(defect_graph.get("evidence", 0.0)))
 
     # Dynamic weights to align Controller objective with Verifier failures.
     rel_weight = 0.32 + 0.20 * topic_need
     novelty_weight = 0.14 + 0.18 * novelty_need
     structure_weight = 0.12 + 0.16 * structure_need
     coherence_weight = 0.18 + 0.28 * coherence_need
+    evidence_weight = 0.12 + 0.30 * evidence_need
     delta_weight = 0.06
 
     # If verifier explicitly failed logical_coherence, push more weight to coherence optimization.
@@ -891,12 +949,23 @@ def _score_outline_candidate(
         coherence_weight += 0.10
         rel_weight = max(0.20, rel_weight - 0.05)
         novelty_weight = max(0.10, novelty_weight - 0.03)
+    if "evidence_grounding" in failed_dims:
+        evidence_weight += 0.12
+        structure_weight += 0.03
+    if topic_need > evidence_need + 0.15:
+        # When topic drift is the dominant defect, do not let evidence planning
+        # overwhelm the repair objective. Evidence still matters, but topic
+        # recovery must come first.
+        evidence_weight *= 0.35
+        rel_weight += 0.18
+        coherence_weight += 0.04
 
-    total_weight = max(1e-6, rel_weight + novelty_weight + structure_weight + coherence_weight + delta_weight)
+    total_weight = max(1e-6, rel_weight + novelty_weight + structure_weight + coherence_weight + evidence_weight + delta_weight)
     rel_weight /= total_weight
     novelty_weight /= total_weight
     structure_weight /= total_weight
     coherence_weight /= total_weight
+    evidence_weight /= total_weight
     delta_weight /= total_weight
 
     total = (
@@ -904,6 +973,7 @@ def _score_outline_candidate(
         + novelty_weight * novelty
         + structure_weight * structure
         + coherence_weight * coherence_signal
+        + evidence_weight * evidence_signal
         + delta_weight * similarity_to_working
     )
 
@@ -913,12 +983,14 @@ def _score_outline_candidate(
         "novelty": round(novelty, 4),
         "structure": round(structure, 4),
         "coherence_signal": round(coherence_signal, 4),
+        "evidence_signal": round(evidence_signal, 4),
         "delta_from_working": round(similarity_to_working, 4),
         "weights": {
             "relevance_anchor": round(rel_weight, 4),
             "novelty": round(novelty_weight, 4),
             "structure": round(structure_weight, 4),
             "coherence_signal": round(coherence_weight, 4),
+            "evidence_signal": round(evidence_weight, 4),
             "delta_from_working": round(delta_weight, 4),
         },
     }
@@ -1217,17 +1289,38 @@ async def improve_outline(req: ImproveOutlineRequest):
             "\n".join(
                 [
                     working_outline or original_outline,
-                    "补充要求：优先修复主题偏移，所有段落首句必须直接回应本小节目标。",
-                    "补充要求：每个要点必须包含与主题锚点对应的明确关键词与结论句。",
+                    "",
+                    "【主题恢复 / Topic Recovery】优先修复 topic_alignment 与 coverage_completeness。",
+                    "【原始主题锁定】" + (original_outline[:260] if original_outline else "保持当前小节主题"),
+                    "- 核心论点：第一段必须直接回答原始小节标题，不得改写成泛泛背景介绍。",
+                    "- 主题锚点：每个段落至少包含 1 个原始主题关键词，并围绕该关键词给出结论句。",
+                    "- 覆盖清单：按“定义/机制 -> 代表方法 -> 适用边界 -> 与长文档生成的关系”补齐缺失点。",
+                    "- 证据约束：只有在主题句完成后才插入证据，不允许证据主题替代本小节主题。",
+                    "- 反漂移约束：禁止转向与原始小节无关的金融、心理、软件可靠性泛化案例。",
                 ]
             )
         )
+        evidence_anchor_tokens: List[str] = []
+        for _token in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_-]{2,}", (original_outline + "\n" + working_outline)):
+            if _token not in evidence_anchor_tokens:
+                evidence_anchor_tokens.append(_token)
+            if len(evidence_anchor_tokens) >= 10:
+                break
         defect_evidence_outline = _sanitize_outline_text(
             "\n".join(
                 [
                     working_outline or original_outline,
-                    "补充要求：优先修复证据不足，每个要点必须补充可验证事实或来源线索。",
-                    "补充要求：避免抽象表述，改用可落地机制、数据口径或案例片段。",
+                    "",
+                    "【主题锁定】本轮证据修复不得改变原小节主题：" + (original_outline[:220] if original_outline else "保持当前小节主题"),
+                    "【证据计划 / Evidence Plan】优先修复 evidence_grounding，不得只写抽象观点。",
+                    "- 主张槽 Claim A：用 1 句话写出本小节最核心、可被证据支持的论点，并绑定至少 2 个主题锚点。",
+                    "- 证据槽 Evidence Slot 1：从已检索/可用来源中寻找论文、报告、数据集、基准实验或可靠案例；在正文对应句后插入引用位置 [Source]。",
+                    "- 证据槽 Evidence Slot 2：补充一个机制性证据或工程案例，说明该主张如何发生、在哪些条件下成立。",
+                    "- 证据槽 Evidence Slot 3：加入一个限制/反例/边界条件，避免把局部证据扩大成普遍结论。",
+                    "- 推理槽 Reasoning：每个证据后必须写 1 句“证据如何支撑主张”的解释，而不是只堆引用。",
+                    "- 防幻觉约束：不得编造作者、年份、DOI、数值或不存在的论文；缺少来源时必须改写为谨慎表述并标注需要进一步验证。",
+                    "- 引用位置：每个关键段落至少预留 1 个引用标记位置，不把所有引用集中到段末。",
+                    "- 主题锚点：" + ("、".join(evidence_anchor_tokens) if evidence_anchor_tokens else "保持原主题关键词"),
                 ]
             )
         )
@@ -1317,6 +1410,7 @@ async def improve_outline(req: ImproveOutlineRequest):
         min_novelty_gain = float(os.getenv("CONTROLLER_MIN_NOVELTY_GAIN", "0.005"))
         min_structure_gain = float(os.getenv("CONTROLLER_MIN_STRUCTURE_GAIN", "0.05"))
         min_coherence_gain = float(os.getenv("CONTROLLER_MIN_COHERENCE_GAIN", "0.03"))
+        min_evidence_gain = float(os.getenv("CONTROLLER_MIN_EVIDENCE_GAIN", "0.05"))
 
         bandit_enabled = os.getenv("CONTROLLER_BANDIT_ENABLED", "true").lower() == "true"
         feature_vector = _build_bandit_context_features(
@@ -1342,17 +1436,16 @@ async def improve_outline(req: ImproveOutlineRequest):
         }
 
         if dedup_candidates:
+            best_candidate_by_source: Dict[str, Dict[str, Any]] = {}
+            for cand in dedup_candidates:
+                src = cand["source"]
+                if src not in best_candidate_by_source or cand["score"]["total"] > best_candidate_by_source[src]["score"]["total"]:
+                    best_candidate_by_source[src] = cand
             if bandit_enabled:
-                best_by_source: Dict[str, Dict[str, Any]] = {}
-                for cand in dedup_candidates:
-                    src = cand["source"]
-                    if src not in best_by_source or cand["score"]["total"] > best_by_source[src]["score"]["total"]:
-                        best_by_source[src] = cand
-
                 available_arms = [
                     arm
                     for arm in ["llm", "rule", "rule_structured", "defect_topic", "defect_evidence", "defect_structure"]
-                    if arm in best_by_source
+                    if arm in best_candidate_by_source
                 ]
                 if available_arms:
                     with BANDIT_LOCK:
@@ -1363,7 +1456,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                             features=feature_vector,
                             defect_graph=defect_graph,
                         )
-                    chosen = best_by_source[selected_arm]
+                    chosen = best_candidate_by_source[selected_arm]
                     chosen_source = selected_arm
                     bandit_debug["selection"] = selection_debug
                     bandit_debug["selected_arm"] = selected_arm
@@ -1374,19 +1467,128 @@ async def improve_outline(req: ImproveOutlineRequest):
                 chosen = max(dedup_candidates, key=lambda x: x["score"]["total"])
                 chosen_source = chosen["source"]
 
+            # Risk-sensitive override: when evidence grounding is the dominant
+            # failure mode, do not let historical bandit inertia pick a weaker
+            # generic structure repair over a substantially better evidence plan.
+            failed_dims_for_override = req.feedback.get("quality_dimensions_failed") if isinstance(req.feedback.get("quality_dimensions_failed"), list) else []
+            evidence_override_margin = float(os.getenv("CONTROLLER_EVIDENCE_OVERRIDE_MARGIN", "0.08"))
+            evidence_candidate = best_candidate_by_source.get("defect_evidence")
+            chosen_total = float((chosen or {}).get("score", {}).get("total", 0.0)) if chosen else 0.0
+            if (
+                evidence_candidate
+                and ("evidence_grounding" in failed_dims_for_override or float(defect_graph.get("evidence", 0.0)) >= 0.55)
+                and (
+                    float(defect_graph.get("evidence", 0.0)) >= float(defect_graph.get("topic", 0.0)) + 0.05
+                    or rel_score >= rel_threshold * 0.85
+                )
+                and float(evidence_candidate["score"].get("total", 0.0)) >= chosen_total + evidence_override_margin
+            ):
+                chosen = evidence_candidate
+                chosen_source = "defect_evidence"
+                bandit_debug["override"] = {
+                    "reason": "dominant_evidence_defect",
+                    "previous_arm": bandit_debug.get("selected_arm", ""),
+                    "previous_total": round(chosen_total, 4),
+                    "override_total": evidence_candidate["score"].get("total", 0.0),
+                    "margin": evidence_override_margin,
+                }
+                bandit_debug["selected_arm"] = "defect_evidence"
+
+            topic_candidate = best_candidate_by_source.get("defect_topic")
+            topic_override_margin = float(os.getenv("CONTROLLER_TOPIC_OVERRIDE_MARGIN", "0.10"))
+            chosen_total = float((chosen or {}).get("score", {}).get("total", 0.0)) if chosen else 0.0
+            topic_dominant = bool(
+                topic_candidate
+                and (
+                    "topic_alignment" in failed_dims_for_override
+                    or rel_score < rel_threshold * 0.82
+                    or float(defect_graph.get("topic", 0.0)) >= float(defect_graph.get("evidence", 0.0)) + 0.10
+                )
+            )
+            force_topic_recovery = bool(
+                topic_candidate
+                and (
+                    rel_score < rel_threshold * 0.70
+                    or "topic_alignment" in failed_dims_for_override
+                    or float(defect_graph.get("topic", 0.0)) >= float(defect_graph.get("evidence", 0.0)) + 0.05
+                )
+            )
+            if (
+                topic_candidate
+                and topic_dominant
+                and (
+                    force_topic_recovery
+                    or float(topic_candidate["score"].get("total", 0.0)) >= chosen_total - topic_override_margin
+                )
+            ):
+                chosen = topic_candidate
+                chosen_source = "defect_topic"
+                bandit_debug["override"] = {
+                    "reason": "dominant_topic_defect",
+                    "previous_arm": bandit_debug.get("selected_arm", ""),
+                    "previous_total": round(chosen_total, 4),
+                    "override_total": topic_candidate["score"].get("total", 0.0),
+                    "margin": topic_override_margin,
+                }
+                bandit_debug["selected_arm"] = "defect_topic"
+
+            # Final guard: overrides can still keep selecting an arm that has
+            # just failed repeatedly. Shift to the best viable alternative so
+            # controller repairs do not spiral into the same low-yield outline.
+            if bandit_enabled and chosen and best_candidate_by_source:
+                try:
+                    with BANDIT_LOCK:
+                        cooldown_state = _load_bandit_state(len(feature_vector))
+                    cooldown_streak = max(1, int(os.getenv("CONTROLLER_ARM_COOLDOWN_STREAK", "2")))
+                    min_alt_ratio = max(0.0, min(1.0, float(os.getenv("CONTROLLER_COOLDOWN_MIN_ALT_SCORE_RATIO", "0.55"))))
+                    arm_state = (cooldown_state.get("arms") or {}).get(chosen_source, {})
+                    ineffective_streak = int(arm_state.get("ineffective_streak", 0) or 0) if isinstance(arm_state, dict) else 0
+                    if ineffective_streak >= cooldown_streak and len(best_candidate_by_source) > 1:
+                        current_total = max(1e-6, float((chosen or {}).get("score", {}).get("total", 0.0)))
+                        alternatives = sorted(
+                            [
+                                cand for arm, cand in best_candidate_by_source.items()
+                                if arm != chosen_source
+                            ],
+                            key=lambda cand: float(cand.get("score", {}).get("total", 0.0)),
+                            reverse=True,
+                        )
+                        for alt in alternatives:
+                            alt_source = str(alt.get("source", ""))
+                            alt_state = (cooldown_state.get("arms") or {}).get(alt_source, {})
+                            alt_streak = int(alt_state.get("ineffective_streak", 0) or 0) if isinstance(alt_state, dict) else 0
+                            if alt_streak < cooldown_streak and float(alt.get("score", {}).get("total", 0.0)) >= current_total * min_alt_ratio:
+                                bandit_debug["cooldown_override"] = {
+                                    "reason": "selected_arm_ineffective_streak",
+                                    "previous_arm": chosen_source,
+                                    "previous_ineffective_streak": ineffective_streak,
+                                    "new_arm": alt_source,
+                                    "new_total": alt.get("score", {}).get("total", 0.0),
+                                }
+                                chosen = alt
+                                chosen_source = alt_source
+                                bandit_debug["selected_arm"] = alt_source
+                                bandit_debug.setdefault("selection", {})["mode"] = "cooldown_shift"
+                                break
+                except Exception as _cooldown_error:
+                    bandit_debug["cooldown_error"] = str(_cooldown_error)[:180]
+
         changed = False
         score_gain = (chosen["score"]["total"] - baseline_score["total"]) if chosen else 0.0
         rel_anchor_gain = (chosen["score"].get("relevance_anchor", 0.0) - baseline_score.get("relevance_anchor", 0.0)) if chosen else 0.0
         novelty_gain = (chosen["score"].get("novelty", 0.0) - baseline_score.get("novelty", 0.0)) if chosen else 0.0
         structure_gain = (chosen["score"].get("structure", 0.0) - baseline_score.get("structure", 0.0)) if chosen else 0.0
         coherence_gain = (chosen["score"].get("coherence_signal", 0.0) - baseline_score.get("coherence_signal", 0.0)) if chosen else 0.0
+        evidence_gain = (chosen["score"].get("evidence_signal", 0.0) - baseline_score.get("evidence_signal", 0.0)) if chosen else 0.0
 
         rel_needed = rel_score < rel_threshold
         red_needed = red_score > red_threshold
         coherence_needed = bool(defect_graph.get("coherence", 0.0) >= 0.25 or "logical_coherence" in (req.feedback.get("quality_dimensions_failed") if isinstance(req.feedback.get("quality_dimensions_failed"), list) else []))
+        evidence_needed = bool(defect_graph.get("evidence", 0.0) >= 0.25 or "evidence_grounding" in (req.feedback.get("quality_dimensions_failed") if isinstance(req.feedback.get("quality_dimensions_failed"), list) else []))
         rel_gain_ok = (not rel_needed) or (rel_anchor_gain >= min_rel_anchor_gain) or (structure_gain >= min_structure_gain)
         novelty_gain_ok = (not red_needed) or (novelty_gain >= min_novelty_gain)
         coherence_gain_ok = (not coherence_needed) or (coherence_gain >= min_coherence_gain) or (chosen_source in ("rule_structured", "defect_structure"))
+        evidence_gain_ok = (not evidence_needed) or (evidence_gain >= min_evidence_gain) or (chosen_source == "defect_evidence" and chosen and chosen["score"].get("evidence_signal", 0.0) >= 0.75)
 
         candidate_changed = bool(chosen and _normalize_outline_for_compare(chosen["outline"]) != _normalize_outline_for_compare(baseline_outline))
         if chosen and candidate_changed:
@@ -1404,9 +1606,14 @@ async def improve_outline(req: ImproveOutlineRequest):
             chosen
             and changed
             and (
-                score_gain >= min_gain
-                or chosen_source == "rule_structured"
-                or (rel_gain_ok and novelty_gain_ok and coherence_gain_ok)
+                (
+                    score_gain >= min_gain
+                    and rel_gain_ok
+                    and novelty_gain_ok
+                    and coherence_gain_ok
+                    and evidence_gain_ok
+                )
+                or (chosen_source == "rule_structured" and rel_gain_ok and coherence_gain_ok)
             )
         )
         if require_llm_source and chosen_source != "llm":
@@ -1420,6 +1627,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                 + max(0.0, rel_anchor_gain) * 0.20
                 + max(0.0, novelty_gain) * 0.15
                 + max(0.0, structure_gain) * 0.10
+                + max(0.0, evidence_gain) * 0.18
             )
 
             observed_cost, observed_latency = _estimate_arm_cost_latency(
@@ -1454,6 +1662,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                     observed_latency=observed_latency,
                     observed_cost=observed_cost,
                     uncertainty_pressure=uncertainty_pressure,
+                    effective=effective,
                 )
                 constraint_debug = _update_constraints(
                     state=state,
@@ -1516,9 +1725,11 @@ async def improve_outline(req: ImproveOutlineRequest):
                 "selection_novelty_gain": round(novelty_gain, 4),
                 "selection_structure_gain": round(structure_gain, 4),
                 "selection_coherence_gain": round(coherence_gain, 4),
+                "selection_evidence_gain": round(evidence_gain, 4),
                 "selection_rel_gain_ok": rel_gain_ok,
                 "selection_novelty_gain_ok": novelty_gain_ok,
                 "selection_coherence_gain_ok": coherence_gain_ok,
+                "selection_evidence_gain_ok": evidence_gain_ok,
                 "llm_error": llm_error,
                 "defect_graph": defect_graph,
                 "bandit": bandit_debug,
@@ -1530,6 +1741,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                         "novelty": c["score"]["novelty"],
                         "structure": c["score"]["structure"],
                         "coherence_signal": c["score"].get("coherence_signal", 0.0),
+                        "evidence_signal": c["score"].get("evidence_signal", 0.0),
                     }
                     for c in dedup_candidates
                 ],
@@ -1558,9 +1770,11 @@ async def improve_outline(req: ImproveOutlineRequest):
             "selection_novelty_gain": round(novelty_gain, 4),
             "selection_structure_gain": round(structure_gain, 4),
             "selection_coherence_gain": round(coherence_gain, 4),
+            "selection_evidence_gain": round(evidence_gain, 4),
             "selection_rel_gain_ok": rel_gain_ok,
             "selection_novelty_gain_ok": novelty_gain_ok,
             "selection_coherence_gain_ok": coherence_gain_ok,
+            "selection_evidence_gain_ok": evidence_gain_ok,
             "llm_error": llm_error,
             "defect_graph": defect_graph,
             "bandit": bandit_debug,
@@ -1572,6 +1786,7 @@ async def improve_outline(req: ImproveOutlineRequest):
                     "novelty": c["score"]["novelty"],
                     "structure": c["score"]["structure"],
                     "coherence_signal": c["score"].get("coherence_signal", 0.0),
+                    "evidence_signal": c["score"].get("evidence_signal", 0.0),
                 }
                 for c in dedup_candidates
             ],

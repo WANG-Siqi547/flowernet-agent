@@ -51,8 +51,14 @@ DOMAIN_KEYWORD_MAP = {
         "valid_sources": ["HBR", "McKinsey", "Harvard Business Review", "商业期刊", "经济学论文", "管理研究"],
     },
     "technology": {
-        "keywords": ["编程", "算法", "数据", "计算", "软件", "网络", "系统", "代码", "云", "AI", "机器学习"],
-        "valid_sources": ["arXiv", "GitHub", "技术博客", "CS论文", "工程研究", "官方文档"],
+        "keywords": [
+            "编程", "算法", "数据", "计算", "软件", "网络", "系统", "代码", "云", "AI", "机器学习",
+            "长上下文", "长文档", "上下文窗口", "位置编码", "注意力", "稀疏注意力", "Transformer",
+            "大语言模型", "LLM", "LongBench", "RoPE", "ALiBi", "FlashAttention", "检索增强",
+            "long context", "long document", "context window", "positional encoding", "attention",
+            "large language model", "retrieval augmented generation",
+        ],
+        "valid_sources": ["arXiv", "ACM", "IEEE", "ACL", "NeurIPS", "OpenReview", "技术博客", "CS论文", "工程研究", "官方文档"],
     },
     "psychology": {
         "keywords": ["心理", "行为", "认知", "情感", "压力", "学习", "记忆", "大脑", "神经"],

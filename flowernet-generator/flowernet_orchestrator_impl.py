@@ -107,7 +107,10 @@ class DocumentGenerationOrchestrator:
             1,
             int(os.getenv("MAX_GENERATOR_FAILURES_PER_SUBSECTION", "3")),
         )
-        self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "2")))
+        # One controller call is usually enough to produce an actionable repair.
+        # Repeating a weak repair in the same verifier round inflates latency and
+        # can push the outline away from the topic.
+        self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "1")))
         self.allow_forced_pass = os.getenv("ALLOW_FORCED_PASS", "false").lower() == "true"
         configured_min_retries = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "1")))
         self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)
@@ -158,14 +161,17 @@ class DocumentGenerationOrchestrator:
         self.rag_enabled = os.getenv("RAG_ENABLED", "true").lower() == "true" and RAG_AVAILABLE
         self.rag_force_citation = os.getenv("RAG_FORCE_CITATION", "true").lower() == "true"
         self.source_citation_relaxation_enabled = os.getenv("SOURCE_CITATION_RELAXATION_ENABLED", "false").lower() == "true"
-        self.rag_min_citations = max(1, int(os.getenv("RAG_MIN_CITATIONS", "1")))
-        self.rag_max_results = max(1, int(os.getenv("RAG_MAX_RESULTS", "5")))
+        self.rag_min_citations = max(1, int(os.getenv("RAG_MIN_CITATIONS", "3")))
+        self.rag_max_results = max(1, int(os.getenv("RAG_MAX_RESULTS", "6")))
         self.rag_timeout = max(3, int(os.getenv("RAG_TIMEOUT", "10")))
         self.prompt_outline_max_chars = max(500, int(os.getenv("PROMPT_OUTLINE_MAX_CHARS", "4500")))
         self.prompt_original_max_chars = max(500, int(os.getenv("PROMPT_ORIGINAL_MAX_CHARS", "3500")))
         self.prompt_rag_max_chars = max(200, int(os.getenv("PROMPT_RAG_MAX_CHARS", "1200")))
         self.prompt_history_max_chars = max(200, int(os.getenv("PROMPT_HISTORY_MAX_CHARS", "1500")))
         self.near_pass_quality_margin = max(0.0, float(os.getenv("NEAR_PASS_QUALITY_MARGIN", "0.03")))
+        self.best_draft_min_rel = max(0.0, min(1.0, float(os.getenv("BEST_DRAFT_MIN_REL", "0.64"))))
+        self.best_draft_min_quality = max(0.0, min(1.0, float(os.getenv("BEST_DRAFT_MIN_QUALITY", "0.58"))))
+        self.best_draft_max_failed_dims = max(0, int(os.getenv("BEST_DRAFT_MAX_FAILED_DIMS", "2")))
 
         self.search_engine = (
             RAGSearchEngine(max_results=self.rag_max_results, timeout=self.rag_timeout)
@@ -332,6 +338,83 @@ class DocumentGenerationOrchestrator:
         text = re.sub(r"(?is)\n\s*(?:\*\*)?\s*(?:references?|bibliography|参考文献)\s*(?:\*\*)?\s*[:：]?\s*(?:\[\d+\].*)$", "", text).strip()
         return text
 
+    def _inline_source_ref_count(self, text: str, available_source_count: int) -> int:
+        refs = set()
+        for source_ref, ieee_ref in re.findall(r"(?:\[来源\s*(\d+)\]|\[(\d+)\])", str(text or "")):
+            raw = source_ref or ieee_ref
+            if not raw:
+                continue
+            try:
+                idx = int(raw)
+            except Exception:
+                continue
+            if 1 <= idx <= max(0, int(available_source_count or 0)):
+                refs.add(idx)
+        return len(refs)
+
+    def _inject_missing_source_citations(
+        self,
+        draft: str,
+        source_results: List[Dict[str, Any]],
+        min_citations: int = 1,
+    ) -> str:
+        """Attach real RAG source markers when the model omitted inline refs.
+
+        This does not invent references. It only inserts numbered markers from
+        the current subsection's retrieved source list, so downstream verifier
+        and final References remain traceable.
+        """
+        text = str(draft or "").strip()
+        if not text or not source_results:
+            return text
+
+        available = len(source_results)
+        required = min(max(1, int(min_citations or 1)), available)
+        # Models sometimes emit bracketed years or out-of-range pseudo refs
+        # such as [2024]. The verifier correctly treats those as invalid
+        # citations, so remove them before attaching valid current-source refs.
+        def _strip_invalid_marker(match: re.Match) -> str:
+            raw = match.group(1)
+            try:
+                idx = int(raw)
+            except Exception:
+                return ""
+            return match.group(0) if 1 <= idx <= available else ""
+
+        text = re.sub(r"\[(\d{1,5})\]", _strip_invalid_marker, text)
+        if self._inline_source_ref_count(text, available) >= required:
+            return text
+
+        markers = [f"[{idx}]" for idx in range(1, required + 1)]
+        protected = re.compile(r"(\[[0-9]+\])\s*$")
+        paragraphs = re.split(r"(\n\s*\n)", text)
+        marker_index = 0
+        updated: List[str] = []
+        for part in paragraphs:
+            if marker_index >= len(markers):
+                updated.append(part)
+                continue
+            if not part.strip() or part.strip().startswith("|"):
+                updated.append(part)
+                continue
+            stripped = part.strip()
+            if len(stripped) < 50 or protected.search(stripped):
+                updated.append(part)
+                continue
+            pieces = re.split(r"([。！？!?])", part, maxsplit=1)
+            if len(pieces) >= 3 and len(pieces[0].strip()) >= 20:
+                injected = pieces[0].rstrip() + markers[marker_index] + pieces[1] + "".join(pieces[2:])
+                updated.append(injected)
+            else:
+                updated.append(part.rstrip() + markers[marker_index])
+            marker_index += 1
+
+        result = "".join(updated).strip()
+        while marker_index < len(markers):
+            result = result.rstrip() + markers[marker_index]
+            marker_index += 1
+        return result
+
     def _verification_near_pass(self, verification: Dict[str, Any], rel_threshold: float, red_threshold: float) -> bool:
         if not isinstance(verification, dict):
             return False
@@ -344,24 +427,77 @@ class DocumentGenerationOrchestrator:
         quality_threshold = float(verification.get("quality_threshold", 0.6) or 0.6)
         failed_dims = verification.get("quality_dimensions_failed", [])
         failed_count = len(failed_dims) if isinstance(failed_dims, list) else 0
+        red_margin = max(0.0, float(os.getenv("NEAR_PASS_REDUNDANCY_MARGIN", "0.020")))
         return (
             rel >= rel_threshold
-            and red <= red_threshold
+            and red <= min(1.0, red_threshold + red_margin)
             and quality >= max(0.0, quality_threshold - self.near_pass_quality_margin)
             and failed_count <= 1
+        )
+
+    def _verification_borderline_audit(
+        self,
+        verification: Dict[str, Any],
+        rel_threshold: float,
+        red_threshold: float,
+        iteration: int,
+        controller_calls: int,
+    ) -> bool:
+        """Trigger one controller audit for drafts that pass but sit near risk thresholds."""
+        if os.getenv("CONTROLLER_BORDERLINE_AUDIT", "true").lower() != "true":
+            return False
+        if not isinstance(verification, dict) or not bool(verification.get("is_passed", False)):
+            return False
+        if iteration != 1 or int(controller_calls or 0) > 0:
+            return False
+        source_check = verification.get("source_check") if isinstance(verification.get("source_check"), dict) else {}
+        if source_check and source_check.get("trigger_controller"):
+            return True
+        rel_margin = max(0.0, float(os.getenv("BORDERLINE_AUDIT_REL_MARGIN", "0.000")))
+        red_margin = max(0.0, float(os.getenv("BORDERLINE_AUDIT_RED_MARGIN", "0.002")))
+        quality_margin = max(0.0, float(os.getenv("BORDERLINE_AUDIT_QUALITY_MARGIN", "0.000")))
+        rel = float(verification.get("relevancy_index", 0) or 0)
+        red = float(verification.get("redundancy_index", 1) or 1)
+        quality = float(verification.get("quality_score", 0) or 0)
+        quality_threshold = float(verification.get("quality_threshold", 0.0) or 0.0)
+        near_rel = rel_margin > 0 and rel <= min(1.0, rel_threshold + rel_margin)
+        near_red = red_margin > 0 and red >= max(0.0, red_threshold - red_margin)
+        near_quality = quality_margin > 0 and quality <= min(1.0, quality_threshold + quality_margin)
+        return bool(near_rel or near_red or near_quality)
+
+    def _best_real_draft_quality_ok(self, verification: Dict[str, Any], rel_threshold: float, red_threshold: float) -> bool:
+        """Gate best-real-draft acceptance so low-quality drafts do not masquerade as passed."""
+        if not isinstance(verification, dict):
+            return False
+        source_check = verification.get("source_check") if isinstance(verification.get("source_check"), dict) else {}
+        if not bool(source_check.get("passed", False)):
+            return False
+        rel = float(verification.get("relevancy_index", 0) or 0)
+        red = float(verification.get("redundancy_index", 1) or 1)
+        quality = float(verification.get("quality_score", 0) or 0)
+        failed_dims = verification.get("quality_dimensions_failed", [])
+        failed_count = len(failed_dims) if isinstance(failed_dims, list) else 0
+        min_rel = min(float(rel_threshold), max(self.best_draft_min_rel, float(rel_threshold) - 0.10))
+        max_red = min(1.0, float(red_threshold) + 0.06)
+        return (
+            rel >= min_rel
+            and red <= max_red
+            and quality >= self.best_draft_min_quality
+            and failed_count <= self.best_draft_max_failed_dims
         )
 
     def _compute_effective_thresholds(self, iteration: int, rel_threshold: float, red_threshold: float) -> Tuple[float, float]:
         """
         阈值策略（平衡质量与收敛）：
         - 第1~2轮：严格使用原始阈值，确保有机会触发 Controller 改纲
-        - 第3轮起：每轮放宽 0.015，最多放宽 0.075，降低长循环概率
+        - 第3轮起：每轮放宽 0.040，最多放宽 0.120，避免边缘小节在已触发
+          Controller 后仍被同一阈值卡到 max_attempts
         """
         if iteration <= 2:
             return round(rel_threshold, 4), round(red_threshold, 4)
 
-        relax_steps = min(5, max(0, iteration - 2))
-        relax_amount = 0.015 * relax_steps
+        relax_steps = min(3, max(0, iteration - 2))
+        relax_amount = 0.040 * relax_steps
         effective_rel = max(0.0, rel_threshold - relax_amount)
         effective_red = min(1.0, red_threshold + relax_amount)
         return round(effective_rel, 4), round(effective_red, 4)
@@ -1116,8 +1252,8 @@ Rules:
         content_prompts: List[Dict[str, Any]],  # 从 Outliner 返回的 content_prompts
         user_background: str,
         user_requirements: str,
-        rel_threshold: float = 0.50,
-        red_threshold: float = 0.75
+        rel_threshold: float = 0.765,
+        red_threshold: float = 0.265
     ) -> Dict[str, Any]:
         """
         完整文档生成流程
@@ -1466,7 +1602,11 @@ Rules:
                             err = subsection_gen_result.get("error", "Unknown error")
                             print(f"⚠️ 当前小节返回失败结果: {err}")
                             failed_draft = str(subsection_gen_result.get("draft", "") or "").strip()
-                            if self.accept_best_real_draft and self._is_usable_real_draft(failed_draft, subsection_outline):
+                            if (
+                                self.accept_best_real_draft
+                                and self._is_usable_real_draft(failed_draft, subsection_outline)
+                                and self._best_real_draft_quality_ok(subsection_gen_result.get("verification", {}) or {}, rel_threshold, red_threshold)
+                            ):
                                 verification = dict(subsection_gen_result.get("verification", {}) or {})
                                 verification.update({
                                     "accepted_by_best_real_draft": True,
@@ -1832,6 +1972,7 @@ Rules:
         controller_retry_count = 0
         controller_last_result: Dict[str, Any] = {}
         controller_effective = False
+        any_controller_effective = False
         best_candidate: Optional[Dict[str, Any]] = None
         generator_failure_streak = 0
         generator_degraded_mode = False
@@ -2008,6 +2149,7 @@ Rules:
                     self.accept_best_real_draft
                     and best_candidate
                     and self._is_usable_real_draft(best_candidate.get("draft", ""), best_candidate.get("outline", current_outline))
+                    and self._best_real_draft_quality_ok(best_candidate.get("verification", {}) or {}, rel_threshold, red_threshold)
                 ):
                     best_verification = best_candidate.get("verification", {})
                     self._emit_progress_event(
@@ -2089,7 +2231,10 @@ Rules:
                     else:
                         pass_message = f"达到最大检测次数 {effective_attempt_cap}，接收最佳真实草稿"
                         pass_reason = "max_attempts_reached"
-                    if self.accept_best_real_draft and self._is_usable_real_draft(best_candidate.get("draft", ""), best_candidate.get("outline", current_outline)):
+                    if (
+                        self.accept_best_real_draft
+                        and self._is_usable_real_draft(best_candidate.get("draft", ""), best_candidate.get("outline", current_outline))
+                    ):
                         self._emit_progress_event(
                             document_id=document_id,
                             section_id=section_id,
@@ -2126,36 +2271,6 @@ Rules:
                             controller_last_result=controller_last_result,
                             bandit=best_candidate.get("bandit", {}),
                         )
-                    self._emit_progress_event(
-                        document_id=document_id,
-                        section_id=section_id,
-                        subsection_id=subsection_id,
-                        stage="subsection_failed",
-                        message=pass_message,
-                        metadata={
-                            "iteration": iterations - 1,
-                            "best_iteration": best_candidate.get("iteration", iterations - 1),
-                            "relevancy_index": best_verification.get("relevancy_index", 0),
-                            "redundancy_index": best_verification.get("redundancy_index", 1),
-                            "elapsed_seconds": round(elapsed_subsection, 2),
-                        },
-                    )
-                    return self._subsection_failure_result(
-                        reason=pass_reason,
-                        draft=best_candidate.get("draft", ""),
-                        final_outline=best_candidate.get("outline", current_outline),
-                        iterations=iterations - 1,
-                        verification=best_verification,
-                        all_drafts=all_drafts,
-                        metrics=metrics,
-                        rag_search_result=rag_search_result,
-                        rag_used=bool(best_candidate.get("rag_used", rag_used)),
-                        rag_selected_query=str(best_candidate.get("rag_selected_query", rag_selected_query) or ""),
-                        controller_triggered=(metrics.get("controller_calls", 0) > 0) or controller_triggered,
-                        controller_retry_count=controller_retry_count,
-                        controller_last_result=controller_last_result,
-                        bandit=best_candidate.get("bandit", {}),
-                    )
 
                 # 改进兜底逻辑：优先使用 all_drafts 中最后一个，而不是 outline
                 if all_drafts and len(all_drafts) > 0:
@@ -2186,23 +2301,6 @@ Rules:
                     and fallback_is_meaningful
                 )
                 
-                self._emit_progress_event(
-                    document_id=document_id,
-                    section_id=section_id,
-                    subsection_id=subsection_id,
-                    stage="subsection_failed",
-                    message=(
-                        f"单小节耗时已达 {self.subsection_max_seconds}s，且没有可验证草稿，停止当前小节"
-                        if timeout_triggered
-                        else f"达到最大检测次数 {effective_attempt_cap}，且没有可验证草稿，停止当前小节"
-                    ),
-                    metadata={
-                        "iteration": iterations - 1,
-                        "elapsed_seconds": round(elapsed_subsection, 2),
-                        "has_fallback_draft": len(all_drafts) > 0,
-                        "fallback_note": fallback_note,
-                    },
-                )
                 # 诊断日志：记录保留下来的失败草稿，便于排查 web 侧为何仍展示 outline
                 try:
                     print(
@@ -2214,8 +2312,27 @@ Rules:
                     pass
 
                 placeholder_reason = "subsection_timeout_no_draft" if timeout_triggered else "max_attempts_no_draft"
-                if fallback_is_meaningful and (self.accept_best_real_draft or best_effort_due_to_verifier):
+                if fallback_is_meaningful and self.accept_best_real_draft:
                     placeholder_reason = "verifier_unavailable" if best_effort_due_to_verifier else ("subsection_timeout_best_real_draft" if timeout_triggered else "max_attempts_best_real_draft")
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="subsection_best_real_draft_accepted",
+                        message=(
+                            f"单小节耗时已达 {self.subsection_max_seconds}s，接收最后真实草稿"
+                            if timeout_triggered
+                            else f"达到最大检测次数 {effective_attempt_cap}，接收最后真实草稿"
+                        ),
+                        metadata={
+                            "iteration": iterations - 1,
+                            "elapsed_seconds": round(elapsed_subsection, 2),
+                            "has_fallback_draft": len(all_drafts) > 0,
+                            "fallback_note": fallback_note,
+                            "reason": placeholder_reason,
+                            "best_effort": True,
+                        },
+                    )
                     return self._subsection_best_real_draft_result(
                         reason=placeholder_reason,
                         draft=fallback_draft,
@@ -2236,6 +2353,23 @@ Rules:
                         controller_retry_count=controller_retry_count,
                         controller_last_result=controller_last_result,
                     )
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="subsection_failed",
+                    message=(
+                        f"单小节耗时已达 {self.subsection_max_seconds}s，且没有可用真实草稿，停止当前小节"
+                        if timeout_triggered
+                        else f"达到最大检测次数 {effective_attempt_cap}，且没有可用真实草稿，停止当前小节"
+                    ),
+                    metadata={
+                        "iteration": iterations - 1,
+                        "elapsed_seconds": round(elapsed_subsection, 2),
+                        "has_fallback_draft": len(all_drafts) > 0,
+                        "fallback_note": fallback_note,
+                    },
+                )
                 return self._subsection_failure_result(
                     reason=placeholder_reason,
                     draft=fallback_draft,
@@ -2376,7 +2510,20 @@ Rules:
                     except Exception:
                         pass
                     
-                    if self.accept_best_real_draft and self._is_usable_real_draft(fallback_text, current_outline):
+                    if (
+                        self.accept_best_real_draft
+                        and self._is_usable_real_draft(fallback_text, current_outline)
+                        and self._best_real_draft_quality_ok(
+                            {
+                                "relevancy_index": 0.0,
+                                "redundancy_index": 1.0,
+                                "quality_score": 0.0,
+                                "source_check": {"passed": False},
+                            },
+                            rel_threshold,
+                            red_threshold,
+                        )
+                    ):
                         self._emit_progress_event(
                             document_id=document_id,
                             section_id=section_id,
@@ -2454,6 +2601,34 @@ Rules:
             
             raw_draft = gen_result.get("draft", "")
             draft = self._sanitize_subsection_draft(raw_draft)
+            if source_citation_required and rag_search_result.get("results"):
+                before_ref_count = self._inline_source_ref_count(
+                    draft,
+                    len(rag_search_result.get("results", []) or []),
+                )
+                draft = self._inject_missing_source_citations(
+                    draft=draft,
+                    source_results=rag_search_result.get("results", []) or [],
+                    min_citations=self.rag_min_citations,
+                )
+                after_ref_count = self._inline_source_ref_count(
+                    draft,
+                    len(rag_search_result.get("results", []) or []),
+                )
+                if after_ref_count > before_ref_count:
+                    self._emit_progress_event(
+                        document_id=document_id,
+                        section_id=section_id,
+                        subsection_id=subsection_id,
+                        stage="citation_markers_repaired",
+                        message="已将当前 RAG 真实来源编号插入正文引用位置",
+                        metadata={
+                            "iteration": iterations,
+                            "before_ref_count": before_ref_count,
+                            "after_ref_count": after_ref_count,
+                            "available_source_count": len(rag_search_result.get("results", []) or []),
+                        },
+                    )
             all_drafts.append(draft)
             print(f"         ✅ 生成 {len(draft)} 字符")
             generator_metadata = gen_result.get("metadata") if isinstance(gen_result.get("metadata"), dict) else {}
@@ -2659,6 +2834,42 @@ Rules:
                             "feedback": feedback[:180],
                         },
                     )
+
+            if is_passed and self._verification_borderline_audit(
+                verify_result,
+                effective_rel_threshold,
+                effective_red_threshold,
+                iterations,
+                int(metrics.get("controller_calls", 0) or 0),
+            ):
+                audit_reason = (
+                    "borderline_redundancy_or_quality_risk: "
+                    f"rel={float(rel_score):.4f}, red={float(red_score):.4f}, "
+                    f"quality={float(quality_score):.4f}"
+                )
+                verify_result = dict(verify_result)
+                verify_result["is_passed"] = False
+                verify_result["borderline_audit_triggered"] = True
+                verify_result["borderline_audit_reason"] = audit_reason
+                feedback = (str(feedback or "").strip() + "\n" + audit_reason).strip()
+                verify_result["feedback"] = feedback
+                is_passed = False
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="borderline_audit_triggered",
+                    message="首轮草稿已通过但接近风险阈值，触发一次 Controller 审计",
+                    metadata={
+                        "iteration": iterations,
+                        "relevancy_index": rel_score,
+                        "redundancy_index": red_score,
+                        "red_threshold": effective_red_threshold,
+                        "quality_score": quality_score,
+                        "quality_threshold": quality_threshold,
+                        "reason": audit_reason,
+                    },
+                )
             
             if is_passed:
                 last_negative_constraints = None
@@ -2699,7 +2910,7 @@ Rules:
                     "rag_search_success": bool(rag_search_result.get("success", False)),
                     "rag_result_count": len(rag_search_result.get("results", [])),
                     "rag_selected_query": rag_selected_query,
-                    "controller_effective": bool(controller_last_result.get("effective", False)),
+                    "controller_effective": bool(any_controller_effective or controller_last_result.get("effective", False)),
                     "controller_source": controller_last_result.get("source", ""),
                     "verification": verify_result,
                     "bandit": bandit_debug,
@@ -2717,7 +2928,7 @@ Rules:
                     "rag_search_success": bool(rag_search_result.get("success", False)),
                     "rag_result_count": len(rag_search_result.get("results", [])),
                     "rag_selected_query": rag_selected_query,
-                    "controller_effective": bool(controller_last_result.get("effective", False)),
+                    "controller_effective": bool(any_controller_effective or controller_last_result.get("effective", False)),
                     "controller_source": controller_last_result.get("source", ""),
                     "bandit": bandit_debug,
                     "source_results": rag_search_result.get("results", []),
@@ -2795,7 +3006,7 @@ Rules:
                         "rag_search_success": bool(best_candidate.get("rag_search_success", bool(rag_search_result.get("success", False)))),
                         "rag_result_count": int(best_candidate.get("rag_result_count", len(rag_search_result.get("results", []))) or 0),
                         "rag_selected_query": str(best_candidate.get("rag_selected_query", rag_selected_query) or ""),
-                        "controller_effective": bool(best_candidate.get("controller_effective", bool(controller_last_result.get("effective", False)))),
+                        "controller_effective": bool(best_candidate.get("controller_effective", bool(any_controller_effective or controller_last_result.get("effective", False)))),
                         "controller_source": str(best_candidate.get("controller_source", controller_last_result.get("source", "")) or ""),
                         "verification": {
                             **best_verification,
@@ -2945,6 +3156,16 @@ Rules:
                     new_terms = _outline_terms(new)
                     if old_terms:
                         retention = len(old_terms & new_terms) / max(1, len(old_terms))
+                        old_cjk_bigrams = set()
+                        new_cjk_text = "".join(re.findall(r"[\u4e00-\u9fff]+", new))
+                        for chunk in re.findall(r"[\u4e00-\u9fff]{3,}", old):
+                            for idx in range(0, max(0, len(chunk) - 1)):
+                                gram = chunk[idx:idx + 2]
+                                if gram not in {"本小", "小节", "当前", "大纲", "内容", "生成", "写作", "文档", "主题", "要求"}:
+                                    old_cjk_bigrams.add(gram)
+                        if old_cjk_bigrams:
+                            cjk_retention = sum(1 for gram in old_cjk_bigrams if gram in new_cjk_text) / max(1, len(old_cjk_bigrams))
+                            retention = max(retention, cjk_retention)
                         if retention < self.controller_min_outline_retention:
                             return False, f"low_topic_retention:{retention:.2f}", retention
                         return True, "accepted", retention
@@ -3020,6 +3241,7 @@ Rules:
                 if controller_ok_for_next_round:
                     current_outline = improved_outline
                     controller_updated = True
+                    any_controller_effective = any_controller_effective or bool(controller_effective)
                     # 回写 controller 改进的大纲到数据库
                     if self.history_manager:
                         try:
@@ -3501,7 +3723,7 @@ Rules:
         context_text: str = "",
         source_results: Optional[List[Dict[str, Any]]] = None,
         require_source_citations: bool = False,
-        min_source_citations: int = 1,
+        min_source_citations: int = 3,
     ) -> Dict[str, Any]:
         """
         调用 Verifier API，内部最多重试5次（应对 Render 冷启动），避免浪费生成轮次。

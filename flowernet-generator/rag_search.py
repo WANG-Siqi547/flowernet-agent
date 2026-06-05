@@ -54,6 +54,44 @@ class RAGSearchEngine:
             "medium.com", "youtube.com", "facebook.com", "instagram.com",
         }
         self._domain_profiles = {
+            "long_context_llm": {
+                "signals": [
+                    "长上下文", "长文档", "上下文窗口", "位置编码", "注意力", "稀疏注意力",
+                    "长程一致性", "规划式写作", "评估基准", "工程瓶颈", "显存", "推理延迟",
+                    "long context", "long-context", "long document", "long-form generation",
+                    "context window", "positional encoding", "rope", "alibi", "attention",
+                    "sparse attention", "longbench", "transformer", "large language model",
+                    "llm", "retrieval augmented generation",
+                ],
+                "expansions": [
+                    "long context language models survey",
+                    "long document generation planning consistency",
+                    "LongBench long context large language models",
+                    "RoPE positional interpolation long context transformer",
+                    "ALiBi train short test long transformer",
+                    "sparse attention long sequence transformer",
+                    "FlashAttention long context transformer",
+                    "retrieval augmented generation long-form question answering",
+                ],
+                "required_any": [
+                    "long context", "long-context", "long document", "context window",
+                    "positional encoding", "rope", "alibi", "attention", "transformer",
+                    "large language model", "llm", "longbench", "rag",
+                    "长上下文", "长文档", "上下文窗口", "位置编码", "注意力", "大语言模型",
+                    "评估基准", "检索增强",
+                ],
+                "reject": [
+                    "software reliability testing", "construction", "student time management",
+                    "clinical trial", "financial risk", "microbial", "climate change",
+                    "软件可靠性测试", "施工", "时间管理", "临床", "金融风险", "微生物",
+                ],
+                "preferred_domains": [
+                    "arxiv.org", "acm.org", "ieee.org", "openreview.net", "aclweb.org",
+                    "proceedings.neurips.cc", "proceedings.mlr.press", "springer.com",
+                    "sciencedirect.com", "nature.com", "doi.org",
+                ],
+                "min_alignment": 0.24,
+            },
             "education": {
                 "signals": [
                     "大学", "学生", "新生", "学习", "学习习惯", "时间管理", "自我调节", "自主学习",
@@ -96,17 +134,16 @@ class RAGSearchEngine:
             "technology": {
                 "signals": [
                     "算法", "编程", "软件", "机器学习", "人工智能", "可靠性", "测试", "鲁棒性",
-                    "ai", "artificial intelligence", "algorithm", "software", "machine learning",
+                    "大语言模型", "深度学习", "神经网络", "transformer", "attention", "ai",
+                    "artificial intelligence", "algorithm", "software", "machine learning",
                     "deep learning", "reliability", "testing", "robustness",
                 ],
                 "expansions": [
-                    "AI system reliability testing",
-                    "deep learning testing reliability",
-                    "coverage guided testing deep neural networks",
-                    "DeepXplore automated whitebox testing deep learning systems",
-                    "DeepGauge multi granularity testing criteria deep learning systems",
+                    "machine learning systems survey",
+                    "large language models survey",
+                    "transformer attention mechanism survey",
+                    "retrieval augmented generation survey",
                     "computer science",
-                    "software engineering",
                     "machine learning",
                 ],
                 "required_any": [
@@ -350,6 +387,13 @@ class RAGSearchEngine:
         profile_name, profile = self._infer_domain_profile(query_text)
         academic_queries = self._academic_queries(query_text, semantic_query, profile)
 
+        if profile_name == "long_context_llm":
+            for item in self._curated_long_context_sources(query_text):
+                href = str(item.get("href", ""))
+                if href and href not in seen:
+                    seen.add(href)
+                    results.append(item)
+
         for crossref_query in academic_queries:
             if self._deadline_exceeded():
                 return results
@@ -363,7 +407,7 @@ class RAGSearchEngine:
 
         # arXiv is valuable for technical topics but a frequent drift source for
         # education/business writing, so keep it profile-gated.
-        if profile_name == "technology":
+        if profile_name in {"technology", "long_context_llm"}:
             arxiv_candidates = [query_text]
             if semantic_query and semantic_query not in arxiv_candidates:
                 arxiv_candidates.append(semantic_query)
@@ -379,7 +423,9 @@ class RAGSearchEngine:
                             return results
 
         targeted_domains = ["ssrn.com", "scholar.google.com", "springer.com", "sciencedirect.com"]
-        if profile_name == "education":
+        if profile_name == "long_context_llm":
+            targeted_domains = ["arxiv.org", "acm.org", "ieee.org", "aclweb.org", "openreview.net", "springer.com"]
+        elif profile_name == "education":
             targeted_domains = ["eric.ed.gov", "apa.org", "tandfonline.com", "sagepub.com", "springer.com"]
         elif profile_name == "medicine":
             targeted_domains = ["pubmed.ncbi.nlm.nih.gov", "who.int", "cochranelibrary.com", "bmj.com"]
@@ -406,6 +452,75 @@ class RAGSearchEngine:
                         return results
 
         return results
+
+    def _curated_long_context_sources(self, query: str) -> List[Dict[str, Any]]:
+        """Verified seed papers for long-context LLM and long-document writing topics."""
+        query_l = str(query or "").lower()
+        seeds = [
+            {
+                "title": "LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding",
+                "body": "Benchmark for evaluating long-context understanding in large language models across bilingual and multitask settings.",
+                "href": "https://arxiv.org/abs/2308.14508",
+                "source": "arxiv.org",
+                "keywords": ["longbench", "benchmark", "evaluation", "long context", "评估", "基准"],
+            },
+            {
+                "title": "LongWriter: Unleashing 10,000+ Word Generation from Long Context LLMs",
+                "body": "Studies long-form generation from long-context LLMs and why models with long input context still struggle to generate very long outputs.",
+                "href": "https://arxiv.org/abs/2408.07055",
+                "source": "arxiv.org",
+                "keywords": ["longwriter", "long document", "long-form generation", "generation", "长文档", "生成"],
+            },
+            {
+                "title": "Train Short, Test Long: Attention with Linear Biases Enables Input Length Extrapolation",
+                "body": "Introduces ALiBi, a linear attention bias for length extrapolation in Transformer language models.",
+                "href": "https://arxiv.org/abs/2108.12409",
+                "source": "arxiv.org",
+                "keywords": ["alibi", "attention", "length extrapolation", "position", "位置编码", "注意力"],
+            },
+            {
+                "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding",
+                "body": "Introduces rotary position embedding for Transformer models, a core basis for many long-context extension methods.",
+                "href": "https://arxiv.org/abs/2104.09864",
+                "source": "arxiv.org",
+                "keywords": ["rope", "rotary", "position embedding", "transformer", "位置编码"],
+            },
+            {
+                "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness",
+                "body": "IO-aware exact attention algorithm that reduces memory traffic and enables efficient long-sequence Transformer computation.",
+                "href": "https://arxiv.org/abs/2205.14135",
+                "source": "arxiv.org",
+                "keywords": ["flashattention", "attention", "memory", "latency", "显存", "推理延迟"],
+            },
+            {
+                "title": "Longformer: The Long-Document Transformer",
+                "body": "Sparse attention Transformer architecture for long-document processing.",
+                "href": "https://arxiv.org/abs/2004.05150",
+                "source": "arxiv.org",
+                "keywords": ["longformer", "sparse attention", "long document", "稀疏注意力", "长文档"],
+            },
+            {
+                "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+                "body": "Retrieval-augmented generation framework for grounding neural text generation in retrieved evidence.",
+                "href": "https://arxiv.org/abs/2005.11401",
+                "source": "arxiv.org",
+                "keywords": ["retrieval augmented generation", "rag", "evidence", "检索增强", "证据"],
+            },
+        ]
+        ranked = []
+        for item in seeds:
+            hits = sum(1 for kw in item.get("keywords", []) if str(kw).lower() in query_l)
+            score = 0.55 + min(0.35, hits * 0.08)
+            ranked.append(
+                {
+                    **item,
+                    "quality_score": round(score, 4),
+                    "semantic_score": round(score, 4),
+                    "topic_alignment_score": round(score, 4),
+                    "curated_seed": True,
+                }
+            )
+        return sorted(ranked, key=lambda x: x.get("topic_alignment_score", 0), reverse=True)
 
     def _safe_backfill_results(self, query: str, existing: List[Dict[str, Any]] | None = None) -> List[Dict[str, Any]]:
         query_text = " ".join(str(query or "").split())[:180]

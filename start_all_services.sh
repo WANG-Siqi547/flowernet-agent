@@ -1,12 +1,25 @@
 #!/bin/bash
 set -e
 
-PYTHON="/Users/k1ns9sley/Desktop/msc project/flowernet-agent/.venv/bin/python"
-WORKDIR="/Users/k1ns9sley/Desktop/msc project/flowernet-agent"
+WORKDIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$WORKDIR/.venv/bin/python" ]; then
+  PYTHON="$WORKDIR/.venv/bin/python"
+else
+  PYTHON="${PYTHON:-python3}"
+fi
 
 cd "$WORKDIR"
 
 echo "=== Starting FlowerNet Services ==="
+
+if [ -f "$WORKDIR/.env" ]; then
+  echo "Loading .env from $WORKDIR/.env"
+  set -a
+  . "$WORKDIR/.env"
+  set +a
+else
+  echo "Warning: .env not found; LLM-backed services may fail without API keys."
+fi
 
 # Enforce UniEval endpoint for verifier multidimensional checks.
 export UNIEVAL_ENDPOINT="${UNIEVAL_ENDPOINT:-http://localhost:8004/score}"

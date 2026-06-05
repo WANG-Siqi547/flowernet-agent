@@ -1,0 +1,6 @@
+FROM ../models/longwriter-llama3.1-8b-gguf/LongWriter-llama3.1-8b-Q4_K_M.gguf
+
+PARAMETER num_ctx 32768
+PARAMETER temperature 0.7
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.05
