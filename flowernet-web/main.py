@@ -25,7 +25,7 @@ from docx import Document
 from docx.shared import Pt, Inches
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from fastapi import FastAPI, HTTPException, Header, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Header, Request, UploadFile, File, Form, Body
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 try:
@@ -369,7 +369,9 @@ class PofficesGenerateRequest(BaseModel):
 
 
 class PofficesTaskStatusRequest(BaseModel):
-    task_id: str
+    task_id: str = ""
+    wait: bool = True
+    wait_seconds: int = Field(default=7200, ge=1, le=7200)
 
 
 app = FastAPI(title="FlowerNet Web UI", version="1.0.0")
@@ -1976,7 +1978,7 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                 "post": {
                     "operationId": "getFlowerNetTaskStatus",
                     "summary": "Get FlowerNet generation task status",
-                    "description": "Poll with the task_id returned by createFlowerNetDocument until a completed or failed status is returned.",
+                    "description": "Poll with the task_id returned by createFlowerNetDocument. By default this endpoint waits until the task is completed or failed so Poffices can render the final document in one downstream block.",
                     "security": security,
                     "requestBody": {
                         "required": True,
@@ -2002,6 +2004,37 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                             },
                         },
                         "404": {"description": "task_id not found"},
+                    },
+                }
+            },
+            "/api/poffices/poll-render": {
+                "post": {
+                    "operationId": "pollAndRenderFlowerNetDocument",
+                    "summary": "Poll a FlowerNet task and render the final document",
+                    "description": "Poffices bridge endpoint for the final block. It extracts task_id from nested upstream block output, waits for completion, and returns the complete Markdown document in content/text/result/output fields.",
+                    "security": security,
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/PofficesPollRenderRequest"}
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Completed document result or failed task result",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "oneOf": [
+                                            {"$ref": "#/components/schemas/CompletedDocumentResponse"},
+                                            {"$ref": "#/components/schemas/FailedTaskResponse"},
+                                        ]
+                                    }
+                                }
+                            },
+                        }
                     },
                 }
             },
@@ -2053,7 +2086,19 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                 "PofficesTaskStatusRequest": {
                     "type": "object",
                     "required": ["task_id"],
-                    "properties": {"task_id": {"type": "string"}},
+                    "properties": {
+                        "task_id": {"type": "string"},
+                        "wait": {"type": "boolean", "default": True},
+                        "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 7200, "default": 7200},
+                    },
+                },
+                "PofficesPollRenderRequest": {
+                    "type": "object",
+                    "required": ["task_id"],
+                    "properties": {
+                        "task_id": {"type": "string", "description": "May be nested inside upstream block output; the endpoint will extract it recursively."},
+                        "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 7200, "default": 7200},
+                    },
                 },
                 "DownloadDocxRequest": {
                     "type": "object",
@@ -2090,6 +2135,11 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                         "document_id": {"type": "string"},
                         "title": {"type": "string"},
                         "content": {"type": "string"},
+                        "text": {"type": "string"},
+                        "result": {"type": "string"},
+                        "output": {"type": "string"},
+                        "document": {"type": "string"},
+                        "markdown": {"type": "string"},
                         "stats": {"type": "object", "additionalProperties": True},
                         "download": {"$ref": "#/components/schemas/DownloadInstruction"},
                     },
@@ -2120,23 +2170,123 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
 
 def _build_poffices_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
     download_url = _build_download_url(request)
+    content = result.get("content", "") or result.get("markdown", "") or result.get("document", "")
+    title = result.get("title", "") or "FlowerNet Document"
     return {
         "success": True,
         "task_status": "completed",
+        "status": "completed",
         "document_id": result.get("document_id", ""),
-        "title": result.get("title", ""),
-        "content": result.get("content", ""),
+        "title": title,
+        "content": content,
+        "text": content,
+        "result": content,
+        "output": content,
+        "document": content,
+        "markdown": content,
         "stats": result.get("stats", {}),
         "download": {
             "method": "POST",
             "url": download_url,
             "body": {
-                "title": result.get("title", ""),
-                "content": result.get("content", ""),
+                "title": title,
+                "content": content,
             },
             "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         },
     }
+
+
+def _extract_task_id_from_payload(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        direct = re.search(r"task_[A-Za-z0-9_:-]{12,}", value)
+        return direct.group(0) if direct else ""
+    if isinstance(value, dict):
+        for key in ("task_id", "taskId", "id"):
+            candidate = _extract_task_id_from_payload(value.get(key))
+            if candidate:
+                return candidate
+        for item in value.values():
+            candidate = _extract_task_id_from_payload(item)
+            if candidate:
+                return candidate
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            candidate = _extract_task_id_from_payload(item)
+            if candidate:
+                return candidate
+    return ""
+
+
+def _coerce_bool(value: Any, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "wait"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "nowait"}:
+            return False
+    return default
+
+
+def _poffices_wait_for_task_result(
+    *,
+    request: Request,
+    task_id: str,
+    wait: bool = True,
+    wait_seconds: int = 7200,
+    poll_interval_seconds: float = 4.0,
+) -> Dict[str, Any]:
+    deadline = time.time() + max(1, int(wait_seconds))
+    last_task: Dict[str, Any] = {}
+
+    while True:
+        task = _restore_poffices_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="task_id not found")
+
+        status = task.get("status", "unknown")
+        if status in {"queued", "running"}:
+            _restart_restored_poffices_task(task_id, task)
+            task = _restore_poffices_task(task_id) or task
+            status = task.get("status", status)
+
+        last_task = task
+        if status == "completed":
+            return _build_poffices_result(request=request, result=task.get("result", {}))
+
+        if status == "failed":
+            return {
+                "success": False,
+                "task_id": task_id,
+                "status": "failed",
+                "task_status": "failed",
+                "error": task.get("error", "unknown error"),
+                "message": task.get("message", "任务失败"),
+                "content": task.get("error", "unknown error"),
+                "text": task.get("error", "unknown error"),
+                "result": task.get("error", "unknown error"),
+                "output": task.get("error", "unknown error"),
+            }
+
+        if not wait or time.time() >= deadline:
+            return {
+                "success": True,
+                "task_id": task_id,
+                "status": status,
+                "task_status": status,
+                "poll_url": str(request.url_for("poffices_task_status")),
+                "message": last_task.get("message", "处理中"),
+                "content": f"FlowerNet task {task_id} is {status}. Please poll again.",
+                "text": f"FlowerNet task {task_id} is {status}. Please poll again.",
+                "result": f"FlowerNet task {task_id} is {status}. Please poll again.",
+                "output": f"FlowerNet task {task_id} is {status}. Please poll again.",
+            }
+
+        time.sleep(poll_interval_seconds)
 
 
 def build_requirements_text(req: GenerateDocRequest) -> str:
@@ -5931,13 +6081,67 @@ def poffices_generate(
 
 @app.post("/api/poffices/task-status", name="poffices_task_status")
 def poffices_task_status(
-    req: PofficesTaskStatusRequest,
     request: Request,
+    payload: Dict[str, Any] = Body(default_factory=dict),
     x_api_key: str = Header(default="", alias="X-API-Key"),
     authorization: str = Header(default="", alias="Authorization"),
 ):
     verify_auth(x_api_key=x_api_key, authorization=authorization)
 
+    req = PofficesTaskStatusRequest.model_validate(payload or {})
+    task_id = (req.task_id or _extract_task_id_from_payload(payload)).strip()
+    wait = _coerce_bool((payload or {}).get("wait"), default=req.wait)
+    wait_seconds = int((payload or {}).get("wait_seconds") or req.wait_seconds or 7200)
+
+    if not task_id:
+        return {
+            "success": False,
+            "status": "failed",
+            "task_status": "failed",
+            "error": "task_id not found in Poffices input. Connect FlowerNet Start Task output to Poll Render, or pass task_id explicitly.",
+            "message": "缺少 task_id",
+        }
+
+    return _poffices_wait_for_task_result(
+        request=request,
+        task_id=task_id,
+        wait=wait,
+        wait_seconds=wait_seconds,
+    )
+
+
+@app.post("/api/poffices/poll-render")
+def poffices_poll_render(
+    request: Request,
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+    authorization: str = Header(default="", alias="Authorization"),
+):
+    verify_auth(x_api_key=x_api_key, authorization=authorization)
+
+    task_id = _extract_task_id_from_payload(payload).strip()
+    wait_seconds = int((payload or {}).get("wait_seconds") or 7200)
+    if not task_id:
+        return {
+            "success": False,
+            "status": "failed",
+            "task_status": "failed",
+            "error": "task_id not found in Poffices input. Poll Render must receive FlowerNet Start Task output.",
+            "message": "缺少 task_id",
+        }
+
+    return _poffices_wait_for_task_result(
+        request=request,
+        task_id=task_id,
+        wait=True,
+        wait_seconds=wait_seconds,
+    )
+
+
+def _legacy_poffices_task_status(
+    req: PofficesTaskStatusRequest,
+    request: Request,
+) -> Dict[str, Any]:
     task = _restore_poffices_task(req.task_id)
 
     if not task:
