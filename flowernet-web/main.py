@@ -1818,7 +1818,7 @@ def _citation_quality_check(markdown: str) -> Dict[str, Any]:
         1 for sec in section_details if sec["high_quality_url_count"] < CITATION_MIN_SECTION_HIGH_QUALITY
     )
 
-    min_markers_per_subsection = max(1, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "1") or "1"))
+    min_markers_per_subsection = max(1, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "3") or "3"))
     marker_floor_ok = (
         bool(reference_lines)
         and bool(unique_urls)
@@ -3738,7 +3738,7 @@ def build_markdown_document(
             sentences = [s for s in sentences if s.strip()]
 
             if len(sentences) > 0:
-                citation_suffix = "".join(f"[{idx}]" for idx in citation_ids[:2])
+                citation_suffix = "".join(f"[{idx}]" for idx in citation_ids)
                 injected = False
                 for i, sent in enumerate(sentences):
                     if len(sent.strip()) > 15:
@@ -3752,7 +3752,7 @@ def build_markdown_document(
                     sentences[0] = sentences[0].rstrip() + citation_suffix
                 result = " ".join(sentences)
             else:
-                result = result.rstrip() + "".join(f"[{idx}]" for idx in citation_ids[:2])
+                result = result.rstrip() + "".join(f"[{idx}]" for idx in citation_ids)
 
         result = re.sub(r"\]\s+\[", "][", result)
 
@@ -3822,7 +3822,7 @@ def build_markdown_document(
         except Exception as e:
             print(f"⚠️ Citation Verifier 处理失败，继续使用原始引用: {e}")
 
-    min_refs_per_subsection = max(1, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "1") or "1"))
+    min_refs_per_subsection = max(1, int(os.getenv("MIN_REFERENCES_PER_SUBSECTION", "3") or "3"))
     total_subsections_expected = sum(
         len(section.get("subsections", []) or [])
         for section in (structure.get("sections", []) or [])

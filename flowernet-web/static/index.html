@@ -315,6 +315,14 @@
         defect_evidence: "#f97316",
         defect_structure: "#3b82f6",
       };
+      const armVisualYOffset = {
+        llm: -5,
+        rule: -3,
+        rule_structured: -1,
+        defect_topic: 1,
+        defect_evidence: 3,
+        defect_structure: 5,
+      };
       const legendItems = [
         { key: "llm", label: "llm", note: "LLM 直接改写", color: "bg-red-500" },
         { key: "rule", label: "rule", note: "规则修正", color: "bg-cyan-500" },
@@ -332,51 +340,43 @@
         { key: "score_exploit", title: "score_exploit", desc: "按当前累积分数对策略臂降序排列，优先调度高分策略执行。" },
         { key: "ucb", title: "ucb", desc: "置信上界策略，优先选择高均值且不确定性大的臂。" },
       ];
-      const toPath = (arr, plotMin, plotMax) => {
+      const pointsForArm = (key, arr, plotMin, plotMax) => {
         if (!arr || arr.length === 0) {
-          return "";
+          return [];
         }
         const min = typeof plotMin === 'number' ? plotMin : 0.0;
         const max = typeof plotMax === 'number' && plotMax > min ? plotMax : Math.max(min + 0.0001, 0.1);
         const yTop = 20; // within group coordinates
         const yBottom = 104;
         const range = yBottom - yTop;
-        const points = arr.map((v, i) => {
+        const visualOffset = Number(armVisualYOffset[key] || 0);
+        return arr.map((v, i) => {
           if (v === null || v === undefined || !Number.isFinite(Number(v))) {
             return null;
           }
           const x = 28 + (i / Math.max(maxLen - 1, 1)) * chartWidth;
           const val = Number(v);
           const norm = Math.max(0, Math.min(1, (val - min) / (max - min)));
-          const y = yBottom - norm * range;
-          return { x, y };
+          const y = Math.max(yTop, Math.min(yBottom, yBottom - norm * range + visualOffset));
+          return { x, y, value: val };
         }).filter(Boolean);
+      };
+      const toPath = (key, arr, plotMin, plotMax) => {
+        const points = pointsForArm(key, arr, plotMin, plotMax);
+        if (!points.length) {
+          return "";
+        }
         return points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x} ${p.y}`).join(" ");
       };
-      const getSinglePoint = (arr, plotMin, plotMax) => {
-        const values = (arr || []).map((v, i) => ({ v, i })).filter((p) => p.v !== null && p.v !== undefined && Number.isFinite(Number(p.v)));
-        if (values.length !== 1) {
-          return null;
-        }
-        const min = typeof plotMin === 'number' ? plotMin : 0.0;
-        const max = typeof plotMax === 'number' && plotMax > min ? plotMax : Math.max(min + 0.0001, 0.1);
-        const yTop = 20;
-        const yBottom = 104;
-        const range = yBottom - yTop;
-        const val = Number(values[0].v);
-        const norm = isFinite(val) ? Math.max(0, Math.min(1, (val - min) / (max - min))) : 0;
-        return {
-          x: 28 + (values[0].i / Math.max(maxLen - 1, 1)) * chartWidth,
-          y: yBottom - norm * range,
-        };
-      };
       const renderArmPath = (key) => {
-        const d = toPath(data[key], summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+        const d = toPath(key, data[key], summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
         return d ? <path key={key} d={d} stroke={armColors[key]} fill="none" strokeWidth="2.5" /> : null;
       };
-      const renderArmPoint = (key) => {
-        const p = getSinglePoint(data[key], summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
-        return p ? <circle key={`${key}-point`} cx={p.x} cy={p.y} r="3.2" fill={armColors[key]} /> : null;
+      const renderArmPoints = (key) => {
+        const points = pointsForArm(key, data[key], summary?.bandit_plot_y_min, summary?.bandit_plot_y_max);
+        return points.map((p, i) => (
+          <circle key={`${key}-point-${i}`} cx={p.x} cy={p.y} r="2.7" fill={armColors[key]} stroke="#0f172a" strokeWidth="0.7" />
+        ));
       };
       const currentMode = String(summary?.bandit_last_selection_mode || "n/a");
       const currentModeItem = modeGuideItems.find((item) => item.key === currentMode);
@@ -428,7 +428,7 @@
             {/* Paths with new color scheme */}
             <g transform="translate(55, 4)">
               {keys.map(renderArmPath)}
-              {keys.map(renderArmPoint)}
+              {keys.map(renderArmPoints)}
             </g>
           </svg>
           <div className="mt-3 rounded-2xl border border-slate-700/60 bg-slate-950/35 p-3 text-xs text-slate-200">
@@ -455,10 +455,10 @@
               <div className="md:col-span-2">
                 <div><span className="font-semibold text-white">Counts</span> <span className="text-[11px] text-slate-400">（各策略臂累计被选次数；差异显著属正常表现，高收益臂被调用频次自然更高）</span><span className="font-semibold text-white">：</span> llm {summary?.bandit_selected_arm_counts?.llm || 0} · rule {summary?.bandit_selected_arm_counts?.rule || 0} · rule_structured {summary?.bandit_selected_arm_counts?.rule_structured || 0} · defect_topic {summary?.bandit_selected_arm_counts?.defect_topic || 0} · defect_evidence {summary?.bandit_selected_arm_counts?.defect_evidence || 0} · defect_structure {summary?.bandit_selected_arm_counts?.defect_structure || 0}</div>
               </div>
-              <div className="md:col-span-2"><span className="font-semibold text-white">Reward avg:</span> {(summary?.bandit_reward_avg ?? 0).toFixed(3)} <span className="text-[11px] text-slate-400">（正常区间：0.02–0.05；综合质量提升幅度、风险控制系数与约束惩罚项计算所得，单次增量典型幅度 0.01–0.1）</span></div>
+              <div className="md:col-span-2"><span className="font-semibold text-white">Reward avg:</span> {(summary?.bandit_reward_avg ?? 0).toFixed(3)} <span className="text-[11px] text-slate-400">（0 表示本轮有策略被调用，但相对 baseline 未测得正向增益；正向增益常见区间约 0.01–0.1）</span></div>
             </div>
             <div className="pt-1 text-[11px] text-slate-300 leading-5">
-              折线只绘制该策略臂被真实选中时的 reward；未选中的 arm 不再用水平线占位，避免把 0 次调用误看成有效曲线。count 为该臂的累计选中次数，与 reward 为独立统计维度。
+              折线和点只绘制该策略臂被真实选中时的 reward；同一 reward 值的不同 arm 会有轻微视觉错位，避免多条 0-reward 轨迹互相遮挡。Counts 与曲线来自同一 controller 事件集合。
             </div>
             <div className="pt-2">
               <div className="text-[11px] font-semibold text-slate-200 mb-2">Mode Guide</div>

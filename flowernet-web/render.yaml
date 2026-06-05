@@ -20,6 +20,8 @@ services:
         value: "7200"
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "2400"
+      - key: MIN_REFERENCES_PER_SUBSECTION
+        value: "3"
       - key: GENERATOR_DOWNSTREAM_MIN_TIMEOUT
         value: "900"
       - key: DOWNSTREAM_RETRIES

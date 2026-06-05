@@ -513,6 +513,8 @@ services:
         value: "180"
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
+      - key: MIN_REFERENCES_PER_SUBSECTION
+        value: "3"
       - key: WEB_DEFAULT_REL_THRESHOLD
         value: "0.75"
       - key: WEB_DEFAULT_RED_THRESHOLD
