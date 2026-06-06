@@ -3,6 +3,7 @@ from collections import deque
 from io import BytesIO
 import csv
 import gzip
+import hashlib
 import math
 import os
 import re
@@ -256,6 +257,48 @@ RATE_LIMIT_UNTIL: Dict[str, float] = {}
 
 def _poffices_task_key(task_id: str) -> str:
     return f"poffices_task:{task_id}"
+
+
+def _normalize_poffices_request_key_value(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    return text[:2000]
+
+
+def _poffices_request_key(req: "PofficesGenerateRequest") -> str:
+    parts = [
+        _normalize_poffices_request_key_value(req.query),
+        str(int(req.chapter_count or 0)),
+        str(int(req.subsection_count or 0)),
+        _normalize_poffices_request_key_value(req.user_background),
+        _normalize_poffices_request_key_value(req.extra_requirements),
+    ]
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    return f"poffices_request:{digest}"
+
+
+def _persist_poffices_request_task(req: "PofficesGenerateRequest", task_id: str) -> None:
+    try:
+        _get_poffices_checkpoint_store().set(
+            _poffices_request_key(req),
+            {"task_id": task_id, "updated_at": datetime.now().isoformat()},
+            ttl_seconds=7 * 24 * 3600,
+        )
+    except Exception as exc:
+        print(f"[Poffices] request-task mapping persist failed for {task_id}: {exc}")
+
+
+def _restore_poffices_request_task_id(req: "PofficesGenerateRequest") -> str:
+    try:
+        restored = _get_poffices_checkpoint_store().get(_poffices_request_key(req))
+    except Exception as exc:
+        print(f"[Poffices] request-task mapping restore failed: {exc}")
+        restored = None
+    if isinstance(restored, dict):
+        task_id = str(restored.get("task_id") or "").strip()
+        if task_id:
+            return task_id
+    return ""
 
 
 def _get_poffices_checkpoint_store():
@@ -6019,6 +6062,30 @@ def poffices_generate(
     req = req.model_copy(update={"query": normalized_query})
 
     if req.async_mode:
+        existing_task_id = _restore_poffices_request_task_id(req)
+        if existing_task_id:
+            existing_task = _restore_poffices_task(existing_task_id)
+            if existing_task and existing_task.get("status") != "failed":
+                if existing_task.get("status") == "completed":
+                    return _build_poffices_result(request=request, result=existing_task.get("result", {}))
+                _restart_restored_poffices_task(existing_task_id, existing_task)
+                existing_task = _restore_poffices_task(existing_task_id) or existing_task
+                status = str(existing_task.get("status") or "queued")
+                return {
+                    "success": True,
+                    "task_id": existing_task_id,
+                    "status": status,
+                    "task_status": status,
+                    "poll_url": str(request.url_for("poffices_task_status")),
+                    "message": existing_task.get("message", "异步任务已存在，请轮询 task status"),
+                    "content": existing_task.get("message", "异步任务已存在，请轮询 task status"),
+                    "text": existing_task.get("message", "异步任务已存在，请轮询 task status"),
+                    "result": existing_task.get("message", "异步任务已存在，请轮询 task status"),
+                    "output": existing_task.get("message", "异步任务已存在，请轮询 task status"),
+                    "markdown": existing_task.get("message", "异步任务已存在，请轮询 task status"),
+                    "document": existing_task.get("message", "异步任务已存在，请轮询 task status"),
+                }
+
         task_id = f"task_{uuid4().hex}"
         _set_poffices_task(
             task_id,
@@ -6029,6 +6096,7 @@ def poffices_generate(
             timeout_seconds=req.timeout_seconds,
             request=req.model_dump(),
         )
+        _persist_poffices_request_task(req, task_id)
 
         with POFFICES_TASKS_LOCK:
             POFFICES_TASKS[task_id]["_thread_started"] = True
