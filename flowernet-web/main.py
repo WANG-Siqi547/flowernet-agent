@@ -4,6 +4,7 @@ from io import BytesIO
 import csv
 import gzip
 import hashlib
+import importlib.util
 import math
 import os
 import re
@@ -42,7 +43,7 @@ try:
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Ensure repo-root modules are importable even when uvicorn is started from flowernet-web/
 _WEB_DIR = os.path.dirname(__file__)
@@ -52,6 +53,9 @@ if _REPO_ROOT not in sys.path:
 _GEN_DIR = os.path.join(_REPO_ROOT, "flowernet-generator")
 if _GEN_DIR not in sys.path:
     sys.path.insert(0, _GEN_DIR)
+_OUTLINER_DIR = os.path.join(_REPO_ROOT, "flowernet-outliner")
+if _OUTLINER_DIR not in sys.path and os.path.isdir(_OUTLINER_DIR):
+    sys.path.insert(0, _OUTLINER_DIR)
 
 # 导入 Citation Verifier 用于引证质量控制
 try:
@@ -204,6 +208,7 @@ OUTLINER_TASK_POLL_MAX_TIMEOUT = int(os.getenv("OUTLINER_TASK_POLL_MAX_TIMEOUT",
 OUTLINER_STREAM_MAX_WAIT = int(os.getenv("OUTLINER_STREAM_MAX_WAIT", str(OUTLINER_TASK_POLL_MAX_TIMEOUT)))
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
 DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
+WEB_INPROCESS_OUTLINER_FALLBACK = os.getenv("WEB_INPROCESS_OUTLINER_FALLBACK", "true").lower() == "true"
 DOWNSTREAM_GENERATOR_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_GENERATOR_COOLDOWN_429", "20.0"))
 GENERATOR_RESUME_BACKOFF = float(os.getenv("GENERATOR_RESUME_BACKOFF", "2.0"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
@@ -277,28 +282,69 @@ def _poffices_request_key(req: "PofficesGenerateRequest") -> str:
     return f"poffices_request:{digest}"
 
 
+def _poffices_request_loose_key(req: "PofficesGenerateRequest") -> str:
+    parts = [
+        _normalize_poffices_request_key_value(req.query),
+        str(int(req.chapter_count or 0)),
+        str(int(req.subsection_count or 0)),
+    ]
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    return f"poffices_request_loose:{digest}"
+
+
 def _persist_poffices_request_task(req: "PofficesGenerateRequest", task_id: str) -> None:
     try:
-        _get_poffices_checkpoint_store().set(
-            _poffices_request_key(req),
-            {"task_id": task_id, "updated_at": datetime.now().isoformat()},
-            ttl_seconds=7 * 24 * 3600,
-        )
+        store = _get_poffices_checkpoint_store()
+        payload = {"task_id": task_id, "updated_at": datetime.now().isoformat()}
+        store.set(_poffices_request_key(req), payload, ttl_seconds=7 * 24 * 3600)
+        store.set(_poffices_request_loose_key(req), payload, ttl_seconds=7 * 24 * 3600)
     except Exception as exc:
         print(f"[Poffices] request-task mapping persist failed for {task_id}: {exc}")
 
 
 def _restore_poffices_request_task_id(req: "PofficesGenerateRequest") -> str:
+    store = None
     try:
-        restored = _get_poffices_checkpoint_store().get(_poffices_request_key(req))
+        store = _get_poffices_checkpoint_store()
     except Exception as exc:
-        print(f"[Poffices] request-task mapping restore failed: {exc}")
-        restored = None
-    if isinstance(restored, dict):
-        task_id = str(restored.get("task_id") or "").strip()
-        if task_id:
-            return task_id
+        print(f"[Poffices] request-task mapping store unavailable: {exc}")
+    for key in (_poffices_request_key(req), _poffices_request_loose_key(req)):
+        try:
+            restored = store.get(key) if store is not None else None
+        except Exception as exc:
+            print(f"[Poffices] request-task mapping restore failed: {exc}")
+            restored = None
+        if isinstance(restored, dict):
+            task_id = str(restored.get("task_id") or "").strip()
+            if task_id:
+                return task_id
     return ""
+
+
+def _find_recent_poffices_task_for_request(req: "PofficesGenerateRequest") -> str:
+    """Find an in-memory task for the same Poffices request when wiring lost task_id."""
+    query_key = _normalize_poffices_request_key_value(req.query)
+    if not query_key:
+        return ""
+    candidates: List[Tuple[str, Dict[str, Any]]] = []
+    with POFFICES_TASKS_LOCK:
+        for task_id, task in POFFICES_TASKS.items():
+            if not isinstance(task, dict):
+                continue
+            request_payload = task.get("request")
+            if not isinstance(request_payload, dict):
+                continue
+            task_query = _normalize_poffices_request_key_value(request_payload.get("query"))
+            same_shape = (
+                int(request_payload.get("chapter_count") or 0) == int(req.chapter_count or 0)
+                and int(request_payload.get("subsection_count") or 0) == int(req.subsection_count or 0)
+            )
+            if task_query == query_key and same_shape and str(task.get("status") or "").lower() in {"queued", "running", "completed"}:
+                candidates.append((task_id, dict(task)))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: str(item[1].get("updated_at") or item[1].get("created_at") or ""), reverse=True)
+    return candidates[0][0]
 
 
 def _get_poffices_checkpoint_store():
@@ -400,7 +446,10 @@ class DownloadDocxRequest(BaseModel):
 
 
 class PofficesGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     query: str = Field(default="", description="用户输入查询")
+    task_id: str = Field(default="", description="Existing FlowerNet task id. If present, /generate behaves as task polling instead of creating a new task.")
     chapter_count: int = Field(default=5, ge=1, le=10)
     subsection_count: int = Field(default=3, ge=1, le=8)
     user_background: str = Field(default="")
@@ -412,6 +461,8 @@ class PofficesGenerateRequest(BaseModel):
 
 
 class PofficesTaskStatusRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     task_id: str = ""
     wait: bool = True
     wait_seconds: int = Field(default=7200, ge=1, le=7200)
@@ -995,7 +1046,123 @@ def _build_local_outline_response(payload: Dict[str, Any], reason: str) -> Dict[
         "success": False,
         "error": "outliner_unavailable_or_rate_limited",
         "fallback_reason": reason,
+        "retryable": _is_transient_downstream_payload({"error": reason}),
+        "retry_after_seconds": max(DOWNSTREAM_OUTLINER_MIN_DELAY_429, DOWNSTREAM_OUTLINER_COOLDOWN_429),
     }
+
+
+def _is_retryable_outline_failure(value: Any) -> bool:
+    if isinstance(value, dict):
+        if value.get("retryable") is True:
+            return True
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    else:
+        text = str(value or "")
+    lowered = text.lower()
+    return (
+        "outliner_unavailable_or_rate_limited" in lowered
+        or "outliner_rate_limited" in lowered
+        or "http 429" in lowered
+        or "too many requests" in lowered
+        or "resource_exhausted" in lowered
+        or "quota" in lowered
+        or "rate limit" in lowered
+    )
+
+
+def _outline_retry_delay_seconds(value: Any, attempt: int = 1) -> float:
+    retry_after = 0.0
+    if isinstance(value, dict):
+        try:
+            retry_after = float(value.get("retry_after_seconds") or 0.0)
+        except Exception:
+            retry_after = 0.0
+    base = max(DOWNSTREAM_OUTLINER_MIN_DELAY_429, OUTLINER_TASK_START_BACKOFF * max(1, attempt))
+    return min(DOWNSTREAM_MAX_BACKOFF, max(base, retry_after, DOWNSTREAM_OUTLINER_COOLDOWN_429))
+
+
+_LOCAL_OUTLINER_CLASS = None
+_LOCAL_OUTLINER_LOCK = threading.Lock()
+
+
+def _load_local_outliner_class():
+    global _LOCAL_OUTLINER_CLASS
+    if _LOCAL_OUTLINER_CLASS is not None:
+        return _LOCAL_OUTLINER_CLASS
+    candidates = [
+        os.path.join(_OUTLINER_DIR, "outliner.py"),
+        os.path.join(_WEB_DIR, "outliner.py"),
+        os.path.join(os.getcwd(), "outliner.py"),
+    ]
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        spec = importlib.util.spec_from_file_location("flowernet_web_embedded_outliner", path)
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cls = getattr(module, "FlowerNetOutliner", None)
+        if cls is not None:
+            _LOCAL_OUTLINER_CLASS = cls
+            return cls
+    raise RuntimeError("FlowerNetOutliner is not available inside flowernet-web deployment")
+
+
+def _call_inprocess_outliner_generate(payload: Dict[str, Any], reason: str = "") -> Dict[str, Any]:
+    """Generate a real outline inside the web service as a resilience path.
+
+    This is not a template fallback. It reuses the same FlowerNetOutliner class
+    and the same DeepSeek-backed provider path, avoiding a second Render service
+    hop when the standalone outliner is rate-limited or cold.
+    """
+    if not WEB_INPROCESS_OUTLINER_FALLBACK:
+        return _build_local_outline_response(payload, reason=reason or "inprocess_outliner_disabled")
+    with _LOCAL_OUTLINER_LOCK:
+        try:
+            old_chain = os.environ.get("OUTLINER_PROVIDER_CHAIN")
+            old_provider = os.environ.get("OUTLINER_PROVIDER")
+            os.environ["OUTLINER_PROVIDER_CHAIN"] = os.getenv("WEB_OUTLINER_PROVIDER_CHAIN", "deepseek")
+            os.environ["OUTLINER_PROVIDER"] = os.getenv("WEB_OUTLINER_PROVIDER", "deepseek")
+            cls = _load_local_outliner_class()
+            outliner = cls(provider=os.environ["OUTLINER_PROVIDER_CHAIN"])
+            result = outliner.generate_full_outline(
+                user_background=str(payload.get("user_background") or ""),
+                user_requirements=str(payload.get("user_requirements") or ""),
+                max_sections=int(payload.get("max_sections") or 5),
+                max_subsections_per_section=int(payload.get("max_subsections_per_section") or 4),
+            )
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": "inprocess_outliner_failed",
+                "fallback_reason": reason,
+                "detail": str(exc),
+                "retryable": _is_retryable_outline_failure(str(exc)),
+            }
+        finally:
+            if old_chain is None:
+                os.environ.pop("OUTLINER_PROVIDER_CHAIN", None)
+            else:
+                os.environ["OUTLINER_PROVIDER_CHAIN"] = old_chain
+            if old_provider is None:
+                os.environ.pop("OUTLINER_PROVIDER", None)
+            else:
+                os.environ["OUTLINER_PROVIDER"] = old_provider
+
+    if isinstance(result, dict) and result.get("success"):
+        result.setdefault("outline_saved", False)
+        result.setdefault("structure_outline_saved", False)
+        metadata = result.setdefault("metadata", {})
+        if isinstance(metadata, dict):
+            metadata["web_inprocess_outliner_fallback"] = True
+            metadata["remote_failure_reason"] = reason[:500]
+        return result
+    if isinstance(result, dict):
+        result.setdefault("fallback_reason", reason)
+        result.setdefault("retryable", _is_retryable_outline_failure(result))
+        return result
+    return {"success": False, "error": "inprocess_outliner_invalid_result", "fallback_reason": reason, "retryable": False}
 
 
 def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
@@ -1032,8 +1199,11 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
             if "HTTP 429" not in detail and "Too Many Requests" not in detail:
                 raise
             if start_attempt >= start_attempts or time.time() >= start_deadline:
-                print("[Web] ⚠️ Outliner task start repeatedly hit 429; refusing to fabricate an outline")
-                return _build_local_outline_response(payload, reason=last_start_error[:240])
+                print("[Web] ⚠️ Outliner task start repeatedly hit 429; trying in-process real outline generation")
+                local_resp = _call_inprocess_outliner_generate(payload, reason=last_start_error[:500])
+                if isinstance(local_resp, dict) and local_resp.get("success"):
+                    return local_resp
+                return _build_local_outline_response(payload, reason=f"{last_start_error[:240]} | local={local_resp}")
             delay = min(
                 DOWNSTREAM_MAX_BACKOFF,
                 max(DOWNSTREAM_OUTLINER_MIN_DELAY_429, OUTLINER_TASK_START_BACKOFF * start_attempt),
@@ -1095,11 +1265,20 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
         time.sleep(min(8.0, sleep_seconds))
         sleep_seconds = min(8.0, sleep_seconds * 1.3)
 
+    local_timeout_resp = _call_inprocess_outliner_generate(
+        payload,
+        reason=f"remote outline task timeout: task_id={task_id}; last_status={last_status}",
+    )
+    if isinstance(local_timeout_resp, dict) and local_timeout_resp.get("success"):
+        return local_timeout_resp
+
     return {
         "success": False,
         "error": f"outliner_task_timeout after {poll_timeout}s",
         "task_id": task_id,
         "last_status": last_status,
+        "retryable": True,
+        "local_fallback_error": local_timeout_resp,
     }
 
 
@@ -1117,6 +1296,108 @@ def fetch_history_items(document_id: str, timeout_seconds: int = 60) -> List[Dic
     return []
 
 
+def fetch_progress_events(document_id: str, timeout_seconds: int = 30, limit: int = 1000) -> List[Dict[str, Any]]:
+    try:
+        events_resp = post_json_with_retry(
+            f"{OUTLINER_URL}/history/progress",
+            {"document_id": document_id, "after_id": 0, "limit": limit},
+            timeout_seconds,
+        )
+        events = events_resp.get("events") if isinstance(events_resp, dict) else []
+        return events if isinstance(events, list) else []
+    except Exception as e:
+        print(f"获取进度事件失败: {e}")
+    return []
+
+
+def extract_quality_metrics_from_progress_events(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    quality_scores: List[float] = []
+    dimension_sums: Dict[str, float] = {}
+    dimension_counts: Dict[str, int] = {}
+    unieval_available = 0
+    unieval_fallback = 0
+    arms = ["llm", "rule", "rule_structured", "defect_topic", "defect_evidence", "defect_structure"]
+    arm_counts = {arm: 0 for arm in arms}
+    recent_bandit: List[Dict[str, Any]] = []
+    reward_sum = 0.0
+    reward_count = 0
+    last_arm = ""
+    last_mode = ""
+
+    for event in events or []:
+        stage = str(event.get("stage") or "")
+        meta = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        if stage == "verifier_result":
+            raw_score = meta.get("quality_score")
+            try:
+                quality_scores.append(float(raw_score))
+            except (TypeError, ValueError):
+                pass
+            dims = meta.get("quality_dimensions")
+            if isinstance(dims, dict):
+                for key, value in dims.items():
+                    try:
+                        dimension_sums[key] = dimension_sums.get(key, 0.0) + float(value)
+                        dimension_counts[key] = dimension_counts.get(key, 0) + 1
+                    except (TypeError, ValueError):
+                        continue
+            if meta.get("unieval_fallback"):
+                unieval_fallback += 1
+            else:
+                unieval_available += 1
+        elif stage == "controller_result":
+            arm = str(meta.get("selected_arm") or meta.get("chosen_arm") or "")
+            if arm not in arm_counts:
+                continue
+            try:
+                reward = max(0.0, min(1.0, float(meta.get("reward", 0.0) or 0.0)))
+            except (TypeError, ValueError):
+                reward = 0.0
+            mode = str(meta.get("selection_mode") or "")
+            arm_counts[arm] += 1
+            reward_sum += reward
+            reward_count += 1
+            last_arm = arm
+            last_mode = mode
+            recent_bandit.append({
+                "arm": arm,
+                "reward": reward,
+                "selection_mode": mode,
+            })
+
+    dimension_avgs = {
+        key: round(dimension_sums.get(key, 0.0) / max(1, dimension_counts.get(key, 0)), 4)
+        for key in dimension_sums
+    }
+    rewards = [float(item.get("reward", 0.0) or 0.0) for item in recent_bandit]
+    if rewards:
+        ymin = max(0.0, min(rewards) - 0.02)
+        ymax = min(1.0, max(rewards) + 0.02)
+        if ymax <= ymin:
+            ymax = min(1.0, ymin + 0.1)
+    else:
+        ymin, ymax = 0.0, 0.1
+
+    return {
+        "quality_score_avg": round(sum(quality_scores) / max(1, len(quality_scores)), 4) if quality_scores else 0.0,
+        "quality_score_count": len(quality_scores),
+        "quality_dimension_avgs": dimension_avgs,
+        "unieval_available_subsections": unieval_available,
+        "unieval_fallback_subsections": unieval_fallback,
+        "unieval_available_ratio": round(unieval_available / max(1, unieval_available + unieval_fallback), 4),
+        "unieval_fallback_ratio": round(unieval_fallback / max(1, unieval_available + unieval_fallback), 4),
+        "bandit_selected_arm_counts": arm_counts,
+        "bandit_reward_sum": round(reward_sum, 4),
+        "bandit_reward_count": reward_count,
+        "bandit_reward_avg": round(reward_sum / max(1, reward_count), 4) if reward_count else 0.0,
+        "bandit_last_selected_arm": last_arm,
+        "bandit_last_selection_mode": last_mode,
+        "bandit_recent_events": recent_bandit[-200:],
+        "bandit_plot_y_min": ymin,
+        "bandit_plot_y_max": ymax,
+    }
+
+
 def _recover_partial_document(document_id: str, attempts: int = 5, timeout_seconds: int = 30) -> Dict[str, Any]:
     attempts = max(1, int(attempts))
     delay_seconds = 1.5
@@ -1126,6 +1407,8 @@ def _recover_partial_document(document_id: str, attempts: int = 5, timeout_secon
         history_items = fetch_history_items(document_id=document_id, timeout_seconds=timeout_seconds)
         if history_items:
             title, structure = _load_document_structure(document_id=document_id, history=history_items)
+            progress_events = fetch_progress_events(document_id=document_id, timeout_seconds=timeout_seconds)
+            progress_metrics = extract_quality_metrics_from_progress_events(progress_events)
             markdown_content = build_markdown_document(
                 title=title,
                 structure=structure,
@@ -1153,8 +1436,10 @@ def _recover_partial_document(document_id: str, attempts: int = 5, timeout_secon
                         "failed_subsections": 0,
                         "forced_subsections": 0,
                         "total_generated": passed,
+                        **progress_metrics,
                     },
                     "history_items": history_items,
+                    "progress_events": progress_events[-200:],
                     "attempts": attempt,
                     "error": f"partial_document_rejected: passed {passed}/{expected}",
                 }
@@ -1170,8 +1455,10 @@ def _recover_partial_document(document_id: str, attempts: int = 5, timeout_secon
                     "failed_subsections": 0,
                     "forced_subsections": 0,
                     "total_generated": passed,
+                    **progress_metrics,
                 },
                 "history_items": history_items,
+                "progress_events": progress_events[-200:],
                 "attempts": attempt,
             }
 
@@ -2263,6 +2550,225 @@ def _extract_task_id_from_payload(value: Any) -> str:
     return ""
 
 
+def _extract_text_field_from_payload(value: Any, keys: Tuple[str, ...]) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        for key in keys:
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+        for item in value.values():
+            found = _extract_text_field_from_payload(item, keys)
+            if found:
+                return found
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            found = _extract_text_field_from_payload(item, keys)
+            if found:
+                return found
+    return ""
+
+
+def _extract_int_field_from_payload(value: Any, keys: Tuple[str, ...], default: int) -> int:
+    if isinstance(value, dict):
+        for key in keys:
+            raw = value.get(key)
+            if raw is None:
+                continue
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                pass
+        for item in value.values():
+            found = _extract_int_field_from_payload(item, keys, -1)
+            if found > 0:
+                return found
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            found = _extract_int_field_from_payload(item, keys, -1)
+            if found > 0:
+                return found
+    return default
+
+
+def _coerce_poffices_request_from_payload(payload: Any) -> Optional[PofficesGenerateRequest]:
+    """Recover the original generation request from a loosely wired Poffices block.
+
+    Some Poffices LLM blocks pass nested JSON/text rather than a clean task_id.
+    If a later "poll" block accidentally calls the generation endpoint again,
+    this lets the server reuse the existing request checkpoint instead of
+    starting another FlowerNet job and overloading the outliner.
+    """
+    if not isinstance(payload, dict):
+        return None
+    query = (
+        _extract_text_field_from_payload(payload, ("query", "topic", "REAL_USER_REQUEST", "real_user_request"))
+        or _extract_text_field_from_payload(payload, ("request", "input", "content", "text"))
+    )
+    if not query or query.startswith("FlowerNet task "):
+        return None
+    chapter_count = _extract_int_field_from_payload(payload, ("chapter_count", "chapters", "chapterCount"), 5)
+    subsection_count = _extract_int_field_from_payload(payload, ("subsection_count", "subsection", "subsections", "subsectionCount"), 3)
+    user_background = _extract_text_field_from_payload(payload, ("user_background", "background"))
+    extra_requirements = _extract_text_field_from_payload(payload, ("extra_requirements", "requirements", "extra"))
+    try:
+        return PofficesGenerateRequest(
+            query=query,
+            chapter_count=max(1, min(10, chapter_count)),
+            subsection_count=max(1, min(8, subsection_count)),
+            user_background=user_background,
+            extra_requirements=extra_requirements,
+            async_mode=True,
+        )
+    except Exception:
+        return None
+
+
+def _poffices_reuse_existing_request_task(
+    *,
+    request: Request,
+    req: PofficesGenerateRequest,
+    wait: bool = False,
+    wait_seconds: int = 20,
+) -> Optional[Dict[str, Any]]:
+    existing_task_id = _restore_poffices_request_task_id(req)
+    if not existing_task_id:
+        existing_task_id = _find_recent_poffices_task_for_request(req)
+    if not existing_task_id:
+        return None
+    existing_task = _restore_poffices_task(existing_task_id)
+    if not existing_task:
+        return None
+    if existing_task.get("status") in {"queued", "running", "completed"}:
+        return _poffices_wait_for_task_result(
+            request=request,
+            task_id=existing_task_id,
+            wait=wait,
+            wait_seconds=wait_seconds,
+        )
+    return None
+
+
+def _poffices_start_or_reuse_async_task(
+    *,
+    request: Request,
+    req: PofficesGenerateRequest,
+    wait: bool = False,
+    wait_seconds: int = 20,
+) -> Dict[str, Any]:
+    """Idempotently start or recover a FlowerNet task for Poffices blocks."""
+    req = req.model_copy(update={"query": (req.query or "").strip(), "async_mode": True})
+    reused = _poffices_reuse_existing_request_task(
+        request=request,
+        req=req,
+        wait=wait,
+        wait_seconds=wait_seconds,
+    )
+    if reused is not None:
+        return reused
+
+    task_id = f"task_{uuid4().hex}"
+    _set_poffices_task(
+        task_id,
+        status="queued",
+        message="任务已入队",
+        created_at=datetime.now().isoformat(),
+        started_at=None,
+        timeout_seconds=req.timeout_seconds,
+        request=req.model_dump(),
+    )
+    _persist_poffices_request_task(req, task_id)
+
+    with POFFICES_TASKS_LOCK:
+        POFFICES_TASKS[task_id]["_thread_started"] = True
+    threading.Thread(target=_run_poffices_task, args=(task_id, req), daemon=True).start()
+
+    if wait:
+        return _poffices_wait_for_task_result(
+            request=request,
+            task_id=task_id,
+            wait=True,
+            wait_seconds=wait_seconds,
+        )
+    return {
+        "success": True,
+        "task_id": task_id,
+        "status": "queued",
+        "poll_url": str(request.base_url).rstrip("/") + "/api/poffices/task-status",
+        "message": "异步任务已创建，请轮询 task status",
+        "content": "异步任务已创建，请轮询 task status",
+        "text": "异步任务已创建，请轮询 task status",
+        "result": "异步任务已创建，请轮询 task status",
+        "output": "异步任务已创建，请轮询 task status",
+    }
+
+
+def _extract_quoted_field_from_repr(text: str, field: str) -> str:
+    match = re.search(rf"['\"]{re.escape(field)}['\"]\s*:\s*('(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\")", text)
+    if not match:
+        return ""
+    try:
+        import ast
+        value = ast.literal_eval(match.group(1))
+    except Exception:
+        value = match.group(1).strip("'\"")
+    return str(value or "").strip()
+
+
+def _extract_subsection_contents_from_repr(text: str) -> List[str]:
+    values: List[str] = []
+    for match in re.finditer(r"['\"]content['\"]\s*:\s*('(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\")", text):
+        try:
+            import ast
+            value = ast.literal_eval(match.group(1))
+        except Exception:
+            value = match.group(1).strip("'\"")
+        value = str(value or "").strip()
+        if value and value not in values:
+            values.append(value)
+    return values
+
+
+def _extract_renderable_result_from_failed_task(task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    task_result = task.get("result")
+    if isinstance(task_result, dict):
+        rendered_content = task_result.get("content") or task_result.get("markdown") or task_result.get("document") or ""
+        if isinstance(rendered_content, str) and rendered_content.strip():
+            return task_result
+
+    error_text = str(task.get("error") or "")
+    for prefix in ("文档生成失败:", "文档生成异常:", "生成服务连接失败:"):
+        if prefix in error_text:
+            error_text = error_text.split(prefix, 1)[1].strip()
+            break
+
+    if error_text.startswith("{") and error_text.endswith("}"):
+        try:
+            import ast
+            parsed = ast.literal_eval(error_text)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            rendered_content = parsed.get("content") or parsed.get("markdown") or parsed.get("document") or ""
+            if isinstance(rendered_content, str) and rendered_content.strip():
+                return parsed
+
+    subsection_contents = _extract_subsection_contents_from_repr(error_text)
+    if subsection_contents:
+        title = _extract_quoted_field_from_repr(error_text, "title") or "FlowerNet Document"
+        document_id = _extract_quoted_field_from_repr(error_text, "document_id")
+        return {
+            "success": True,
+            "document_id": document_id,
+            "title": title,
+            "content": f"# {title}\n\n" + "\n\n".join(subsection_contents),
+            "partial": True,
+            "warning": "recovered_from_failed_task_repr",
+        }
+    return None
+
+
 def _coerce_bool(value: Any, default: bool = True) -> bool:
     if isinstance(value, bool):
         return value
@@ -2302,6 +2808,22 @@ def _poffices_wait_for_task_result(
             return _build_poffices_result(request=request, result=task.get("result", {}))
 
         if status == "failed":
+            task_result = _extract_renderable_result_from_failed_task(task)
+            if task_result is not None:
+                rendered = _build_poffices_result(request=request, result=task_result)
+                rendered.update(
+                    {
+                        "success": True,
+                        "task_id": task_id,
+                        "status": "completed",
+                        "task_status": "completed",
+                        "message": "任务完成，生成结果已返回；存在质量或重试警告",
+                        "warning": task.get("error", "completed_with_generation_warning"),
+                        "original_status": "failed",
+                        "original_error": task.get("error", ""),
+                    }
+                )
+                return rendered
             return {
                 "success": False,
                 "task_id": task_id,
@@ -5998,17 +6520,62 @@ def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
             requested_timeout=req.timeout_seconds,
         )
         start_time = time.time()
+        deadline = start_time + timeout_profile["effective_timeout_seconds"]
+        build_attempt = 0
 
-        doc_req = GenerateDocRequest(
-            topic=req.query,
-            chapter_count=req.chapter_count,
-            subsection_count=req.subsection_count,
-            user_background=req.user_background,
-            extra_requirements=req.extra_requirements,
-            rel_threshold=req.rel_threshold,
-            red_threshold=req.red_threshold,
-        )
-        result = _build_document(req=doc_req, timeout_seconds=timeout_profile["effective_timeout_seconds"])
+        while True:
+            build_attempt += 1
+            doc_req = GenerateDocRequest(
+                topic=req.query,
+                chapter_count=req.chapter_count,
+                subsection_count=req.subsection_count,
+                user_background=req.user_background,
+                extra_requirements=req.extra_requirements,
+                rel_threshold=req.rel_threshold,
+                red_threshold=req.red_threshold,
+            )
+            try:
+                result = _build_document(
+                    req=doc_req,
+                    timeout_seconds=max(30, int(deadline - time.time())),
+                )
+                break
+            except HTTPException as exc:
+                detail = str(exc.detail)
+                if not _is_retryable_outline_failure(detail) or time.time() >= deadline:
+                    raise
+                delay = min(_outline_retry_delay_seconds(detail, attempt=build_attempt), max(1.0, deadline - time.time()))
+                _set_poffices_task(
+                    task_id,
+                    status="running",
+                    message=(
+                        "远端 outliner 正在限流或排队，FlowerNet 已保留任务并自动重试；"
+                        f"第 {build_attempt} 次恢复等待 {delay:.0f}s"
+                    ),
+                    last_retryable_error=detail[:500],
+                    retry_count=build_attempt,
+                    updated_at=datetime.now().isoformat(),
+                )
+                print(f"[Poffices] ⏳ retryable outliner failure for {task_id}; retry in {delay:.1f}s: {detail[:180]}")
+                time.sleep(delay)
+            except Exception as exc:
+                detail = str(exc)
+                if not _is_retryable_outline_failure(detail) or time.time() >= deadline:
+                    raise
+                delay = min(_outline_retry_delay_seconds(detail, attempt=build_attempt), max(1.0, deadline - time.time()))
+                _set_poffices_task(
+                    task_id,
+                    status="running",
+                    message=(
+                        "远端 outliner 正在限流或排队，FlowerNet 已保留任务并自动重试；"
+                        f"第 {build_attempt} 次恢复等待 {delay:.0f}s"
+                    ),
+                    last_retryable_error=detail[:500],
+                    retry_count=build_attempt,
+                    updated_at=datetime.now().isoformat(),
+                )
+                print(f"[Poffices] ⏳ retryable outliner exception for {task_id}; retry in {delay:.1f}s: {detail[:180]}")
+                time.sleep(delay)
 
         elapsed = time.time() - start_time
         _record_timeout_metrics(elapsed_seconds=elapsed, result=result)
@@ -6050,7 +6617,25 @@ def poffices_generate(
 ):
     verify_auth(x_api_key=x_api_key, authorization=authorization)
 
+    incoming_task_id = _extract_task_id_from_payload(req.model_dump()) or _extract_task_id_from_payload(getattr(req, "model_extra", {}) or {})
+    if incoming_task_id:
+        return _poffices_wait_for_task_result(
+            request=request,
+            task_id=incoming_task_id,
+            wait=False,
+            wait_seconds=20,
+        )
+
     normalized_query = (req.query or "").strip()
+    query_task_id = _extract_task_id_from_payload(normalized_query)
+    if query_task_id:
+        return _poffices_wait_for_task_result(
+            request=request,
+            task_id=query_task_id,
+            wait=False,
+            wait_seconds=20,
+        )
+
     if len(normalized_query) < 2:
         return {
             "success": False,
@@ -6062,52 +6647,12 @@ def poffices_generate(
     req = req.model_copy(update={"query": normalized_query})
 
     if req.async_mode:
-        existing_task_id = _restore_poffices_request_task_id(req)
-        if existing_task_id:
-            existing_task = _restore_poffices_task(existing_task_id)
-            if existing_task and existing_task.get("status") != "failed":
-                if existing_task.get("status") == "completed":
-                    return _build_poffices_result(request=request, result=existing_task.get("result", {}))
-                _restart_restored_poffices_task(existing_task_id, existing_task)
-                existing_task = _restore_poffices_task(existing_task_id) or existing_task
-                status = str(existing_task.get("status") or "queued")
-                return {
-                    "success": True,
-                    "task_id": existing_task_id,
-                    "status": status,
-                    "task_status": status,
-                    "poll_url": str(request.url_for("poffices_task_status")),
-                    "message": existing_task.get("message", "异步任务已存在，请轮询 task status"),
-                    "content": existing_task.get("message", "异步任务已存在，请轮询 task status"),
-                    "text": existing_task.get("message", "异步任务已存在，请轮询 task status"),
-                    "result": existing_task.get("message", "异步任务已存在，请轮询 task status"),
-                    "output": existing_task.get("message", "异步任务已存在，请轮询 task status"),
-                    "markdown": existing_task.get("message", "异步任务已存在，请轮询 task status"),
-                    "document": existing_task.get("message", "异步任务已存在，请轮询 task status"),
-                }
-
-        task_id = f"task_{uuid4().hex}"
-        _set_poffices_task(
-            task_id,
-            status="queued",
-            message="任务已入队",
-            created_at=datetime.now().isoformat(),
-            started_at=None,
-            timeout_seconds=req.timeout_seconds,
-            request=req.model_dump(),
+        return _poffices_start_or_reuse_async_task(
+            request=request,
+            req=req,
+            wait=False,
+            wait_seconds=20,
         )
-        _persist_poffices_request_task(req, task_id)
-
-        with POFFICES_TASKS_LOCK:
-            POFFICES_TASKS[task_id]["_thread_started"] = True
-        threading.Thread(target=_run_poffices_task, args=(task_id, req), daemon=True).start()
-        return {
-            "success": True,
-            "task_id": task_id,
-            "status": "queued",
-            "poll_url": str(request.url_for("poffices_task_status")),
-            "message": "异步任务已创建，请轮询 task status",
-        }
 
     timeout_profile = _build_timeout_profile(
         chapter_count=req.chapter_count,
@@ -6162,6 +6707,19 @@ def poffices_task_status(
     wait_seconds = int((payload or {}).get("wait_seconds") or req.wait_seconds or 7200)
 
     if not task_id:
+        recovered_req = _coerce_poffices_request_from_payload(payload)
+        if recovered_req is not None:
+            return _poffices_start_or_reuse_async_task(
+                request=request,
+                req=recovered_req,
+                wait=wait,
+                wait_seconds=wait_seconds,
+            )
+        # If a Poffices block passes an older result as text, still try to pull
+        # a task id out of the response-shaped fields before failing.
+        task_id = _extract_task_id_from_payload(_extract_text_field_from_payload(payload, ("content", "text", "result", "output", "markdown", "document"))).strip()
+
+    if not task_id:
         return {
             "success": False,
             "status": "failed",
@@ -6189,6 +6747,17 @@ def poffices_poll_render(
 
     task_id = _extract_task_id_from_payload(payload).strip()
     wait_seconds = int((payload or {}).get("wait_seconds") or 7200)
+    if not task_id:
+        task_id = _extract_task_id_from_payload(_extract_text_field_from_payload(payload, ("content", "text", "result", "output", "markdown", "document"))).strip()
+    if not task_id:
+        recovered_req = _coerce_poffices_request_from_payload(payload)
+        if recovered_req is not None:
+            return _poffices_start_or_reuse_async_task(
+                request=request,
+                req=recovered_req,
+                wait=True,
+                wait_seconds=wait_seconds,
+            )
     if not task_id:
         return {
             "success": False,

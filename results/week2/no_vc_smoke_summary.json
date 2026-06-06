@@ -1,0 +1,33 @@
+{
+  "created_at": "2026-06-06T22:55:44+0800",
+  "topic_count": 1,
+  "row_count": 2,
+  "summary": [
+    {
+      "system": "flowernet_no_vc_direct",
+      "n": 1,
+      "ok": 1,
+      "avg_score": 0.6996,
+      "avg_chars": 7194.0,
+      "avg_repeat_3gram": 0.1439,
+      "avg_citations": 30.0,
+      "avg_llm_calls": 5.0,
+      "avg_controller_calls": 0.0,
+      "forced_pass_total": 0,
+      "elapsed_total_seconds": 66.09
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "n": 1,
+      "ok": 1,
+      "avg_score": 0.6957,
+      "avg_chars": 7163.0,
+      "avg_repeat_3gram": 0.1551,
+      "avg_citations": 31.0,
+      "avg_llm_calls": 21.0,
+      "avg_controller_calls": 0.0,
+      "forced_pass_total": 0,
+      "elapsed_total_seconds": 324.9
+    }
+  ]
+}

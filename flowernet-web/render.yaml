@@ -38,6 +38,18 @@ services:
         value: "35.0"
       - key: DOWNSTREAM_OUTLINER_COOLDOWN_429
         value: "60.0"
+      - key: OUTLINER_TASK_START_RETRIES
+        value: "30"
+      - key: OUTLINER_TASK_START_BACKOFF
+        value: "10.0"
+      - key: OUTLINER_TASK_START_MAX_WAIT
+        value: "900"
+      - key: OUTLINER_TASK_POLL_MAX_TIMEOUT
+        value: "900"
+      - key: WEB_INPROCESS_OUTLINER_FALLBACK
+        value: "true"
+      - key: WEB_OUTLINER_PROVIDER_CHAIN
+        value: deepseek
       - key: DOWNSTREAM_GENERATOR_COOLDOWN_429
         value: "20.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503

@@ -21,6 +21,7 @@ COPY citation_verifier.py .
 COPY domain_filter.py .
 COPY flowernet_epistemic.py .
 COPY flowernet-generator/rag_search.py .
+COPY flowernet-outliner/outliner.py .
 
 # 暴露端口（Render 会通过 PORT 环境变量注入实际端口）
 EXPOSE 10000

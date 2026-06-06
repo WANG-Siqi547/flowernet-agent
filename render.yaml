@@ -500,17 +500,27 @@ services:
       - key: DOWNSTREAM_RETRIES
         value: "1"
       - key: DOWNSTREAM_OUTLINER_MIN_RETRIES
-        value: "2"
+        value: "8"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_429
-        value: "10.0"
+        value: "35.0"
+      - key: DOWNSTREAM_OUTLINER_COOLDOWN_429
+        value: "60.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
-        value: "5.0"
+        value: "8.0"
       - key: OUTLINER_TASK_POLL_MAX_TIMEOUT
-        value: "420"
+        value: "900"
       - key: OUTLINER_STREAM_MAX_WAIT
         value: "480"
+      - key: OUTLINER_TASK_START_RETRIES
+        value: "30"
+      - key: OUTLINER_TASK_START_BACKOFF
+        value: "10.0"
       - key: OUTLINER_TASK_START_MAX_WAIT
-        value: "180"
+        value: "900"
+      - key: WEB_INPROCESS_OUTLINER_FALLBACK
+        value: "true"
+      - key: WEB_OUTLINER_PROVIDER_CHAIN
+        value: deepseek
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
       - key: MIN_REFERENCES_PER_SUBSECTION

@@ -1,0 +1,14 @@
+{
+  "fw24_001": {
+    "reference_texts": [],
+    "source_note": "Fill with curated Wikipedia reference text snippets/pages for AI agents and tool-using workflows."
+  },
+  "fw24_002": {
+    "reference_texts": [],
+    "source_note": "Fill with curated Wikipedia/reference pages for multimodal large language models and product deployment."
+  },
+  "edu_001": {
+    "reference_texts": [],
+    "source_note": "Fill with text from published review/survey papers on AI-powered personalized learning systems."
+  }
+}

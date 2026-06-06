@@ -66,6 +66,11 @@ FLOWERNET_VARIANTS = {
     },
 }
 
+GENERATOR_ONLY_SYSTEMS = {
+    "flowernet_no_vc_direct",
+    "flowernet_no_vc_budget20",
+}
+
 LONGWRITER_GGUF_MODEL = os.getenv(
     "LONGWRITER_GGUF_MODEL",
     "hf.co/bartowski/LongWriter-llama3.1-8b-GGUF:Q4_K_M",
@@ -403,6 +408,148 @@ def build_subsection_prompt(topic: Dict[str, Any], item: Dict[str, str], history
         "避免空泛模板，避免与历史内容重复。"
         f"\n\n已通过历史内容摘要：\n{history_hint}"
     )
+
+
+def outline_prompt(topic: Dict[str, Any], chapter_count: int = 2, subsection_count: int = 2) -> str:
+    return (
+        f"用户主题：{topic.get('topic')}\n"
+        f"用户要求：{topic.get('prompt')}\n\n"
+        f"请只生成一个中文长文档大纲，恰好 {chapter_count} 个一级章节，每章恰好 {subsection_count} 个二级小节。"
+        "每个二级小节给出一个专业标题和一句写作目标。不要生成正文。"
+    )
+
+
+def static_candidate_score(text: str) -> float:
+    """Non-verifier, non-controller draft selector for the call-budget control.
+
+    This intentionally avoids FlowerNet verifier outputs and controller feedback.
+    It only rewards surface completeness signals available to a plain generator:
+    length, headings, citations, tables, paragraphs, and low repetition.
+    """
+    metrics = text_metrics(text)
+    chars = float(metrics.get("chars", 0) or 0)
+    headings = float(metrics.get("heading_count", 0) or 0)
+    paras = float(metrics.get("paragraphs", 0) or 0)
+    citations = float(metrics.get("citation_marker_count", 0) or 0)
+    tables = float(metrics.get("table_marker_count", 0) or 0)
+    rep = float(metrics.get("repeat_3gram_ratio", 0) or 0)
+    return max(
+        0.0,
+        min(
+            1.0,
+            0.30 * min(1.0, chars / 900.0)
+            + 0.16 * min(1.0, headings / 2.0)
+            + 0.14 * min(1.0, paras / 6.0)
+            + 0.22 * min(1.0, citations / 3.0)
+            + 0.10 * min(1.0, tables / 10.0)
+            + 0.08
+            - min(0.20, rep * 0.4),
+        ),
+    )
+
+
+def run_flowernet_generator_only(
+    topic: Dict[str, Any],
+    system: str,
+    max_tokens: int,
+    budget_attempts_per_subsection: int = 5,
+) -> Dict[str, Any]:
+    """FlowerNet pipeline without verifier/controller.
+
+    flowernet_no_vc_direct:
+        one outline call + one generator call per subsection, then direct use.
+    flowernet_no_vc_budget20:
+        no verifier/controller, but uses the same 20 subsection-generation calls
+        as FlowerNet full (4 subsections x 5 candidates). Selection is a static
+        text-shape heuristic, not a quality model.
+    """
+    started = time.time()
+    outlines = subsection_outlines(topic)
+    history: List[str] = []
+    sections: List[str] = []
+    subsection_rows: List[Dict[str, Any]] = []
+    llm_calls = 0
+
+    raw_outline = generate_with_provider(outline_prompt(topic), max_tokens=max(500, max_tokens // 2))
+    llm_calls += 1
+    outline_text = extract_text_from_result(raw_outline)
+
+    attempts = 1 if system == "flowernet_no_vc_direct" else max(1, int(budget_attempts_per_subsection))
+    for item in outlines:
+        prompt = (
+            build_subsection_prompt(topic, item, history)
+            + "\n\nGenerator-only baseline constraint: use the outline and prior context, but do not run verifier, "
+            "do not request controller feedback, and do not revise after quality checks."
+            + f"\n\nGenerated outline context:\n{outline_text[:1800]}"
+        )
+        candidates: List[Dict[str, Any]] = []
+        for attempt in range(1, attempts + 1):
+            raw = generate_with_provider(prompt, max_tokens=max_tokens)
+            llm_calls += 1
+            draft = extract_text_from_result(raw)
+            candidates.append(
+                {
+                    "attempt": attempt,
+                    "text": draft,
+                    "score": static_candidate_score(draft),
+                    "error": raw.get("error", "") if isinstance(raw, dict) else "",
+                }
+            )
+        if system == "flowernet_no_vc_direct":
+            selected = candidates[0] if candidates else {"text": "", "score": 0.0}
+        else:
+            selected = max(candidates, key=lambda c: float(c.get("score", 0.0))) if candidates else {"text": "", "score": 0.0}
+        text = str(selected.get("text") or "")
+        if text:
+            history.append(text)
+            sections.append(f"### {item['title']}\n\n{text}")
+        subsection_rows.append(
+            {
+                "section_id": item["section_id"],
+                "subsection_id": item["subsection_id"],
+                "title": item["title"],
+                "passed": bool(text),
+                "strict_pass": False,
+                "forced_best_real_pass": False,
+                "attempts": attempts,
+                "selection": "direct_first_draft" if system == "flowernet_no_vc_direct" else "static_text_shape_best_of_5",
+                "static_score": round(float(selected.get("score", 0.0) or 0.0), 4),
+            }
+        )
+
+    text = "\n\n".join(
+        [
+            f"# {topic.get('topic')}",
+            "## Generator-only outline",
+            outline_text,
+            "## 第一章 基础与方法",
+            sections[0] if len(sections) > 0 else "",
+            sections[1] if len(sections) > 1 else "",
+            "## 第二章 应用、风险与方向",
+            sections[2] if len(sections) > 2 else "",
+            sections[3] if len(sections) > 3 else "",
+        ]
+    ).strip()
+    return {
+        "system": system,
+        "topic_id": topic.get("id"),
+        "topic": topic.get("topic"),
+        "status": "ok" if len(history) == len(outlines) else "partial",
+        "elapsed_seconds": round(time.time() - started, 2),
+        "final_text": text,
+        "error": "",
+        "llm_calls": llm_calls,
+        "controller_calls": 0,
+        "verified_subsections": 0,
+        "forced_pass_subsections": 0,
+        "expected_subsections": len(outlines),
+        "subsections": subsection_rows,
+        "metrics": text_metrics(text),
+        "baseline_note": (
+            "Outliner + generator only; verifier and controller disabled. "
+            + ("Direct first draft after outline." if system == "flowernet_no_vc_direct" else "Same 20 subsection-generation calls as FlowerNet full; static surface heuristic selects among candidates.")
+        ),
+    }
 
 
 def evidence_repair_suffix(verification: Dict[str, Any]) -> str:
@@ -776,7 +923,7 @@ def main() -> None:
     parser.add_argument("--summary-output", default="results/week2/week2_summary.json")
     parser.add_argument("--limit", type=int, default=15)
     parser.add_argument("--topic-id")
-    parser.add_argument("--systems", default="vanilla_llm,self_refine,cogwriter_adapter,longwriter_gguf_ollama,arise_adapter,flowernet_full,flowernet_wo_bandit,flowernet_wo_nli,flowernet_wo_multidim")
+    parser.add_argument("--systems", default="vanilla_llm,self_refine,cogwriter_adapter,longwriter_gguf_ollama,arise_adapter,flowernet_no_vc_direct,flowernet_no_vc_budget20,flowernet_full,flowernet_wo_bandit,flowernet_wo_nli,flowernet_wo_multidim")
     parser.add_argument("--max-tokens", type=int, default=900)
     parser.add_argument("--max-attempts", type=int, default=5)
     parser.add_argument("--rel-threshold", type=float, default=0.765)
@@ -812,6 +959,8 @@ def main() -> None:
                     row = run_cogwriter_adapter(topic, args.max_tokens)
                 elif system in FLOWERNET_VARIANTS:
                     row = run_flowernet_variant(topic, system, args.max_tokens, args.max_attempts, args.rel_threshold, args.red_threshold)
+                elif system in GENERATOR_ONLY_SYSTEMS:
+                    row = run_flowernet_generator_only(topic, system, args.max_tokens, budget_attempts_per_subsection=args.max_attempts)
                 elif system == "longwriter_gguf_ollama":
                     row = run_longwriter_gguf(topic, args.max_tokens)
                 elif system == "arise_adapter":

@@ -1100,6 +1100,47 @@
         const stats = recovered.stats || {};
         const expected = Math.max(1, Number(stats.expected_subsections || progressRef.current.total || 0));
         const passed = Math.min(expected, Number(stats.passed_subsections || stats.total_generated || expected || 0));
+        const dims = stats.quality_dimension_avgs || {};
+        const qualityKeys = ["topic_alignment", "coverage_completeness", "logical_coherence", "evidence_grounding", "novelty", "structure_clarity"];
+        const dimValues = qualityKeys.map((key) => Number(dims[key] || 0));
+        const dimMean = dimValues.reduce((acc, n) => acc + n, 0) / Math.max(1, dimValues.length);
+        setMetrics({
+          topic_alignment: Number(dims.topic_alignment || 0),
+          coverage_completeness: Number(dims.coverage_completeness || 0),
+          logical_coherence: Number(dims.logical_coherence || 0),
+          evidence_grounding: Number(dims.evidence_grounding || 0),
+          novelty: Number(dims.novelty || 0),
+          structure_clarity: Number(dims.structure_clarity || 0),
+          quality_score: Number(stats.quality_score_avg || dimMean || 0),
+        });
+        setQualitySummary({
+          quality_score_avg: Number(stats.quality_score_avg || dimMean || 0),
+          quality_score_count: Number(stats.quality_score_count || 0),
+          unieval_available_subsections: Number(stats.unieval_available_subsections || 0),
+          unieval_fallback_subsections: Number(stats.unieval_fallback_subsections || 0),
+        });
+        setQualityPeak((prev) => Math.max(Number(prev || 0), Number(stats.quality_score_avg || dimMean || 0)));
+        const recoveredBanditEvents = Array.isArray(stats.bandit_recent_events) ? stats.bandit_recent_events : [];
+        if (recoveredBanditEvents.length) {
+          banditEventsRef.current = recoveredBanditEvents.slice(-200);
+          setBanditSeries(buildBanditSeriesFromEvents(recoveredBanditEvents));
+        }
+        setBanditSummary((prev) => {
+          const counts = stats.bandit_selected_arm_counts && Object.keys(stats.bandit_selected_arm_counts).length
+            ? stats.bandit_selected_arm_counts
+            : (prev.bandit_selected_arm_counts || {});
+          const merged = {
+            ...prev,
+            bandit_selected_arm_counts: counts,
+            bandit_reward_avg: Number(stats.bandit_reward_avg || prev.bandit_reward_avg || 0),
+            bandit_last_selected_arm: String(stats.bandit_last_selected_arm || prev.bandit_last_selected_arm || ""),
+            bandit_last_selection_mode: String(stats.bandit_last_selection_mode || prev.bandit_last_selection_mode || ""),
+            bandit_event_count: Object.values(counts || {}).reduce((acc, n) => acc + Number(n || 0), 0) || Number(prev.bandit_event_count || 0),
+            bandit_plot_y_min: Number(stats.bandit_plot_y_min ?? prev.bandit_plot_y_min ?? 0.0),
+            bandit_plot_y_max: Number(stats.bandit_plot_y_max ?? prev.bandit_plot_y_max ?? 0.1),
+          };
+          return recoveredBanditEvents.length ? summarizeBanditEvents(recoveredBanditEvents, merged) : merged;
+        });
         setDoc({ title: recovered.title || "", content: recovered.content || "" });
         setProgress({
           current: passed,
