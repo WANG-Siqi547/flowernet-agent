@@ -2537,7 +2537,10 @@ _POFFICES_PROMPT_MARKERS: Tuple[str, ...] = (
     "uploaded_file_context",
 )
 _TASK_ID_PATTERN = re.compile(r"task_[A-Za-z0-9_:-]{12,}")
-_TASK_ID_KEYED_PATTERN = re.compile(r"(?:task_id|taskId)[\"']?\s*[:=]\s*([\"']?)(task_[A-Za-z0-9_:-]{12,})\1", flags=re.I)
+_TASK_ID_KEYED_PATTERN = re.compile(
+    r"(?:task_id|taskId)[\"']?\s*[:=]\s*(?:\"(task_[A-Za-z0-9_:-]{12,})\"|'(task_[A-Za-z0-9_:-]{12,})'|(task_[A-Za-z0-9_:-]{12,}))",
+    flags=re.I,
+)
 _MAX_TASK_ID_PARSE_TEXT_LEN = 100_000
 _MAX_TASK_ID_PARSE_DEPTH = 20
 
@@ -2545,6 +2548,10 @@ _MAX_TASK_ID_PARSE_DEPTH = 20
 def _looks_like_poffices_block_prompt(text: str) -> bool:
     lowered = (text or "").lower()
     return any(marker in lowered for marker in _POFFICES_PROMPT_MARKERS)
+
+
+def _is_json_like(text: str) -> bool:
+    return (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]"))
 
 
 def _extract_task_id_from_payload(value: Any, depth: int = 0) -> str:
@@ -2563,8 +2570,8 @@ def _extract_task_id_from_payload(value: Any, depth: int = 0) -> str:
             return direct.group(0)
         keyed = _TASK_ID_KEYED_PATTERN.search(text)
         if keyed:
-            return keyed.group(2)
-        if len(text) <= _MAX_TASK_ID_PARSE_TEXT_LEN and ((text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]"))):
+            return next((group for group in keyed.groups() if group), "")
+        if len(text) <= _MAX_TASK_ID_PARSE_TEXT_LEN and _is_json_like(text):
             try:
                 return _extract_task_id_from_payload(json.loads(text), depth + 1)
             except (json.JSONDecodeError, TypeError, ValueError):
