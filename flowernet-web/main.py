@@ -2527,24 +2527,61 @@ def _build_poffices_result(request: Request, result: Dict[str, Any]) -> Dict[str
     }
 
 
-def _extract_task_id_from_payload(value: Any) -> str:
+_POFFICES_PROMPT_MARKERS: Tuple[str, ...] = (
+    "flowernet input parser",
+    "flowernet start task block",
+    "flowernet poll render block",
+    "return exactly this schema",
+    "output json only",
+    "real_user_request",
+    "uploaded_file_context",
+)
+_TASK_ID_PATTERN = re.compile(r"task_[A-Za-z0-9_:-]{12,}")
+_TASK_ID_KEYED_PATTERN = re.compile(r"(?:task_id|taskId)[\"']?\s*[:=]\s*([\"']?)(task_[A-Za-z0-9_:-]{12,})\1", flags=re.I)
+_MAX_TASK_ID_PARSE_TEXT_LEN = 100_000
+_MAX_TASK_ID_PARSE_DEPTH = 20
+
+
+def _looks_like_poffices_block_prompt(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in _POFFICES_PROMPT_MARKERS)
+
+
+def _extract_task_id_from_payload(value: Any, depth: int = 0) -> str:
+    if depth > _MAX_TASK_ID_PARSE_DEPTH:
+        return ""
     if value is None:
         return ""
     if isinstance(value, str):
-        direct = re.search(r"task_[A-Za-z0-9_:-]{12,}", value)
-        return direct.group(0) if direct else ""
+        text = value.strip()
+        if not text:
+            return ""
+        if _looks_like_poffices_block_prompt(text):
+            return ""
+        direct = _TASK_ID_PATTERN.fullmatch(text)
+        if direct:
+            return direct.group(0)
+        keyed = _TASK_ID_KEYED_PATTERN.search(text)
+        if keyed:
+            return keyed.group(2)
+        if len(text) <= _MAX_TASK_ID_PARSE_TEXT_LEN and ((text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]"))):
+            try:
+                return _extract_task_id_from_payload(json.loads(text), depth + 1)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return ""
+        return ""
     if isinstance(value, dict):
         for key in ("task_id", "taskId", "id"):
-            candidate = _extract_task_id_from_payload(value.get(key))
+            candidate = _extract_task_id_from_payload(value.get(key), depth + 1)
             if candidate:
                 return candidate
         for item in value.values():
-            candidate = _extract_task_id_from_payload(item)
+            candidate = _extract_task_id_from_payload(item, depth + 1)
             if candidate:
                 return candidate
     if isinstance(value, (list, tuple)):
         for item in value:
-            candidate = _extract_task_id_from_payload(item)
+            candidate = _extract_task_id_from_payload(item, depth + 1)
             if candidate:
                 return candidate
     return ""
