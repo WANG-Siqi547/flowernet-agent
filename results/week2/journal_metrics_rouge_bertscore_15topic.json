@@ -1,0 +1,3173 @@
+{
+  "status": "ok",
+  "metric_note": "ROUGE is computed against explicit external references. BERTScore uses a locked xlm-roberta-base encoder on CPU; long candidates/references are trimmed head+tail to 4000 chars for reproducibility.",
+  "bertscore_model": "xlm-roberta-base",
+  "summary_by_system": [
+    {
+      "system": "flowernet_wo_bandit",
+      "n": 15,
+      "rouge1": 0.06589140335843285,
+      "rouge2": 0.00853307672390191,
+      "rougeL": 0.04490131618324578,
+      "bertscore_f1": 0.7941385587056478
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "n": 15,
+      "rouge1": 0.054040145251677316,
+      "rouge2": 0.005599070339694409,
+      "rougeL": 0.03961857449371702,
+      "bertscore_f1": 0.7927140990893046
+    },
+    {
+      "system": "vanilla_llm",
+      "n": 15,
+      "rouge1": 0.0329931043700232,
+      "rouge2": 0.0038335154209928166,
+      "rougeL": 0.025886706426783628,
+      "bertscore_f1": 0.7922606070836385
+    },
+    {
+      "system": "cogwriter_adapter",
+      "n": 15,
+      "rouge1": 0.024526029662426372,
+      "rouge2": 0.0018867563836348802,
+      "rougeL": 0.018832107680939323,
+      "bertscore_f1": 0.7919297893842061
+    },
+    {
+      "system": "self_refine",
+      "n": 15,
+      "rouge1": 0.03243480608608027,
+      "rouge2": 0.002531741917270521,
+      "rougeL": 0.02585852794170683,
+      "bertscore_f1": 0.7916515866915385
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "n": 15,
+      "rouge1": 0.04571722284621558,
+      "rouge2": 0.005877981097145332,
+      "rougeL": 0.03452982886769993,
+      "bertscore_f1": 0.7912439107894897
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "n": 15,
+      "rouge1": 0.05489504048496463,
+      "rouge2": 0.005580705839249011,
+      "rougeL": 0.039731912102353696,
+      "bertscore_f1": 0.7911686102549235
+    },
+    {
+      "system": "flowernet_full",
+      "n": 15,
+      "rouge1": 0.05873986495568688,
+      "rouge2": 0.007159339802399393,
+      "rougeL": 0.04148863029100978,
+      "bertscore_f1": 0.7909154057502746
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "n": 15,
+      "rouge1": 0.053135195924973115,
+      "rouge2": 0.007836009153647325,
+      "rougeL": 0.039312389980961,
+      "bertscore_f1": 0.7901372631390889
+    },
+    {
+      "system": "arise_adapter",
+      "n": 15,
+      "rouge1": 0.030804818958968992,
+      "rouge2": 0.0027310371728916693,
+      "rougeL": 0.02464947008407132,
+      "bertscore_f1": 0.7886497696240743
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "n": 15,
+      "rouge1": 0.0,
+      "rouge2": 0.0,
+      "rougeL": 0.0,
+      "bertscore_f1": 0.0
+    }
+  ],
+  "scored_rows": [
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03270042194092827,
+        "rouge2": 0.002111932418162619,
+        "rougeL": 0.026371308016877638
+      },
+      "bertscore": {
+        "precision": 0.7768195867538452,
+        "recall": 0.7905744314193726,
+        "f1": 0.7836366891860962
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 1264,
+      "reference_chars": 36004
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03711558854718982,
+        "rouge2": 0.004246284501061571,
+        "rougeL": 0.02969247083775186
+      },
+      "bertscore": {
+        "precision": 0.7796281576156616,
+        "recall": 0.7908021211624146,
+        "f1": 0.7851753830909729
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 1326,
+      "reference_chars": 36004
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.024731182795698924,
+        "rouge2": 0.0021586616297895305,
+        "rougeL": 0.01935483870967742
+      },
+      "bertscore": {
+        "precision": 0.7813241481781006,
+        "recall": 0.7936863303184509,
+        "f1": 0.7874566912651062
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 1286,
+      "reference_chars": 36004
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 0,
+      "reference_chars": 36004
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.029334730225248823,
+        "rouge2": 0.002103049421661409,
+        "rougeL": 0.024096385542168672
+      },
+      "bertscore": {
+        "precision": 0.7784309983253479,
+        "recall": 0.7930175065994263,
+        "f1": 0.7856565117835999
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 1335,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.08081791626095423,
+        "rouge2": 0.0058479532163742695,
+        "rougeL": 0.062317429406037
+      },
+      "bertscore": {
+        "precision": 0.778732180595398,
+        "recall": 0.7970557808876038,
+        "f1": 0.7877873778343201
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 4803,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0593385214007782,
+        "rouge2": 0.0038948393378773127,
+        "rougeL": 0.04766536964980545
+      },
+      "bertscore": {
+        "precision": 0.782258927822113,
+        "recall": 0.7940570116043091,
+        "f1": 0.7881138324737549
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 4940,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05333333333333334,
+        "rouge2": 0.003954522985664854,
+        "rougeL": 0.04246913580246913
+      },
+      "bertscore": {
+        "precision": 0.7830421924591064,
+        "recall": 0.7957547903060913,
+        "f1": 0.7893472909927368
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 5008,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.051256776737309016,
+        "rouge2": 0.002967359050445104,
+        "rougeL": 0.04238541153277476
+      },
+      "bertscore": {
+        "precision": 0.7772088050842285,
+        "recall": 0.7916649580001831,
+        "f1": 0.7843703031539917
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 4909,
+      "reference_chars": 36004
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03156822810590631,
+        "rouge2": 0.0050968399592252805,
+        "rougeL": 0.019348268839103868
+      },
+      "bertscore": {
+        "precision": 0.7909793853759766,
+        "recall": 0.7976791262626648,
+        "f1": 0.7943150997161865
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 1204,
+      "reference_chars": 28442
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0274949083503055,
+        "rouge2": 0.004077471967380224,
+        "rougeL": 0.015274949083503056
+      },
+      "bertscore": {
+        "precision": 0.7975979447364807,
+        "recall": 0.7988120913505554,
+        "f1": 0.7982045412063599
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 1155,
+      "reference_chars": 28442
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02365038560411311,
+        "rouge2": 0.0029069767441860465,
+        "rougeL": 0.014395886889460153
+      },
+      "bertscore": {
+        "precision": 0.7895824909210205,
+        "recall": 0.7947641611099243,
+        "f1": 0.7921648621559143
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 1157,
+      "reference_chars": 28442
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 0,
+      "reference_chars": 28442
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.023517382413087935,
+        "rouge2": 0.0040941658137154556,
+        "rougeL": 0.016359918200409
+      },
+      "bertscore": {
+        "precision": 0.7858934998512268,
+        "recall": 0.7955296635627747,
+        "f1": 0.7906821966171265
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 1179,
+      "reference_chars": 28442
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04572803850782191,
+        "rouge2": 0.007237635705669482,
+        "rougeL": 0.02972195589645254
+      },
+      "bertscore": {
+        "precision": 0.7939406633377075,
+        "recall": 0.8057405948638916,
+        "f1": 0.7997971177101135
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 4694,
+      "reference_chars": 28442
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.06388206388206388,
+        "rouge2": 0.012315270935960588,
+        "rougeL": 0.036855036855036855
+      },
+      "bertscore": {
+        "precision": 0.7933884263038635,
+        "recall": 0.8048373460769653,
+        "f1": 0.7990718483924866
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 4798,
+      "reference_chars": 28442
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.044318717586044325,
+        "rouge2": 0.008494572911750826,
+        "rougeL": 0.028288543140028287
+      },
+      "bertscore": {
+        "precision": 0.7931079864501953,
+        "recall": 0.80034339427948,
+        "f1": 0.7967092394828796
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 4619,
+      "reference_chars": 28442
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.055961070559610714,
+        "rouge2": 0.00975609756097561,
+        "rougeL": 0.029197080291970802
+      },
+      "bertscore": {
+        "precision": 0.7859804630279541,
+        "recall": 0.8017452955245972,
+        "f1": 0.7937846183776855
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 4801,
+      "reference_chars": 28442
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02317073170731707,
+        "rouge2": 0.004884004884004885,
+        "rougeL": 0.01829268292682927
+      },
+      "bertscore": {
+        "precision": 0.7902956008911133,
+        "recall": 0.7988582849502563,
+        "f1": 0.7945538759231567
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 1176,
+      "reference_chars": 34662
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.014519056261343012,
+        "rouge2": 0.0036341611144760752,
+        "rougeL": 0.013309134906231096
+      },
+      "bertscore": {
+        "precision": 0.7898908853530884,
+        "recall": 0.7983565330505371,
+        "f1": 0.7941011190414429
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 1196,
+      "reference_chars": 34662
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.022919179734620026,
+        "rouge2": 0.004830917874396136,
+        "rougeL": 0.018094089264173704
+      },
+      "bertscore": {
+        "precision": 0.7922924757003784,
+        "recall": 0.8022183775901794,
+        "f1": 0.7972245216369629
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 1204,
+      "reference_chars": 34662
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 0,
+      "reference_chars": 34662
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.046783625730994156,
+        "rouge2": 0.0058548009367681494,
+        "rougeL": 0.03274853801169591
+      },
+      "bertscore": {
+        "precision": 0.7885339856147766,
+        "recall": 0.7987191081047058,
+        "f1": 0.7935938835144043
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 1350,
+      "reference_chars": 34662
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.053392658509454946,
+        "rouge2": 0.0066815144766146995,
+        "rougeL": 0.041156840934371525
+      },
+      "bertscore": {
+        "precision": 0.7925089597702026,
+        "recall": 0.8015445470809937,
+        "f1": 0.7970011830329895
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 4794,
+      "reference_chars": 34662
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.056887897378694915,
+        "rouge2": 0.007816862088218872,
+        "rougeL": 0.04015616285554936
+      },
+      "bertscore": {
+        "precision": 0.7965824604034424,
+        "recall": 0.8060407638549805,
+        "f1": 0.8012836575508118
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 4797,
+      "reference_chars": 34662
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.040654997176736304,
+        "rouge2": 0.003391746749576032,
+        "rougeL": 0.03387916431394692
+      },
+      "bertscore": {
+        "precision": 0.7834569215774536,
+        "recall": 0.7958136796951294,
+        "f1": 0.7895869612693787
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 4538,
+      "reference_chars": 34662
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.052135330005546314,
+        "rouge2": 0.007773459189339255,
+        "rougeL": 0.041042706600110924
+      },
+      "bertscore": {
+        "precision": 0.7884432673454285,
+        "recall": 0.8038575649261475,
+        "f1": 0.7960757613182068
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 4678,
+      "reference_chars": 34662
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02680965147453083,
+        "rouge2": 0.002082248828735034,
+        "rougeL": 0.019302949061662196
+      },
+      "bertscore": {
+        "precision": 0.7931142449378967,
+        "recall": 0.7959815263748169,
+        "f1": 0.7945452332496643
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 1178,
+      "reference_chars": 24002
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.042663891779396466,
+        "rouge2": 0.005055611729019212,
+        "rougeL": 0.026014568158168574
+      },
+      "bertscore": {
+        "precision": 0.787725031375885,
+        "recall": 0.7977808117866516,
+        "f1": 0.7927210330963135
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 1322,
+      "reference_chars": 24002
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02144772117962467,
+        "rouge2": 0.002082248828735034,
+        "rougeL": 0.012868632707774798
+      },
+      "bertscore": {
+        "precision": 0.7910807728767395,
+        "recall": 0.7951363921165466,
+        "f1": 0.7931033968925476
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 1243,
+      "reference_chars": 24002
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 0,
+      "reference_chars": 24002
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0304302203567681,
+        "rouge2": 0.0021008403361344537,
+        "rougeL": 0.018887722980062957
+      },
+      "bertscore": {
+        "precision": 0.7797448635101318,
+        "recall": 0.7930055856704712,
+        "f1": 0.7863193154335022
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 1299,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.06856023506366307,
+        "rouge2": 0.006862745098039216,
+        "rougeL": 0.04113614103819785
+      },
+      "bertscore": {
+        "precision": 0.7926476001739502,
+        "recall": 0.7966567277908325,
+        "f1": 0.7946470975875854
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 4848,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.030927835051546393,
+        "rouge2": 0.002004008016032064,
+        "rougeL": 0.020618556701030927
+      },
+      "bertscore": {
+        "precision": 0.7893126010894775,
+        "recall": 0.7936476469039917,
+        "f1": 0.7914742231369019
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 4655,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03379416282642089,
+        "rouge2": 0.0020502306509482316,
+        "rougeL": 0.021505376344086023
+      },
+      "bertscore": {
+        "precision": 0.7886923551559448,
+        "recall": 0.7975651025772095,
+        "f1": 0.7931039333343506
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 4437,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04242424242424243,
+        "rouge2": 0.003033367037411527,
+        "rougeL": 0.026262626262626262
+      },
+      "bertscore": {
+        "precision": 0.7872076630592346,
+        "recall": 0.7959027886390686,
+        "f1": 0.7915313839912415
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 4798,
+      "reference_chars": 24002
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03931451612903226,
+        "rouge2": 0.005045408678102926,
+        "rougeL": 0.024193548387096774
+      },
+      "bertscore": {
+        "precision": 0.7789467573165894,
+        "recall": 0.7930023670196533,
+        "f1": 0.7859116792678833
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 1226,
+      "reference_chars": 34576
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0262891809908999,
+        "rouge2": 0.004048582995951417,
+        "rougeL": 0.01820020222446916
+      },
+      "bertscore": {
+        "precision": 0.7809457182884216,
+        "recall": 0.7932575941085815,
+        "f1": 0.7870535254478455
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 1106,
+      "reference_chars": 34576
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.025239777889954566,
+        "rouge2": 0.00202122283981809,
+        "rougeL": 0.015143866733972743
+      },
+      "bertscore": {
+        "precision": 0.7782093286514282,
+        "recall": 0.7902003526687622,
+        "f1": 0.7841590046882629
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 1131,
+      "reference_chars": 34576
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 0,
+      "reference_chars": 34576
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.040533860603064756,
+        "rouge2": 0.009896091044037604,
+        "rougeL": 0.02471576866040534
+      },
+      "bertscore": {
+        "precision": 0.7664228677749634,
+        "recall": 0.7948501110076904,
+        "f1": 0.7803776860237122
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 1257,
+      "reference_chars": 34576
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.029234737747205503,
+        "rouge2": 0.0103359173126615,
+        "rougeL": 0.01891659501289768
+      },
+      "bertscore": {
+        "precision": 0.7895969152450562,
+        "recall": 0.8042436838150024,
+        "f1": 0.7968529462814331
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 1202,
+      "reference_chars": 31453
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.008650519031141867,
+        "rouge2": 0.0,
+        "rougeL": 0.006920415224913495
+      },
+      "bertscore": {
+        "precision": 0.7863178849220276,
+        "recall": 0.797558069229126,
+        "f1": 0.7918980717658997
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 1169,
+      "reference_chars": 31453
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.022608695652173914,
+        "rouge2": 0.0,
+        "rougeL": 0.01565217391304348
+      },
+      "bertscore": {
+        "precision": 0.7892962098121643,
+        "recall": 0.7976729273796082,
+        "f1": 0.7934624552726746
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 1198,
+      "reference_chars": 31453
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 0,
+      "reference_chars": 31453
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0240343347639485,
+        "rouge2": 0.0,
+        "rougeL": 0.017167381974248927
+      },
+      "bertscore": {
+        "precision": 0.7909488081932068,
+        "recall": 0.801235020160675,
+        "f1": 0.796058714389801
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 1153,
+      "reference_chars": 31453
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.06593406593406594,
+        "rouge2": 0.0110062893081761,
+        "rougeL": 0.04081632653061225
+      },
+      "bertscore": {
+        "precision": 0.7871586680412292,
+        "recall": 0.8042553663253784,
+        "f1": 0.7956152558326721
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 4612,
+      "reference_chars": 31453
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.10760953112990007,
+        "rouge2": 0.013856812933025403,
+        "rougeL": 0.04919292851652575
+      },
+      "bertscore": {
+        "precision": 0.793808102607727,
+        "recall": 0.8057519197463989,
+        "f1": 0.7997353672981262
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 4893,
+      "reference_chars": 31453
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.050736497545008176,
+        "rouge2": 0.004918032786885246,
+        "rougeL": 0.031096563011456628
+      },
+      "bertscore": {
+        "precision": 0.7768810391426086,
+        "recall": 0.7982509136199951,
+        "f1": 0.7874209880828857
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 4809,
+      "reference_chars": 31453
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05638474295190713,
+        "rouge2": 0.004366812227074236,
+        "rougeL": 0.03980099502487562
+      },
+      "bertscore": {
+        "precision": 0.7905039191246033,
+        "recall": 0.8055479526519775,
+        "f1": 0.7979549765586853
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 4746,
+      "reference_chars": 31453
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.032603158430973,
+        "rouge2": 0.0030596634370219276,
+        "rougeL": 0.018339276617422316
+      },
+      "bertscore": {
+        "precision": 0.7808902859687805,
+        "recall": 0.7882397174835205,
+        "f1": 0.7845478653907776
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 1281,
+      "reference_chars": 24002
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02756508422664625,
+        "rouge2": 0.002150537634408602,
+        "rougeL": 0.014293006636038795
+      },
+      "bertscore": {
+        "precision": 0.7817324995994568,
+        "recall": 0.7853223085403442,
+        "f1": 0.7835233211517334
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 1279,
+      "reference_chars": 24002
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.01859504132231405,
+        "rouge2": 0.0,
+        "rougeL": 0.010330578512396695
+      },
+      "bertscore": {
+        "precision": 0.7810319066047668,
+        "recall": 0.7878391742706299,
+        "f1": 0.7844207882881165
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 1230,
+      "reference_chars": 24002
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 0,
+      "reference_chars": 24002
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.033797216699801194,
+        "rouge2": 0.004975124378109453,
+        "rougeL": 0.02186878727634195
+      },
+      "bertscore": {
+        "precision": 0.772758960723877,
+        "recall": 0.785905122756958,
+        "f1": 0.7792766094207764
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 1320,
+      "reference_chars": 24002
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.028112449799196786,
+        "rouge2": 0.002012072434607646,
+        "rougeL": 0.01807228915662651
+      },
+      "bertscore": {
+        "precision": 0.7869372367858887,
+        "recall": 0.7916941046714783,
+        "f1": 0.7893084287643433
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 1171,
+      "reference_chars": 18338
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02618328298086606,
+        "rouge2": 0.004036326942482341,
+        "rougeL": 0.02014098690835851
+      },
+      "bertscore": {
+        "precision": 0.7891680002212524,
+        "recall": 0.7936254739761353,
+        "f1": 0.7913904786109924
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 1229,
+      "reference_chars": 18338
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.028455284552845527,
+        "rouge2": 0.006109979633401223,
+        "rougeL": 0.01829268292682927
+      },
+      "bertscore": {
+        "precision": 0.7855082750320435,
+        "recall": 0.7922857999801636,
+        "f1": 0.7888824939727783
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 1208,
+      "reference_chars": 18338
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 0,
+      "reference_chars": 18338
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03073967339097022,
+        "rouge2": 0.0038498556304138597,
+        "rougeL": 0.02113352545629203
+      },
+      "bertscore": {
+        "precision": 0.7742792367935181,
+        "recall": 0.7907109260559082,
+        "f1": 0.7824088335037231
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 1252,
+      "reference_chars": 18338
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05648720211827009,
+        "rouge2": 0.0010126582278481013,
+        "rougeL": 0.031774051191526924
+      },
+      "bertscore": {
+        "precision": 0.7784785628318787,
+        "recall": 0.7868789434432983,
+        "f1": 0.7826562523841858
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 4617,
+      "reference_chars": 18338
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0516473731077471,
+        "rouge2": 0.001784121320249777,
+        "rougeL": 0.033837934105075684
+      },
+      "bertscore": {
+        "precision": 0.7891072034835815,
+        "recall": 0.7961301207542419,
+        "f1": 0.7926031351089478
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 4738,
+      "reference_chars": 18338
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.06468085106382977,
+        "rouge2": 0.0068201193520886615,
+        "rougeL": 0.04255319148936171
+      },
+      "bertscore": {
+        "precision": 0.7839511632919312,
+        "recall": 0.79291832447052,
+        "f1": 0.7884092926979065
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 4838,
+      "reference_chars": 18338
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.039399624765478425,
+        "rouge2": 0.0018796992481203009,
+        "rougeL": 0.031894934333958715
+      },
+      "bertscore": {
+        "precision": 0.7805901169776917,
+        "recall": 0.7884190082550049,
+        "f1": 0.7844850420951843
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 4591,
+      "reference_chars": 18338
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.00951877313590693,
+        "rouge2": 0.0011792452830188679,
+        "rougeL": 0.005288207297726071
+      },
+      "bertscore": {
+        "precision": 0.7918596267700195,
+        "recall": 0.8035351634025574,
+        "f1": 0.7976546287536621
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 1205,
+      "reference_chars": 36004
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.011585044760400212,
+        "rouge2": 0.001098297638660077,
+        "rougeL": 0.00737230121116377
+      },
+      "bertscore": {
+        "precision": 0.7897013425827026,
+        "recall": 0.8030456304550171,
+        "f1": 0.7963176369667053
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 1176,
+      "reference_chars": 36004
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.015756302521008403,
+        "rouge2": 0.0011702750146284377,
+        "rougeL": 0.009453781512605041
+      },
+      "bertscore": {
+        "precision": 0.7883865237236023,
+        "recall": 0.8036249876022339,
+        "f1": 0.7959328293800354
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 1191,
+      "reference_chars": 36004
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 0,
+      "reference_chars": 36004
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.015560165975103735,
+        "rouge2": 0.0011540680900173112,
+        "rougeL": 0.010373443983402491
+      },
+      "bertscore": {
+        "precision": 0.7853333950042725,
+        "recall": 0.8057452440261841,
+        "f1": 0.7954083681106567
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 1295,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.026036644165863067,
+        "rouge2": 0.00106439595529537,
+        "rougeL": 0.013500482160077147
+      },
+      "bertscore": {
+        "precision": 0.7831578254699707,
+        "recall": 0.8003628253936768,
+        "f1": 0.7916668653488159
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 4487,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.025012025012025017,
+        "rouge2": 0.0,
+        "rougeL": 0.017316017316017316
+      },
+      "bertscore": {
+        "precision": 0.7855303287506104,
+        "recall": 0.8015680909156799,
+        "f1": 0.793468177318573
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 4621,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.026987951807228915,
+        "rouge2": 0.0010638297872340426,
+        "rougeL": 0.0163855421686747
+      },
+      "bertscore": {
+        "precision": 0.785737156867981,
+        "recall": 0.8014587163925171,
+        "f1": 0.7935200929641724
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 4876,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02122527737578389,
+        "rouge2": 0.002129925452609159,
+        "rougeL": 0.01254220935841775
+      },
+      "bertscore": {
+        "precision": 0.7910566926002502,
+        "recall": 0.8041992783546448,
+        "f1": 0.7975738644599915
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 4754,
+      "reference_chars": 36004
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.028927680798004986,
+        "rouge2": 0.006989515726410384,
+        "rougeL": 0.02194513715710723
+      },
+      "bertscore": {
+        "precision": 0.78050297498703,
+        "recall": 0.7942901253700256,
+        "f1": 0.7873362302780151
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 1172,
+      "reference_chars": 36004
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.015166835187057632,
+        "rouge2": 0.0020242914979757085,
+        "rougeL": 0.010111223458038424
+      },
+      "bertscore": {
+        "precision": 0.7809844613075256,
+        "recall": 0.7899084687232971,
+        "f1": 0.7854210734367371
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 1186,
+      "reference_chars": 36004
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.026052104208416832,
+        "rouge2": 0.007021063189568706,
+        "rougeL": 0.018036072144288578
+      },
+      "bertscore": {
+        "precision": 0.7806321382522583,
+        "recall": 0.7963194847106934,
+        "f1": 0.7883977890014648
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 1204,
+      "reference_chars": 36004
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 0,
+      "reference_chars": 36004
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.019801980198019806,
+        "rouge2": 0.006937561942517344,
+        "rougeL": 0.01485148514851485
+      },
+      "bertscore": {
+        "precision": 0.7696065306663513,
+        "recall": 0.7918822169303894,
+        "f1": 0.7805854678153992
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 1206,
+      "reference_chars": 36004
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02162162162162162,
+        "rouge2": 0.0,
+        "rougeL": 0.02162162162162162
+      },
+      "bertscore": {
+        "precision": 0.7881065011024475,
+        "recall": 0.8002946376800537,
+        "f1": 0.7941538095474243
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 1251,
+      "reference_chars": 4447
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0332409972299169,
+        "rouge2": 0.0,
+        "rougeL": 0.02941176470588235
+      },
+      "bertscore": {
+        "precision": 0.7880522012710571,
+        "recall": 0.7982232570648193,
+        "f1": 0.7931051254272461
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 1156,
+      "reference_chars": 4447
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.017045454545454548,
+        "rouge2": 0.0,
+        "rougeL": 0.017045454545454548
+      },
+      "bertscore": {
+        "precision": 0.7869790196418762,
+        "recall": 0.7974552512168884,
+        "f1": 0.792182445526123
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 1248,
+      "reference_chars": 4447
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 0,
+      "reference_chars": 4447
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02072538860103627,
+        "rouge2": 0.0,
+        "rougeL": 0.02072538860103627
+      },
+      "bertscore": {
+        "precision": 0.7855544686317444,
+        "recall": 0.8033902645111084,
+        "f1": 0.7943722605705261
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 1218,
+      "reference_chars": 4447
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.12274368231046931,
+        "rouge2": 0.014492753623188408,
+        "rougeL": 0.08630393996247654
+      },
+      "bertscore": {
+        "precision": 0.7816440463066101,
+        "recall": 0.8009734749794006,
+        "f1": 0.7911907434463501
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 4856,
+      "reference_chars": 4447
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.08333333333333334,
+        "rouge2": 0.007272727272727273,
+        "rougeL": 0.060263653483992465
+      },
+      "bertscore": {
+        "precision": 0.7873353958129883,
+        "recall": 0.801112174987793,
+        "f1": 0.7941640615463257
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 4750,
+      "reference_chars": 4447
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.042226487523992315,
+        "rouge2": 0.0077071290944123304,
+        "rougeL": 0.04
+      },
+      "bertscore": {
+        "precision": 0.7836276292800903,
+        "recall": 0.7993382215499878,
+        "f1": 0.7914050221443176
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 4802,
+      "reference_chars": 4447
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.09019607843137256,
+        "rouge2": 0.011811023622047246,
+        "rougeL": 0.06952965235173823
+      },
+      "bertscore": {
+        "precision": 0.7873954176902771,
+        "recall": 0.8021034002304077,
+        "f1": 0.7946813702583313
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 4725,
+      "reference_chars": 4447
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.023121387283236993,
+        "rouge2": 0.0,
+        "rougeL": 0.023121387283236993
+      },
+      "bertscore": {
+        "precision": 0.7873638272285461,
+        "recall": 0.8011213541030884,
+        "f1": 0.7941829562187195
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 1223,
+      "reference_chars": 1849
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03409090909090909,
+        "rouge2": 0.0,
+        "rougeL": 0.022727272727272728
+      },
+      "bertscore": {
+        "precision": 0.7794869542121887,
+        "recall": 0.7977538108825684,
+        "f1": 0.7885146141052246
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 1162,
+      "reference_chars": 1849
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.013333333333333334,
+        "rouge2": 0.0,
+        "rougeL": 0.013333333333333334
+      },
+      "bertscore": {
+        "precision": 0.7858598828315735,
+        "recall": 0.7959269881248474,
+        "f1": 0.7908614277839661
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 1222,
+      "reference_chars": 1849
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 0,
+      "reference_chars": 1849
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.028037383177570093,
+        "rouge2": 0.0,
+        "rougeL": 0.028037383177570093
+      },
+      "bertscore": {
+        "precision": 0.7759007215499878,
+        "recall": 0.8001840114593506,
+        "f1": 0.787855327129364
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 1276,
+      "reference_chars": 1849
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04,
+        "rouge2": 0.013422818791946308,
+        "rougeL": 0.04
+      },
+      "bertscore": {
+        "precision": 0.7688621282577515,
+        "recall": 0.7943283915519714,
+        "f1": 0.7813878655433655
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 4647,
+      "reference_chars": 1849
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.1308411214953271,
+        "rouge2": 0.031347962382445145,
+        "rougeL": 0.09345794392523366
+      },
+      "bertscore": {
+        "precision": 0.7810944318771362,
+        "recall": 0.8025344014167786,
+        "f1": 0.7916692495346069
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 4951,
+      "reference_chars": 1849
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.038834951456310676,
+        "rouge2": 0.013029315960912051,
+        "rougeL": 0.038834951456310676
+      },
+      "bertscore": {
+        "precision": 0.7692037224769592,
+        "recall": 0.7953299283981323,
+        "f1": 0.7820486426353455
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 4483,
+      "reference_chars": 1849
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0409556313993174,
+        "rouge2": 0.013745704467353952,
+        "rougeL": 0.03669724770642201
+      },
+      "bertscore": {
+        "precision": 0.7649243474006653,
+        "recall": 0.7934168577194214,
+        "f1": 0.7789100408554077
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 4272,
+      "reference_chars": 1849
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.029411764705882353,
+        "rouge2": 0.0,
+        "rougeL": 0.014705882352941176
+      },
+      "bertscore": {
+        "precision": 0.7858354449272156,
+        "recall": 0.8004617691040039,
+        "f1": 0.7930811643600464
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 1200,
+      "reference_chars": 2880
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02238805970149254,
+        "rouge2": 0.0,
+        "rougeL": 0.02238805970149254
+      },
+      "bertscore": {
+        "precision": 0.7867329120635986,
+        "recall": 0.7989418506622314,
+        "f1": 0.792790412902832
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 1141,
+      "reference_chars": 2880
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.031128404669260697,
+        "rouge2": 0.0,
+        "rougeL": 0.031128404669260697
+      },
+      "bertscore": {
+        "precision": 0.7921640276908875,
+        "recall": 0.8045971393585205,
+        "f1": 0.798332154750824
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 1188,
+      "reference_chars": 2880
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 0,
+      "reference_chars": 2880
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02255639097744361,
+        "rouge2": 0.0,
+        "rougeL": 0.02255639097744361
+      },
+      "bertscore": {
+        "precision": 0.7780001163482666,
+        "recall": 0.7958769798278809,
+        "f1": 0.7868369817733765
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 1196,
+      "reference_chars": 2880
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.02,
+        "rouge2": 0.0,
+        "rougeL": 0.015000000000000001
+      },
+      "bertscore": {
+        "precision": 0.7877347469329834,
+        "recall": 0.7983553409576416,
+        "f1": 0.7930094599723816
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 4615,
+      "reference_chars": 2880
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04113110539845758,
+        "rouge2": 0.0,
+        "rougeL": 0.030848329048843187
+      },
+      "bertscore": {
+        "precision": 0.788489818572998,
+        "recall": 0.8020901083946228,
+        "f1": 0.795231819152832
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 4709,
+      "reference_chars": 2880
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03723404255319149,
+        "rouge2": 0.0,
+        "rougeL": 0.031914893617021274
+      },
+      "bertscore": {
+        "precision": 0.786527156829834,
+        "recall": 0.800373911857605,
+        "f1": 0.793390154838562
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 4387,
+      "reference_chars": 2880
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03608247422680413,
+        "rouge2": 0.0,
+        "rougeL": 0.025773195876288662
+      },
+      "bertscore": {
+        "precision": 0.7837015390396118,
+        "recall": 0.8004724979400635,
+        "f1": 0.7919982671737671
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 4682,
+      "reference_chars": 2880
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.11618257261410789,
+        "rouge2": 0.0,
+        "rougeL": 0.11618257261410789
+      },
+      "bertscore": {
+        "precision": 0.795893669128418,
+        "recall": 0.8028424978256226,
+        "f1": 0.7993530035018921
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 1198,
+      "reference_chars": 2582
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.11428571428571428,
+        "rouge2": 0.0,
+        "rougeL": 0.11428571428571428
+      },
+      "bertscore": {
+        "precision": 0.7950779795646667,
+        "recall": 0.801429271697998,
+        "f1": 0.7982409596443176
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 1157,
+      "reference_chars": 2582
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.06177606177606178,
+        "rouge2": 0.0,
+        "rougeL": 0.06177606177606178
+      },
+      "bertscore": {
+        "precision": 0.7913030385971069,
+        "recall": 0.8047573566436768,
+        "f1": 0.7979735136032104
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 1168,
+      "reference_chars": 2582
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 0,
+      "reference_chars": 2582
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.09621993127147768,
+        "rouge2": 0.0,
+        "rougeL": 0.09621993127147768
+      },
+      "bertscore": {
+        "precision": 0.7936235666275024,
+        "recall": 0.8051953315734863,
+        "f1": 0.7993675470352173
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 1218,
+      "reference_chars": 2582
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.13012048192771086,
+        "rouge2": 0.016438356164383564,
+        "rougeL": 0.10602409638554217
+      },
+      "bertscore": {
+        "precision": 0.7943981885910034,
+        "recall": 0.8072105050086975,
+        "f1": 0.8007530570030212
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 4816,
+      "reference_chars": 2582
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.09782608695652174,
+        "rouge2": 0.012578616352201257,
+        "rougeL": 0.08695652173913045
+      },
+      "bertscore": {
+        "precision": 0.7918273210525513,
+        "recall": 0.8050206899642944,
+        "f1": 0.7983695268630981
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 4753,
+      "reference_chars": 2582
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0787037037037037,
+        "rouge2": 0.010471204188481674,
+        "rougeL": 0.06944444444444443
+      },
+      "bertscore": {
+        "precision": 0.7965430021286011,
+        "recall": 0.8072527050971985,
+        "f1": 0.8018620610237122
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 4786,
+      "reference_chars": 2582
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.08425720620842572,
+        "rouge2": 0.02493765586034913,
+        "rougeL": 0.0753880266075388
+      },
+      "bertscore": {
+        "precision": 0.7806905508041382,
+        "recall": 0.8018975853919983,
+        "f1": 0.7911519408226013
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 4860,
+      "reference_chars": 2582
+    },
+    {
+      "system": "vanilla_llm",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.022598870056497175,
+        "rouge2": 0.014705882352941176,
+        "rougeL": 0.022598870056497175
+      },
+      "bertscore": {
+        "precision": 0.7903636693954468,
+        "recall": 0.7986301779747009,
+        "f1": 0.7944754958152771
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 1173,
+      "reference_chars": 3611
+    },
+    {
+      "system": "self_refine",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04528301886792452,
+        "rouge2": 0.0076045627376425855,
+        "rougeL": 0.03773584905660377
+      },
+      "bertscore": {
+        "precision": 0.7933545112609863,
+        "recall": 0.7993006706237793,
+        "f1": 0.7963165044784546
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 1245,
+      "reference_chars": 3611
+    },
+    {
+      "system": "cogwriter_adapter",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.01515151515151515,
+        "rouge2": 0.0,
+        "rougeL": 0.007575757575757575
+      },
+      "bertscore": {
+        "precision": 0.7919781804084778,
+        "recall": 0.7968214750289917,
+        "f1": 0.794392466545105
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 1259,
+      "reference_chars": 3611
+    },
+    {
+      "system": "longwriter_gguf_ollama",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "failed_invalid_output",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": null,
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 0,
+      "reference_chars": 3611
+    },
+    {
+      "system": "arise_adapter",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0,
+        "rouge2": 0.0,
+        "rougeL": 0.0
+      },
+      "bertscore": {
+        "precision": 0.7846433520317078,
+        "recall": 0.7973525524139404,
+        "f1": 0.7909468412399292
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 1154,
+      "reference_chars": 3611
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.027888446215139445,
+        "rouge2": 0.004761904761904762,
+        "rougeL": 0.027888446215139445
+      },
+      "bertscore": {
+        "precision": 0.7794792056083679,
+        "recall": 0.7940090298652649,
+        "f1": 0.7866770625114441
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 4744,
+      "reference_chars": 3611
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.08016877637130802,
+        "rouge2": 0.015306122448979591,
+        "rougeL": 0.06751054852320675
+      },
+      "bertscore": {
+        "precision": 0.7934048175811768,
+        "recall": 0.8059089779853821,
+        "f1": 0.7996079921722412
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 4692,
+      "reference_chars": 3611
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.047722342733188726,
+        "rouge2": 0.013071895424836602,
+        "rougeL": 0.039045553145336226
+      },
+      "bertscore": {
+        "precision": 0.7874871492385864,
+        "recall": 0.8010517358779907,
+        "f1": 0.7942115068435669
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 4803,
+      "reference_chars": 3611
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.08870967741935484,
+        "rouge2": 0.014492753623188406,
+        "rougeL": 0.06854838709677419
+      },
+      "bertscore": {
+        "precision": 0.7835366725921631,
+        "recall": 0.8002244234085083,
+        "f1": 0.791792631149292
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 4463,
+      "reference_chars": 3611
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.059479553903345715,
+        "rouge2": 0.007441860465116279,
+        "rougeL": 0.031598513011152414
+      },
+      "bertscore": {
+        "precision": 0.7808105945587158,
+        "recall": 0.8007968664169312,
+        "f1": 0.7906774282455444
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 4734,
+      "reference_chars": 34576
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04259175351155415,
+        "rouge2": 0.0054421768707483,
+        "rougeL": 0.02718622564567286
+      },
+      "bertscore": {
+        "precision": 0.7838504314422607,
+        "recall": 0.8016506433486938,
+        "f1": 0.7926506400108337
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 4699,
+      "reference_chars": 34576
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.046357615894039736,
+        "rouge2": 0.008522727272727272,
+        "rougeL": 0.027436140018921477
+      },
+      "bertscore": {
+        "precision": 0.7787372469902039,
+        "recall": 0.8015656471252441,
+        "f1": 0.7899865508079529
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 4628,
+      "reference_chars": 34576
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0636144578313253,
+        "rouge2": 0.0057887120115774245,
+        "rougeL": 0.033734939759036145
+      },
+      "bertscore": {
+        "precision": 0.7839449048042297,
+        "recall": 0.790230393409729,
+        "f1": 0.7870750427246094
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 4972,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.049406175771971504,
+        "rouge2": 0.0019940179461615153,
+        "rougeL": 0.030403800475059386
+      },
+      "bertscore": {
+        "precision": 0.7854881286621094,
+        "recall": 0.7906626462936401,
+        "f1": 0.7880669236183167
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 4522,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04750363548230732,
+        "rouge2": 0.002911208151382824,
+        "rougeL": 0.030053320407174018
+      },
+      "bertscore": {
+        "precision": 0.779605507850647,
+        "recall": 0.7878368496894836,
+        "f1": 0.7836995720863342
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 4818,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_wo_bandit",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.036671368124118475,
+        "rouge2": 0.006588235294117647,
+        "rougeL": 0.023507287259050307
+      },
+      "bertscore": {
+        "precision": 0.7840800881385803,
+        "recall": 0.7950623035430908,
+        "f1": 0.7895330190658569
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 4623,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_wo_nli",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.034532374100719423,
+        "rouge2": 0.005760921747479597,
+        "rougeL": 0.024940047961630695
+      },
+      "bertscore": {
+        "precision": 0.7786116003990173,
+        "recall": 0.7954196929931641,
+        "f1": 0.7869259119033813
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 4671,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_wo_multidim",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0441785549930971,
+        "rouge2": 0.009212344541685858,
+        "rougeL": 0.03313391624482283
+      },
+      "bertscore": {
+        "precision": 0.7761852741241455,
+        "recall": 0.7921015024185181,
+        "f1": 0.7840626239776611
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 4672,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04840878529807262,
+        "rouge2": 0.008075370121130554,
+        "rougeL": 0.027790228597041684
+      },
+      "bertscore": {
+        "precision": 0.7796559929847717,
+        "recall": 0.7970346808433533,
+        "f1": 0.7882495522499084
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 4779,
+      "reference_chars": 34576
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04702495201535509,
+        "rouge2": 0.0020151133501259445,
+        "rougeL": 0.029750479846449136
+      },
+      "bertscore": {
+        "precision": 0.7823477387428284,
+        "recall": 0.7894359827041626,
+        "f1": 0.7858757972717285
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 4821,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_full",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.047954866008462625,
+        "rouge2": 0.008470588235294119,
+        "rougeL": 0.02914903620122238
+      },
+      "bertscore": {
+        "precision": 0.7794090509414673,
+        "recall": 0.7955899238586426,
+        "f1": 0.787416398525238
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 4815,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.06292352371732818,
+        "rouge2": 0.0029140359397765905,
+        "rougeL": 0.05033881897386254
+      },
+      "bertscore": {
+        "precision": 0.7779924273490906,
+        "recall": 0.7920736074447632,
+        "f1": 0.7849699258804321
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 6606,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_001",
+      "topic": "AI agents and tool-using workflows in 2024",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.1026827012025902,
+        "rouge2": 0.0037037037037037043,
+        "rougeL": 0.08140610545790934
+      },
+      "bertscore": {
+        "precision": 0.7820892333984375,
+        "recall": 0.7930405139923096,
+        "f1": 0.7875268459320068
+      },
+      "reference_source_note": "Wikipedia extracts: Intelligent agent: https://en.wikipedia.org/wiki/Intelligent_agent | Software agent: https://en.wikipedia.org/wiki/Software_agent | Tool use: https://en.wikipedia.org/wiki/Tool_use",
+      "candidate_chars": 7350,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.056543547651618786,
+        "rouge2": 0.0057361376673040155,
+        "rougeL": 0.0364797081623347
+      },
+      "bertscore": {
+        "precision": 0.7958481311798096,
+        "recall": 0.7974804639816284,
+        "f1": 0.7966634631156921
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 6951,
+      "reference_chars": 28442
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_002",
+      "topic": "Multimodal large language models in real-world products",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0446927374301676,
+        "rouge2": 0.005862237420615535,
+        "rougeL": 0.032588454376163874
+      },
+      "bertscore": {
+        "precision": 0.7959309816360474,
+        "recall": 0.7990264892578125,
+        "f1": 0.7974757552146912
+      },
+      "reference_source_note": "Wikipedia extracts: Multimodal learning: https://en.wikipedia.org/wiki/Multimodal_learning | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Generative artificial intelligence: https://en.wikipedia.org/wiki/Generative_artificial_intelligence",
+      "candidate_chars": 6898,
+      "reference_chars": 28442
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.07050285121824779,
+        "rouge2": 0.008303061754021795,
+        "rougeL": 0.04769310523587351
+      },
+      "bertscore": {
+        "precision": 0.7864198684692383,
+        "recall": 0.7971768379211426,
+        "f1": 0.7917618155479431
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 6931,
+      "reference_chars": 34662
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_003",
+      "topic": "Retrieval-augmented generation and citation quality",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04775124930594114,
+        "rouge2": 0.007782101167315175,
+        "rougeL": 0.037756801776790666
+      },
+      "bertscore": {
+        "precision": 0.7883501052856445,
+        "recall": 0.7988008260726929,
+        "f1": 0.7935410141944885
+      },
+      "reference_source_note": "Wikipedia extracts: Retrieval-augmented generation: https://en.wikipedia.org/wiki/Retrieval-augmented_generation | Information retrieval: https://en.wikipedia.org/wiki/Information_retrieval | Citation: https://en.wikipedia.org/wiki/Citation",
+      "candidate_chars": 6709,
+      "reference_chars": 34662
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.049370277078085646,
+        "rouge2": 0.004034291477559253,
+        "rougeL": 0.031234256926952135
+      },
+      "bertscore": {
+        "precision": 0.7868924140930176,
+        "recall": 0.7897399067878723,
+        "f1": 0.788313627243042
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 7172,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_004",
+      "topic": "AI safety evaluations for frontier models",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03808543489449305,
+        "rouge2": 0.003091190108191654,
+        "rougeL": 0.024704065877509004
+      },
+      "bertscore": {
+        "precision": 0.7877280712127686,
+        "recall": 0.7923291325569153,
+        "f1": 0.7900219559669495
+      },
+      "reference_source_note": "Wikipedia extracts: AI safety: https://en.wikipedia.org/wiki/AI_safety | Artificial general intelligence: https://en.wikipedia.org/wiki/Artificial_general_intelligence",
+      "candidate_chars": 5902,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04221635883905013,
+        "rouge2": 0.004401408450704225,
+        "rougeL": 0.027264731750219876
+      },
+      "bertscore": {
+        "precision": 0.7836968302726746,
+        "recall": 0.7978674173355103,
+        "f1": 0.790718674659729
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 6898,
+      "reference_chars": 34576
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_005",
+      "topic": "Open-source LLM ecosystems and deployment trade-offs",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.045029736618521665,
+        "rouge2": 0.005102040816326531,
+        "rougeL": 0.029736618521665252
+      },
+      "bertscore": {
+        "precision": 0.786965012550354,
+        "recall": 0.7986481785774231,
+        "f1": 0.7927634716033936
+      },
+      "reference_source_note": "Wikipedia extracts: Open-source software: https://en.wikipedia.org/wiki/Open-source_software | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Software deployment: https://en.wikipedia.org/wiki/Software_deployment",
+      "candidate_chars": 6940,
+      "reference_chars": 34576
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.06896551724137931,
+        "rouge2": 0.0061396776669224865,
+        "rougeL": 0.04137931034482758
+      },
+      "bertscore": {
+        "precision": 0.7881721258163452,
+        "recall": 0.8010226488113403,
+        "f1": 0.7945454120635986
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 6822,
+      "reference_chars": 31453
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_006",
+      "topic": "Synthetic data for model training and evaluation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.07116920842411038,
+        "rouge2": 0.010181818181818183,
+        "rougeL": 0.04938271604938271
+      },
+      "bertscore": {
+        "precision": 0.7901074886322021,
+        "recall": 0.8035321831703186,
+        "f1": 0.7967633008956909
+      },
+      "reference_source_note": "Wikipedia extracts: Synthetic data: https://en.wikipedia.org/wiki/Synthetic_data | Data augmentation: https://en.wikipedia.org/wiki/Data_augmentation | Machine learning: https://en.wikipedia.org/wiki/Machine_learning",
+      "candidate_chars": 7020,
+      "reference_chars": 31453
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05042016806722689,
+        "rouge2": 0.0028037383177570096,
+        "rougeL": 0.03548085901027078
+      },
+      "bertscore": {
+        "precision": 0.7792245149612427,
+        "recall": 0.785460352897644,
+        "f1": 0.7823299765586853
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 7211,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_007",
+      "topic": "Long-context models and long-document generation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05250596658711217,
+        "rouge2": 0.004777830864787386,
+        "rougeL": 0.031503579952267304
+      },
+      "bertscore": {
+        "precision": 0.7796622514724731,
+        "recall": 0.7849507331848145,
+        "f1": 0.7822975516319275
+      },
+      "reference_source_note": "Wikipedia extracts: Transformer (deep learning architecture): https://en.wikipedia.org/wiki/Transformer_%28deep_learning_architecture%29 | Large language model: https://en.wikipedia.org/wiki/Large_language_model | Natural language generation (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Natural_language_generation)",
+      "candidate_chars": 6439,
+      "reference_chars": 24002
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.052956751985878195,
+        "rouge2": 0.0020253164556962027,
+        "rougeL": 0.0353045013239188
+      },
+      "bertscore": {
+        "precision": 0.7826666831970215,
+        "recall": 0.7917340397834778,
+        "f1": 0.7871742844581604
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 6633,
+      "reference_chars": 18338
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_008",
+      "topic": "AI in scientific discovery and literature synthesis",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05254237288135594,
+        "rouge2": 0.0009891196834817012,
+        "rougeL": 0.03728813559322034
+      },
+      "bertscore": {
+        "precision": 0.7843104004859924,
+        "recall": 0.7901316285133362,
+        "f1": 0.7872102856636047
+      },
+      "reference_source_note": "Wikipedia extracts: Artificial intelligence in science (fetch failed: 429 Client Error: Too Many Requests for url: https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence_in_science) | Literature review: https://en.wikipedia.org/wiki/Literature_review | Scientific literature: https://en.wikipedia.org/wiki/Scientific_literature",
+      "candidate_chars": 6579,
+      "reference_chars": 18338
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.018357487922705314,
+        "rouge2": 0.001004016064257028,
+        "rougeL": 0.013039117352056168
+      },
+      "bertscore": {
+        "precision": 0.7873080968856812,
+        "recall": 0.8004531860351562,
+        "f1": 0.7938262224197388
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 6921,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_009",
+      "topic": "Enterprise knowledge assistants and workflow automation",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.019166267369429803,
+        "rouge2": 0.0,
+        "rougeL": 0.012458073790129372
+      },
+      "bertscore": {
+        "precision": 0.7895300984382629,
+        "recall": 0.8019677400588989,
+        "f1": 0.7957003116607666
+      },
+      "reference_source_note": "Wikipedia extracts: Knowledge management: https://en.wikipedia.org/wiki/Knowledge_management | Virtual assistant: https://en.wikipedia.org/wiki/Virtual_assistant | Workflow: https://en.wikipedia.org/wiki/Workflow",
+      "candidate_chars": 6802,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05050952591936198,
+        "rouge2": 0.006208425720620842,
+        "rougeL": 0.034559149313247675
+      },
+      "bertscore": {
+        "precision": 0.7853845357894897,
+        "recall": 0.7952726483345032,
+        "f1": 0.7902976870536804
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 6821,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "fw24_010",
+      "topic": "Evaluation of LLM-generated long-form reports",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.03974706413730804,
+        "rouge2": 0.0054249547920434,
+        "rougeL": 0.022583559168925023
+      },
+      "bertscore": {
+        "precision": 0.7836504578590393,
+        "recall": 0.7934011220932007,
+        "f1": 0.7884956002235413
+      },
+      "reference_source_note": "Wikipedia extracts: Natural language generation: https://en.wikipedia.org/wiki/Natural_language_generation | Automatic summarization: https://en.wikipedia.org/wiki/Automatic_summarization | Evaluation of machine translation: https://en.wikipedia.org/wiki/Evaluation_of_machine_translation",
+      "candidate_chars": 6448,
+      "reference_chars": 36004
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.07725321888412016,
+        "rouge2": 0.008247422680412371,
+        "rougeL": 0.06437768240343349
+      },
+      "bertscore": {
+        "precision": 0.7887817621231079,
+        "recall": 0.7982847094535828,
+        "f1": 0.7935047745704651
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 6404,
+      "reference_chars": 4447
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "edu_001",
+      "topic": "Personalized learning systems powered by AI",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05353728489483747,
+        "rouge2": 0.007380073800738008,
+        "rougeL": 0.04588910133843212
+      },
+      "bertscore": {
+        "precision": 0.7912591099739075,
+        "recall": 0.8002407550811768,
+        "f1": 0.795724630355835
+      },
+      "reference_source_note": "Crossref: Harnessing Artificial Intelligence for Personalized Learning: A Systematic Review DOI:10.56294/dm2023146 | Crossref: Artificial intelligence for personalized learning: a systematic literature review DOI:10.1108/ijilt-07-2024-0160",
+      "candidate_chars": 6515,
+      "reference_chars": 4447
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.028735632183908042,
+        "rouge2": 0.011560693641618497,
+        "rougeL": 0.028735632183908042
+      },
+      "bertscore": {
+        "precision": 0.7785719633102417,
+        "recall": 0.7952703237533569,
+        "f1": 0.7868325710296631
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 6515,
+      "reference_chars": 1849
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "edu_002",
+      "topic": "AI tutors in higher education",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.018518518518518517,
+        "rouge2": 0.012422360248447204,
+        "rougeL": 0.018518518518518517
+      },
+      "bertscore": {
+        "precision": 0.7805445790290833,
+        "recall": 0.802458643913269,
+        "f1": 0.7913498878479004
+      },
+      "reference_source_note": "Crossref: Artificial Intelligence in Higher Education: Literature Review DOI:10.62438/tunismed.v103i8.5581 | Crossref: ARTIFICIAL INTELLIGENCE IN HIGHER EDUCATION. A LITERATURE REVIEW DOI:10.47743/jopafl-2023-30-09",
+      "candidate_chars": 6374,
+      "reference_chars": 1849
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.05025125628140704,
+        "rouge2": 0.0,
+        "rougeL": 0.035175879396984924
+      },
+      "bertscore": {
+        "precision": 0.7895442843437195,
+        "recall": 0.7996196150779724,
+        "f1": 0.7945500016212463
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 6969,
+      "reference_chars": 2880
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "edu_003",
+      "topic": "Assessment and feedback automation in schools",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.0815347721822542,
+        "rouge2": 0.0,
+        "rougeL": 0.05755395683453237
+      },
+      "bertscore": {
+        "precision": 0.7898389101028442,
+        "recall": 0.800391674041748,
+        "f1": 0.795080304145813
+      },
+      "reference_source_note": "Semantic Scholar: Feedback Assisted by Technology: A Systematic Review of Empirical Research (2025, International Journal of Technology in Education) https://www.semanticscholar.org/paper/292efb4a40bf5d10d4ac8860eadca17292ba7ecb | Semantic Scholar: Mental Models and Educational Technology in STEM-Physics Learning: A Systematic Literature Review (2025, The eurasia proceedings of educational & social sciences) https://www.semanticscholar.org/paper/7ad56ed3892f700e00e6a339903f2f3128cb3a8b",
+      "candidate_chars": 7093,
+      "reference_chars": 2880
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.08133971291866028,
+        "rouge2": 0.005434782608695652,
+        "rougeL": 0.06698564593301436
+      },
+      "bertscore": {
+        "precision": 0.7908709049224854,
+        "recall": 0.8034754991531372,
+        "f1": 0.7971234321594238
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 6985,
+      "reference_chars": 2582
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "edu_004",
+      "topic": "AI literacy curriculum design",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.09549071618037135,
+        "rouge2": 0.006116207951070337,
+        "rougeL": 0.07957559681697612
+      },
+      "bertscore": {
+        "precision": 0.7952176928520203,
+        "recall": 0.8071993589401245,
+        "f1": 0.8011637926101685
+      },
+      "reference_source_note": "Crossref: A systematic review of AI literacy scales DOI:10.1038/s41539-024-00264-4 | Crossref: Learning About AI: A Systematic Review of Reviews on AI Literacy DOI:10.1177/07356331251342081",
+      "candidate_chars": 6186,
+      "reference_chars": 2582
+    },
+    {
+      "system": "flowernet_no_vc_direct",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.06307977736549165,
+        "rouge2": 0.0148975791433892,
+        "rougeL": 0.04793028322440088
+      },
+      "bertscore": {
+        "precision": 0.7913739681243896,
+        "recall": 0.798492431640625,
+        "f1": 0.7949172854423523
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 6859,
+      "reference_chars": 3611
+    },
+    {
+      "system": "flowernet_no_vc_budget20",
+      "topic_id": "edu_005",
+      "topic": "Learning analytics for student support",
+      "status": "ok",
+      "rouge": {
+        "rouge1": 0.04814814814814815,
+        "rouge2": 0.011152416356877323,
+        "rougeL": 0.033333333333333326
+      },
+      "bertscore": {
+        "precision": 0.792336642742157,
+        "recall": 0.798883855342865,
+        "f1": 0.7955967783927917
+      },
+      "reference_source_note": "Crossref: Learning Analytics in Supporting Student Agency: A Systematic Review DOI:10.3390/su151813662 | Crossref: Unpacking student engagement in higher education learning analytics: a systematic review DOI:10.1186/s41239-024-00493-y",
+      "candidate_chars": 7029,
+      "reference_chars": 3611
+    }
+  ],
+  "missing_reference_topic_ids": []
+}

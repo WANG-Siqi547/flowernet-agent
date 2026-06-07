@@ -27,6 +27,7 @@ MAIN_SUMMARY = ROOT / "results" / "week2" / "week2_summary_full.json"
 MAIN_OUTPUTS = ROOT / "results" / "week2" / "week2_benchmark_outputs_full.json"
 NO_VC_SUMMARY = ROOT / "results" / "week2" / "no_vc_15topic_summary.json"
 NO_VC_SMOKE_SUMMARY = ROOT / "results" / "week2" / "no_vc_smoke_summary.json"
+JOURNAL_METRICS = ROOT / "results" / "week2" / "journal_metrics_rouge_bertscore_15topic.json"
 
 EXTERNAL_REPOS = {
     "LongWriter": {
@@ -101,7 +102,7 @@ def draw_score_chart(rows: List[Dict[str, Any]], path: Path) -> None:
     body = font(22)
     small = font(18)
     d.text((55, 35), "Week 2 Feedback Check: Quality vs. Call-Budget Baselines", fill="#0f172a", font=title)
-    d.text((55, 92), "FlowerNet full must win on real metrics; no-VC baselines isolate whether verifier/controller add value beyond extra calls.", fill="#475569", font=body)
+    d.text((55, 92), "No-VC baselines isolate whether verifier/controller add value beyond extra calls; external metrics flag what must be improved and rerun.", fill="#475569", font=body)
     chart_x, chart_y, chart_w, chart_h = 90, 170, 1320, 500
     max_score = max([float(r.get("avg_score", 0) or 0) for r in rows] + [1.0])
     for i in range(6):
@@ -273,6 +274,53 @@ def build() -> Path:
     add_para(doc, "Layer 1 - Automatic metrics: add ROUGE and BERTScore against external references. ROUGE follows Lin (2004), and BERTScore follows Zhang et al. (2020). FreshWiki-style topics should use curated multi-page Wikipedia reference packs, not a single arbitrary page; education topics should use published survey/review papers as references.")
     add_para(doc, "Layer 2 - LLM-as-a-Judge: use GPT-4o-style pairwise and rubric judging, with randomized order, swapped-order bias checks, and blind system names. Judge dimensions should include coverage, factual grounding, citation faithfulness, coherence, non-redundancy, novelty, and usefulness.")
     add_para(doc, "Layer 3 - Human evaluation: optional for KBS/ESWA but valuable. Recommended protocol: 3-5 blinded raters, pairwise comparison plus Likert dimensions, report agreement such as Krippendorff's alpha or Fleiss' kappa, and include examples of disagreements.")
+
+    external = load_json(JOURNAL_METRICS)
+    if isinstance(external, dict) and external.get("summary_by_system"):
+        add_heading(doc, "4.1 Added External ROUGE/BERTScore Results", 2)
+        add_para(doc, str(external.get("metric_note", "")))
+        add_para(doc, "Reference protocol: FreshWiki-style topics use Wikipedia reference packs; education topics use published review/survey papers retrieved from Semantic Scholar/Crossref. The current reference file is saved under references/week2_reference_sets.json for auditability.")
+        add_table(
+            doc,
+            ["System", "N", "BERTScore F1", "ROUGE-L", "ROUGE-2", "ROUGE-1"],
+            [
+                [
+                    r.get("system"),
+                    r.get("n"),
+                    f"{float(r.get('bertscore_f1', 0) or 0):.4f}",
+                    f"{float(r.get('rougeL', 0) or 0):.4f}",
+                    f"{float(r.get('rouge2', 0) or 0):.4f}",
+                    f"{float(r.get('rouge1', 0) or 0):.4f}",
+                ]
+                for r in external.get("summary_by_system", [])
+            ],
+        )
+        systems = {str(r.get("system")): r for r in external.get("summary_by_system", [])}
+        full = systems.get("flowernet_full", {})
+        wo_bandit = systems.get("flowernet_wo_bandit", {})
+        no_vc_budget = systems.get("flowernet_no_vc_budget20", {})
+        add_para(
+            doc,
+            "Current external-metric finding: FlowerNet full is above the no-verifier/no-controller budget20 baseline on ROUGE-2 and ROUGE-L, which supports a real contribution from verification/control beyond call count. However, flowernet_wo_bandit currently leads on BERTScore/ROUGE, so the bandit/controller policy should be inspected for over-repair or reference drift before claiming FlowerNet full is the final best system.",
+        )
+        add_table(
+            doc,
+            ["Comparison", "BERTScore F1", "ROUGE-L", "Interpretation"],
+            [
+                [
+                    "Full vs no-VC budget20",
+                    f"{float(full.get('bertscore_f1', 0) or 0):.4f} vs {float(no_vc_budget.get('bertscore_f1', 0) or 0):.4f}",
+                    f"{float(full.get('rougeL', 0) or 0):.4f} vs {float(no_vc_budget.get('rougeL', 0) or 0):.4f}",
+                    "Full improves lexical overlap but BERTScore gap is small; judge/human layers are needed.",
+                ],
+                [
+                    "Full vs wo-bandit",
+                    f"{float(full.get('bertscore_f1', 0) or 0):.4f} vs {float(wo_bandit.get('bertscore_f1', 0) or 0):.4f}",
+                    f"{float(full.get('rougeL', 0) or 0):.4f} vs {float(wo_bandit.get('rougeL', 0) or 0):.4f}",
+                    "wo-bandit is currently stronger on these external overlap metrics; diagnose bandit strategy before main paper claims.",
+                ],
+            ],
+        )
 
     add_heading(doc, "5. Generation Scale Upgrade", 1)
     add_para(doc, "The current 2x2 setting is useful for engineering iteration but is too short for a long-document paper claim. The next benchmark should use 3x3 or 5x3. A 5x3 setup has 15 subsections; with max 5 attempts this can require up to 75 downstream generation attempts plus outlining, verification, controller, table/reference assembly, and judge calls. That is a compute/cost decision, not a code-only issue.")

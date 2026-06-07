@@ -96,14 +96,6 @@ services:
         value: "1"
       - key: CONTROLLER_LLM_TIMEOUT
         value: "45"
-      - key: CONTROLLER_SENSENOVA_MODEL
-        value: SenseNova-V6-5-Turbo
-      - key: CONTROLLER_SENSENOVA_API_URL
-        value: https://api.sensenova.cn/v1/llm/chat-completions
-      - key: CONTROLLER_SENSENOVA_API_KEY
-        sync: false
-      - key: SENSENOVA_API_KEY
-        sync: false
       - key: CONTROLLER_MIN_SCORE_GAIN
         value: "0.0"
       - key: CONTROLLER_MIN_REL_ANCHOR_GAIN

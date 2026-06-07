@@ -464,7 +464,7 @@ class PofficesTaskStatusRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     task_id: str = ""
-    wait: bool = True
+    wait: bool = False
     wait_seconds: int = Field(default=7200, ge=1, le=7200)
 
 
@@ -2308,7 +2308,7 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                 "post": {
                     "operationId": "getFlowerNetTaskStatus",
                     "summary": "Get FlowerNet generation task status",
-                    "description": "Poll with the task_id returned by createFlowerNetDocument. By default this endpoint waits until the task is completed or failed so Poffices can render the final document in one downstream block.",
+                    "description": "Short-poll with the task_id returned by createFlowerNetDocument. By default this endpoint returns immediately: running/queued responses should be passed into the next poll block; completed responses include the full Markdown document.",
                     "security": security,
                     "requestBody": {
                         "required": True,
@@ -2341,7 +2341,7 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                 "post": {
                     "operationId": "pollAndRenderFlowerNetDocument",
                     "summary": "Poll a FlowerNet task and render the final document",
-                    "description": "Poffices bridge endpoint for the final block. It extracts task_id from nested upstream block output, waits for completion, and returns the complete Markdown document in content/text/result/output fields.",
+                    "description": "Poffices bridge endpoint for repeated poll blocks. It extracts task_id from nested upstream block output and returns immediately. If still queued/running, pass the same response to the next poll block. If completed, content/text/result/output contain the complete Markdown document.",
                     "security": security,
                     "requestBody": {
                         "required": True,
@@ -6746,6 +6746,7 @@ def poffices_poll_render(
     verify_auth(x_api_key=x_api_key, authorization=authorization)
 
     task_id = _extract_task_id_from_payload(payload).strip()
+    wait = _coerce_bool((payload or {}).get("wait"), default=False)
     wait_seconds = int((payload or {}).get("wait_seconds") or 7200)
     if not task_id:
         task_id = _extract_task_id_from_payload(_extract_text_field_from_payload(payload, ("content", "text", "result", "output", "markdown", "document"))).strip()
@@ -6755,7 +6756,7 @@ def poffices_poll_render(
             return _poffices_start_or_reuse_async_task(
                 request=request,
                 req=recovered_req,
-                wait=True,
+                wait=wait,
                 wait_seconds=wait_seconds,
             )
     if not task_id:
@@ -6770,7 +6771,7 @@ def poffices_poll_render(
     return _poffices_wait_for_task_result(
         request=request,
         task_id=task_id,
-        wait=True,
+        wait=wait,
         wait_seconds=wait_seconds,
     )
 
