@@ -9,6 +9,9 @@ import json
 import sys
 from typing import Dict, Any, List
 
+# Prevent pytest from collecting this operational script as a test module.
+__test__ = False
+
 # 配置
 API_BASE_URL = "http://localhost:8010"
 API_PREFIX = "/api/metrics"

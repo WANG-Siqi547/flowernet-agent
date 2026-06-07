@@ -1,0 +1,9 @@
+{
+  "test:key": {
+    "value": {
+      "status": "ok"
+    },
+    "updated_at": 1780797378.5882409,
+    "ttl_seconds": 60
+  }
+}

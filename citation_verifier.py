@@ -195,12 +195,12 @@ class CitationSemanticScorer:
         context_alignment = len(context_overlap) / max(1, len(context_tokens))
         
         # 2. Cross-domain drift detection
-        cross_domain_keywords = {"physics", "quantum", "particle", "laser", "plasma", "superconductor", "材料", "物理"}
-        if title_lower in ["LaFeAsO", "激光等离子体", "超导"]:
-            cross_domain_risk = 1.0
-        else:
-            cross_domain_drift_tokens = title_tokens & cross_domain_keywords
-            cross_domain_risk = min(1.0, len(cross_domain_drift_tokens) / max(1, len(title_tokens)))
+        cross_domain_keywords = {
+            "physics", "quantum", "particle", "laser", "plasma", "superconductor",
+            "材料", "物理", "超导", "等离子体", "lafeaso",
+        }
+        keyword_hits = [kw for kw in cross_domain_keywords if kw in title_lower]
+        cross_domain_risk = min(1.0, len(keyword_hits) / 2.0) if keyword_hits else 0.0
 
         # If external CROSS_DOMAIN_RED_FLAGS present, check title and context for them
         try:
@@ -344,8 +344,9 @@ class CitationVerifier:
         if len(filtered) < CITATION_MIN_REFERENCES and removed:
             logger.warning(f"⚠️ Only {len(filtered)} references after filtering, restoring top removed ones")
             shortage = CITATION_MIN_REFERENCES - len(filtered)
+            restorables = [r for r in removed if "cross-domain risk too high" not in str(r.get("removal_reason", "")).lower()]
             removed_sorted = sorted(
-                removed,
+                restorables,
                 key=lambda x: metrics.get(x.get('url', x.get('href', '')), CitationMetrics(0, 0, 1, 0, False, '')).overall_score,
                 reverse=True
             )
