@@ -153,9 +153,11 @@ outline_generation_lock = threading.Lock()
 outline_task_queue: "queue.Queue[str]" = queue.Queue()
 outline_tasks: Dict[str, Dict[str, Any]] = {}
 outline_tasks_lock = threading.Lock()
-outline_worker_started = False
+outline_worker_count = 0
 OUTLINE_TASK_HARD_TIMEOUT = float(os.getenv("OUTLINE_TASK_HARD_TIMEOUT", "900"))
 OUTLINE_LOCK_WAIT_TIMEOUT = float(os.getenv("OUTLINE_LOCK_WAIT_TIMEOUT", "300"))
+OUTLINE_TASK_WORKERS = max(1, min(4, int(os.getenv("OUTLINE_TASK_WORKERS", "2"))))
+TERMINAL_OUTLINE_STATUSES = {"completed", "failed", "cancelled", "stale"}
 
 
 def _is_transient_outliner_error(message: str) -> bool:
@@ -180,6 +182,10 @@ def _find_outline_task_by_document(document_id: str) -> Optional[str]:
 def _set_outline_task(task_id: str, **updates: Any) -> None:
     with outline_tasks_lock:
         task = outline_tasks.setdefault(task_id, {})
+        current_status = str(task.get("status") or "").lower()
+        incoming_status = str(updates.get("status") or "").lower()
+        if current_status in TERMINAL_OUTLINE_STATUSES and incoming_status and incoming_status != current_status:
+            return
         task.update(updates)
         task["updated_at"] = datetime.now().isoformat()
 
@@ -217,12 +223,19 @@ def _outline_task_worker_loop() -> None:
             with outline_tasks_lock:
                 task = outline_tasks.get(task_id, {})
                 request = task.get("request")
+                status = str(task.get("status") or "").lower()
+            if status in TERMINAL_OUTLINE_STATUSES:
+                continue
             if not isinstance(request, GenerateAndSaveOutlineRequest):
                 _set_outline_task(task_id, status="failed", error="invalid_task_request")
                 continue
 
             _set_outline_task(task_id, status="running", started_at=datetime.now().isoformat())
             result = generate_and_save_outline(request)
+            with outline_tasks_lock:
+                current_status = str(outline_tasks.get(task_id, {}).get("status") or "").lower()
+            if current_status in TERMINAL_OUTLINE_STATUSES:
+                continue
             if isinstance(result, dict) and result.get("success"):
                 _set_outline_task(task_id, status="completed", result=result, completed_at=datetime.now().isoformat())
             else:
@@ -234,26 +247,33 @@ def _outline_task_worker_loop() -> None:
                     completed_at=datetime.now().isoformat(),
                 )
         except Exception as e:
-            _set_outline_task(
-                task_id,
-                status="failed",
-                error=str(e),
-                completed_at=datetime.now().isoformat(),
-            )
+            with outline_tasks_lock:
+                current_status = str(outline_tasks.get(task_id, {}).get("status") or "").lower()
+            if current_status not in TERMINAL_OUTLINE_STATUSES:
+                _set_outline_task(
+                    task_id,
+                    status="failed",
+                    error=str(e),
+                    completed_at=datetime.now().isoformat(),
+                )
         finally:
             outline_task_queue.task_done()
 
 
 def _ensure_outline_worker_started() -> None:
-    global outline_worker_started
-    if outline_worker_started:
+    global outline_worker_count
+    if outline_worker_count >= OUTLINE_TASK_WORKERS:
         return
     with outline_tasks_lock:
-        if outline_worker_started:
-            return
-        worker = threading.Thread(target=_outline_task_worker_loop, daemon=True, name="outline-task-worker")
-        worker.start()
-        outline_worker_started = True
+        while outline_worker_count < OUTLINE_TASK_WORKERS:
+            worker_index = outline_worker_count + 1
+            worker = threading.Thread(
+                target=_outline_task_worker_loop,
+                daemon=True,
+                name=f"outline-task-worker-{worker_index}",
+            )
+            worker.start()
+            outline_worker_count += 1
 
 
 @app.on_event("startup")
@@ -288,7 +308,7 @@ async def startup_event():
         history_manager = HistoryManager(use_database=use_db, db_path=db_path)
         print(f"✅ History Manager 初始化成功")
         _ensure_outline_worker_started()
-        print("✅ Outline async task worker 已启动")
+        print(f"✅ Outline async task workers 已启动: {outline_worker_count}/{OUTLINE_TASK_WORKERS}")
         
         print("=" * 50)
         print("🚀 FlowerNet Outliner 启动成功")
@@ -317,10 +337,38 @@ async def root():
 @app.get("/health")
 async def health():
     """Render 健康检查与外部预热探测。"""
+    _ensure_outline_worker_started()
+    _mark_stale_outline_tasks()
+    status_counts: Dict[str, int] = {}
+    oldest_running_age_seconds = 0.0
+    oldest_queued_age_seconds = 0.0
+    with outline_tasks_lock:
+        for task in outline_tasks.values():
+            status = str(task.get("status") or "unknown")
+            status_counts[status] = status_counts.get(status, 0) + 1
+            if status == "running":
+                oldest_running_age_seconds = max(
+                    oldest_running_age_seconds,
+                    _iso_age_seconds(str(task.get("started_at") or task.get("created_at") or "")),
+                )
+            if status == "queued":
+                oldest_queued_age_seconds = max(
+                    oldest_queued_age_seconds,
+                    _iso_age_seconds(str(task.get("created_at") or "")),
+                )
     return {
         "success": True,
         "service": "FlowerNet Outliner",
         "status": "healthy",
+        "source_version": "2026-06-14-outliner-worker-isolation-v1",
+        "worker_count": outline_worker_count,
+        "configured_workers": OUTLINE_TASK_WORKERS,
+        "queue_size": outline_task_queue.qsize(),
+        "task_counts": status_counts,
+        "hard_timeout_seconds": OUTLINE_TASK_HARD_TIMEOUT,
+        "lock_wait_timeout_seconds": OUTLINE_LOCK_WAIT_TIMEOUT,
+        "oldest_running_age_seconds": round(oldest_running_age_seconds, 2),
+        "oldest_queued_age_seconds": round(oldest_queued_age_seconds, 2),
         "timestamp": datetime.now().isoformat(),
     }
 
