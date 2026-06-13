@@ -1007,7 +1007,11 @@ def _is_bad_outline_label(value: Any) -> bool:
     ]
     if any(re.search(pattern, text, flags=re.I) for pattern in label_artifact_patterns):
         return True
-    if len(text) > 64 and re.search(r"[。！？.!?，,；;]", text):
+    # Academic outline labels often use a colon, e.g. "Mechanisms: A and B".
+    # Reject only labels that look like full pasted sentences or request text.
+    if len(text) > 140 and re.search(r"[。！？.!?，,；;]", text):
+        return True
+    if len(text) > 90 and re.search(r"[。！？.!?]", text):
         return True
     return False
 
