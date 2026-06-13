@@ -152,8 +152,11 @@ document_task_queue: "queue.Queue[str]" = queue.Queue()
 document_tasks: Dict[str, Dict[str, Any]] = {}
 document_tasks_lock = threading.Lock()
 document_worker_started = False
+document_worker_count = 0
 DOCUMENT_TASK_HARD_TIMEOUT = max(120, int(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT", "2400")))
-DOCUMENT_TASK_STALE_SECONDS = max(120, int(os.getenv("DOCUMENT_TASK_STALE_SECONDS", "3000")))
+DOCUMENT_TASK_STALE_SECONDS = max(120, int(os.getenv("DOCUMENT_TASK_STALE_SECONDS", "900")))
+DOCUMENT_TASK_WORKERS = max(1, min(4, int(os.getenv("DOCUMENT_TASK_WORKERS", "2"))))
+DOCUMENT_TASK_HEARTBEAT_SECONDS = max(10.0, float(os.getenv("DOCUMENT_TASK_HEARTBEAT_SECONDS", "30")))
 PROVIDER_DIAGNOSTIC_TIMEOUT = max(3.0, float(os.getenv("PROVIDER_DIAGNOSTIC_TIMEOUT", "20")))
 checkpoint_store = get_checkpoint_store()
 agent_task_queue = get_task_queue("flowernet:generator:tasks")
@@ -231,6 +234,15 @@ def _task_age_seconds(task: Dict[str, Any]) -> float:
         return 0.0
 
 
+def _iso_age_seconds(raw: Any) -> float:
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, (datetime.now() - datetime.fromisoformat(str(raw))).total_seconds())
+    except ValueError:
+        return 0.0
+
+
 def _mark_stale_document_tasks() -> None:
     now = datetime.now().isoformat()
     with document_tasks_lock:
@@ -239,9 +251,13 @@ def _mark_stale_document_tasks() -> None:
             if status not in {"queued", "running"}:
                 continue
             age = _task_age_seconds(task)
-            if age >= DOCUMENT_TASK_STALE_SECONDS:
+            heartbeat_age = _iso_age_seconds(task.get("heartbeat_at") or task.get("updated_at"))
+            stale_limit = DOCUMENT_TASK_STALE_SECONDS
+            if status == "running" and heartbeat_age > 0:
+                stale_limit = min(DOCUMENT_TASK_STALE_SECONDS, max(120, DOCUMENT_TASK_HEARTBEAT_SECONDS * 4))
+            if age >= DOCUMENT_TASK_HARD_TIMEOUT or (age >= stale_limit and heartbeat_age >= stale_limit):
                 task["status"] = "failed"
-                task["error"] = f"document_task_stale_after_{int(age)}s"
+                task["error"] = f"document_task_stale_after_{int(age)}s_no_heartbeat_{int(heartbeat_age)}s"
                 task["completed_at"] = now
                 task["updated_at"] = now
 
@@ -327,19 +343,42 @@ def _document_task_worker_loop() -> None:
             with document_tasks_lock:
                 task = document_tasks.get(task_id, {})
                 request = task.get("request")
+                current_status = str(task.get("status") or "")
+            if current_status in {"failed", "completed"}:
+                continue
             if not isinstance(request, GenerateDocumentRequest):
                 _set_document_task(task_id, status="failed", error="invalid_task_request")
                 continue
             _set_document_task(task_id, status="running", started_at=datetime.now().isoformat())
 
             started_monotonic = time.monotonic()
+            stop_heartbeat = threading.Event()
+
+            def heartbeat_loop() -> None:
+                while not stop_heartbeat.wait(DOCUMENT_TASK_HEARTBEAT_SECONDS):
+                    with document_tasks_lock:
+                        current = str(document_tasks.get(task_id, {}).get("status") or "")
+                    if current in {"failed", "completed"}:
+                        return
+                    _set_document_task(
+                        task_id,
+                        status="running",
+                        heartbeat_at=datetime.now().isoformat(),
+                        runtime_seconds=round(time.monotonic() - started_monotonic, 1),
+                    )
+
+            heartbeat = threading.Thread(target=heartbeat_loop, daemon=True, name=f"document-task-heartbeat-{task_id}")
+            heartbeat.start()
             _set_document_task(
                 task_id,
                 status="running",
                 heartbeat_at=datetime.now().isoformat(),
                 runtime_seconds=0,
             )
-            result = _execute_generate_document(request, use_lock=False)
+            try:
+                result = _execute_generate_document(request, use_lock=False)
+            finally:
+                stop_heartbeat.set()
             runtime_seconds = round(time.monotonic() - started_monotonic, 1)
             if isinstance(result, dict) and result.get("success"):
                 _set_document_task(
@@ -370,14 +409,20 @@ def _document_task_worker_loop() -> None:
 
 
 def _ensure_document_worker_started() -> None:
-    global document_worker_started
-    if document_worker_started:
+    global document_worker_started, document_worker_count
+    if document_worker_started and document_worker_count >= DOCUMENT_TASK_WORKERS:
         return
     with document_tasks_lock:
-        if document_worker_started:
+        if document_worker_started and document_worker_count >= DOCUMENT_TASK_WORKERS:
             return
-        worker = threading.Thread(target=_document_task_worker_loop, daemon=True, name="document-task-worker")
-        worker.start()
+        while document_worker_count < DOCUMENT_TASK_WORKERS:
+            document_worker_count += 1
+            worker = threading.Thread(
+                target=_document_task_worker_loop,
+                daemon=True,
+                name=f"document-task-worker-{document_worker_count}",
+            )
+            worker.start()
         document_worker_started = True
 
 
