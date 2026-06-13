@@ -2613,14 +2613,24 @@ def _coerce_poffices_request_from_payload(payload: Any) -> Optional[PofficesGene
     """
     if not isinstance(payload, dict):
         return None
+    audit_payload = payload.get("flowernet_audit") if isinstance(payload.get("flowernet_audit"), dict) else {}
     query = (
         _extract_text_field_from_payload(payload, ("query", "topic", "REAL_USER_REQUEST", "real_user_request"))
-        or _extract_text_field_from_payload(payload, ("request", "input", "content", "text"))
+        or _extract_text_field_from_payload(audit_payload, ("query", "request_key", "topic"))
+        or _extract_text_field_from_payload(payload, ("request", "input"))
     )
+    if not query:
+        text_candidate = _extract_text_field_from_payload(payload, ("content", "text", "result", "output", "markdown", "document"))
+        if text_candidate and not _extract_task_id_from_payload(text_candidate) and not text_candidate.strip().startswith("{"):
+            query = text_candidate
     if not query or query.startswith("FlowerNet task "):
         return None
-    chapter_count = _extract_int_field_from_payload(payload, ("chapter_count", "chapters", "chapterCount"), 5)
-    subsection_count = _extract_int_field_from_payload(payload, ("subsection_count", "subsection", "subsections", "subsectionCount"), 3)
+    chapter_count = _extract_int_field_from_payload(payload, ("chapter_count", "chapters", "chapterCount"), -1)
+    if chapter_count <= 0:
+        chapter_count = _extract_int_field_from_payload(audit_payload, ("chapter_count", "chapters", "chapterCount"), 5)
+    subsection_count = _extract_int_field_from_payload(payload, ("subsection_count", "subsection", "subsections", "subsectionCount"), -1)
+    if subsection_count <= 0:
+        subsection_count = _extract_int_field_from_payload(audit_payload, ("subsection_count", "subsection", "subsections", "subsectionCount"), 3)
     user_background = _extract_text_field_from_payload(payload, ("user_background", "background"))
     extra_requirements = _extract_text_field_from_payload(payload, ("extra_requirements", "requirements", "extra"))
     try:
@@ -6774,22 +6784,50 @@ def poffices_generate(
 
     incoming_task_id = _extract_task_id_from_payload(req.model_dump()) or _extract_task_id_from_payload(getattr(req, "model_extra", {}) or {})
     if incoming_task_id:
-        return _poffices_wait_for_task_result(
-            request=request,
-            task_id=incoming_task_id,
-            wait=False,
-            wait_seconds=20,
-        )
+        try:
+            return _poffices_wait_for_task_result(
+                request=request,
+                task_id=incoming_task_id,
+                wait=False,
+                wait_seconds=20,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                recovered_payload = req.model_dump()
+                recovered_payload.update(getattr(req, "model_extra", {}) or {})
+                recovered = _poffices_recover_from_missing_task(
+                    request=request,
+                    payload=recovered_payload,
+                    wait=False,
+                    wait_seconds=20,
+                )
+                if recovered is not None:
+                    recovered.setdefault("warning", f"stale_or_unknown_task_id_recovered: {incoming_task_id}")
+                    return recovered
+            raise
 
     normalized_query = (req.query or "").strip()
     query_task_id = _extract_task_id_from_payload(normalized_query)
     if query_task_id:
-        return _poffices_wait_for_task_result(
-            request=request,
-            task_id=query_task_id,
-            wait=False,
-            wait_seconds=20,
-        )
+        try:
+            return _poffices_wait_for_task_result(
+                request=request,
+                task_id=query_task_id,
+                wait=False,
+                wait_seconds=20,
+            )
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                recovered = _poffices_recover_from_missing_task(
+                    request=request,
+                    payload=req.model_dump(),
+                    wait=False,
+                    wait_seconds=20,
+                )
+                if recovered is not None:
+                    recovered.setdefault("warning", f"stale_or_unknown_task_id_recovered: {query_task_id}")
+                    return recovered
+            raise
 
     if len(normalized_query) < 2:
         return {
