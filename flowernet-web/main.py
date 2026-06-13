@@ -2428,9 +2428,9 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                 },
                 "PofficesPollRenderRequest": {
                     "type": "object",
-                    "required": ["task_id"],
                     "properties": {
                         "task_id": {"type": "string", "description": "May be nested inside upstream block output; the endpoint will extract it recursively."},
+                        "query": {"type": "string", "description": "Original user request. Used to recover or start the task if task_id is missing or stale."},
                         "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 7200, "default": 7200},
                     },
                 },
@@ -2856,6 +2856,24 @@ def _poffices_wait_for_task_result(
             }
 
         time.sleep(poll_interval_seconds)
+
+
+def _poffices_recover_from_missing_task(
+    *,
+    request: Request,
+    payload: Dict[str, Any],
+    wait: bool,
+    wait_seconds: int,
+) -> Optional[Dict[str, Any]]:
+    recovered_req = _coerce_poffices_request_from_payload(payload)
+    if recovered_req is None:
+        return None
+    return _poffices_start_or_reuse_async_task(
+        request=request,
+        req=recovered_req,
+        wait=wait,
+        wait_seconds=wait_seconds,
+    )
 
 
 def build_requirements_text(req: GenerateDocRequest) -> str:
@@ -6732,12 +6750,25 @@ def poffices_task_status(
             "message": "缺少 task_id",
         }
 
-    return _poffices_wait_for_task_result(
-        request=request,
-        task_id=task_id,
-        wait=wait,
-        wait_seconds=wait_seconds,
-    )
+    try:
+        return _poffices_wait_for_task_result(
+            request=request,
+            task_id=task_id,
+            wait=wait,
+            wait_seconds=wait_seconds,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            recovered = _poffices_recover_from_missing_task(
+                request=request,
+                payload=payload or {},
+                wait=wait,
+                wait_seconds=wait_seconds,
+            )
+            if recovered is not None:
+                recovered.setdefault("warning", f"stale_or_unknown_task_id_recovered: {task_id}")
+                return recovered
+        raise
 
 
 @app.post("/api/poffices/poll-render")
@@ -6772,12 +6803,25 @@ def poffices_poll_render(
             "message": "缺少 task_id",
         }
 
-    return _poffices_wait_for_task_result(
-        request=request,
-        task_id=task_id,
-        wait=wait,
-        wait_seconds=wait_seconds,
-    )
+    try:
+        return _poffices_wait_for_task_result(
+            request=request,
+            task_id=task_id,
+            wait=wait,
+            wait_seconds=wait_seconds,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            recovered = _poffices_recover_from_missing_task(
+                request=request,
+                payload=payload or {},
+                wait=wait,
+                wait_seconds=wait_seconds,
+            )
+            if recovered is not None:
+                recovered.setdefault("warning", f"stale_or_unknown_task_id_recovered: {task_id}")
+                return recovered
+        raise
 
 
 def _legacy_poffices_task_status(
