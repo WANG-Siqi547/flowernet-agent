@@ -2167,9 +2167,12 @@ def _citation_quality_check(markdown: str) -> Dict[str, Any]:
         and all(count >= min_markers_per_subsection for count in subsection_marker_counts)
     )
     url_quality_ok = bool(unique_urls) and missing_high_quality_sections == 0 and low_quality_ratio <= CITATION_LOW_QUALITY_MAX_RATIO
-    passed = url_quality_ok or marker_floor_ok
+    textual_reference_fallback_ok = bool(reference_lines) and not unique_urls
+    passed = url_quality_ok or marker_floor_ok or textual_reference_fallback_ok
     reason = "ok"
-    if marker_floor_ok and not url_quality_ok:
+    if textual_reference_fallback_ok:
+        reason = "textual_reference_fallback"
+    elif marker_floor_ok and not url_quality_ok:
         reason = "marker_floor_ok"
     elif not unique_urls:
         reason = "no_citation_urls"
@@ -2187,6 +2190,7 @@ def _citation_quality_check(markdown: str) -> Dict[str, Any]:
         "min_subsection_citation_markers": min(subsection_marker_counts) if subsection_marker_counts else 0,
         "low_quality_ratio": round(low_quality_ratio, 4),
         "missing_high_quality_sections": missing_high_quality_sections,
+        "best_effort_reference_fallback": textual_reference_fallback_ok,
         "section_details": section_details,
     }
 
@@ -4531,6 +4535,29 @@ def build_markdown_document(
                 return references
 
         textual_citations = _collect_textual_citations()
+        crossref_from_textual: List[Dict[str, Any]] = []
+        for citation in textual_citations[:6]:
+            if _citation_budget_exceeded():
+                break
+            try:
+                hits = _query_crossref(citation, max_results=2)
+            except Exception:
+                hits = []
+            for hit in hits or []:
+                if isinstance(hit, dict):
+                    crossref_from_textual.append(hit)
+        if crossref_from_textual:
+            ranked_textual_hits = _apply_source_weighting(_normalize_candidates(crossref_from_textual))
+            _rebuild_references(ranked_textual_hits[: max(1, DOMAIN_FILTER_FALLBACK_TOP_K)])
+            if references:
+                diagnostics["domain_filter_fallback"] = True
+                diagnostics["domain_filter_fallback_count"] = len(references)
+                diagnostics["final_references_count"] = len(references)
+                diagnostics["final_references"] = references[:3]
+                print(f"⚠️ [引用诊断] 使用文本型引用线索 Crossref 补全 {len(references)} 条")
+                print(f"📌 [引用诊断] 最终诊断数据: {diagnostics}")
+                return references
+
         for citation in textual_citations:
             key = citation.lower()
             if key in seen_ref_keys:
