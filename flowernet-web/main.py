@@ -253,6 +253,7 @@ POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
 POFFICES_CHECKPOINT_STORE = None
 POFFICES_CHECKPOINT_STORE_LOCK = threading.Lock()
+POFFICES_OUTLINER_RETRY_STALE_SECONDS = int(os.getenv("POFFICES_OUTLINER_RETRY_STALE_SECONDS", "180"))
 RECENT_PIPELINE_SECONDS = deque(maxlen=20)
 RECENT_ITERATION_SECONDS = deque(maxlen=20)
 METRICS_LOCK = threading.Lock()
@@ -395,6 +396,20 @@ def _restore_poffices_task(task_id: str) -> Optional[Dict[str, Any]]:
         return dict(POFFICES_TASKS[task_id])
 
 
+def _poffices_outliner_retry_stale(task: Dict[str, Any]) -> bool:
+    status = str(task.get("status") or "").lower()
+    if status not in {"queued", "running"}:
+        return False
+    text = " ".join(
+        str(task.get(key) or "")
+        for key in ("message", "last_retryable_error", "error")
+    ).lower()
+    if not any(token in text for token in ("outliner", "大纲", "限流", "排队")):
+        return False
+    updated_age = _iso_age_seconds(str(task.get("updated_at") or ""))
+    return updated_age >= max(60, POFFICES_OUTLINER_RETRY_STALE_SECONDS)
+
+
 def _restart_restored_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
     status = str(task.get("status") or "").lower()
     if status not in {"queued", "running"}:
@@ -411,8 +426,10 @@ def _restart_restored_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
         return
     with POFFICES_TASKS_LOCK:
         current = POFFICES_TASKS.setdefault(task_id, dict(task))
-        if current.get("_thread_started"):
+        if current.get("_thread_started") and not _poffices_outliner_retry_stale(current):
             return
+        if current.get("_thread_started"):
+            print(f"[Poffices] ♻️ restarting stale outliner retry task {task_id}", flush=True)
         current["_thread_started"] = True
     try:
         req = PofficesGenerateRequest(**request_payload)
