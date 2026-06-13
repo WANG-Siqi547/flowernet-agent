@@ -160,7 +160,8 @@ class RAGSearchEngine:
                 "reject": [
                     "de-dollarization", "brics", "economy", "economic", "business", "negotiation",
                     "man-powered flight simulator", "aircraft simulator", "software", "finance",
-                    "去美元化", "经济", "商务", "谈判", "金融",
+                    "child abuse", "health sciences", "clinical", "patient", "dental", "forensic",
+                    "去美元化", "经济", "商务", "谈判", "金融", "儿童虐待", "临床", "患者",
                 ],
                 "preferred_domains": [
                     "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "nature.com", "science.org",

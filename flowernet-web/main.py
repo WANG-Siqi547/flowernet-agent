@@ -2581,6 +2581,19 @@ def _extract_text_field_from_payload(value: Any, keys: Tuple[str, ...]) -> str:
     return ""
 
 
+def _payload_contains_task_not_found(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        lowered = value.lower()
+        return "task_id not found" in lowered or ("http 404" in lowered and "task_id" in lowered)
+    if isinstance(value, dict):
+        return any(_payload_contains_task_not_found(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_payload_contains_task_not_found(item) for item in value)
+    return False
+
+
 def _extract_int_field_from_payload(value: Any, keys: Tuple[str, ...], default: int) -> int:
     if isinstance(value, dict):
         for key in keys:
@@ -6898,6 +6911,20 @@ def poffices_task_status(
     task_id = (req.task_id or _extract_task_id_from_payload(payload)).strip()
     wait = _coerce_bool((payload or {}).get("wait"), default=req.wait)
     wait_seconds = int((payload or {}).get("wait_seconds") or req.wait_seconds or 7200)
+    stale_404_payload = _payload_contains_task_not_found(payload)
+
+    if stale_404_payload:
+        recovered_req = _coerce_poffices_request_from_payload(payload)
+        if recovered_req is not None:
+            recovered = _poffices_start_or_reuse_async_task(
+                request=request,
+                req=recovered_req,
+                wait=wait,
+                wait_seconds=wait_seconds,
+            )
+            if task_id:
+                recovered.setdefault("warning", f"stale_or_unknown_task_id_recovered: {task_id}")
+            return recovered
 
     if not task_id:
         recovered_req = _coerce_poffices_request_from_payload(payload)
@@ -6954,6 +6981,21 @@ def poffices_poll_render(
     task_id = _extract_task_id_from_payload(payload).strip()
     wait = _coerce_bool((payload or {}).get("wait"), default=False)
     wait_seconds = int((payload or {}).get("wait_seconds") or 7200)
+    stale_404_payload = _payload_contains_task_not_found(payload)
+
+    if stale_404_payload:
+        recovered_req = _coerce_poffices_request_from_payload(payload)
+        if recovered_req is not None:
+            recovered = _poffices_start_or_reuse_async_task(
+                request=request,
+                req=recovered_req,
+                wait=wait,
+                wait_seconds=wait_seconds,
+            )
+            if task_id:
+                recovered.setdefault("warning", f"stale_or_unknown_task_id_recovered: {task_id}")
+            return recovered
+
     if not task_id:
         task_id = _extract_task_id_from_payload(_extract_text_field_from_payload(payload, ("content", "text", "result", "output", "markdown", "document"))).strip()
     if not task_id:

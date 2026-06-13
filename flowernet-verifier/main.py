@@ -468,6 +468,48 @@ class FlowerNetVerifier:
             "failed_dimensions": failed_dimensions,
         }
 
+    def _quality_soft_pass(
+        self,
+        *,
+        quality_score: float,
+        quality_threshold: float,
+        dimension_check: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Allow high-quality drafts with one tiny dimension miss to pass."""
+        if os.getenv("QUALITY_SOFT_PASS_ENABLED", "true").lower() != "true":
+            return {"passed": False, "reason": "disabled"}
+
+        failed = list(dimension_check.get("failed_dimensions", []) or [])
+        per_dim = dimension_check.get("per_dimension", {}) if isinstance(dimension_check.get("per_dimension"), dict) else {}
+        max_failed = max(0, int(os.getenv("QUALITY_SOFT_PASS_MAX_FAILED_DIMS", "1")))
+        margin = max(0.0, self._safe_float(os.getenv("QUALITY_SOFT_PASS_DIM_MARGIN", "0.035"), 0.035))
+        min_quality = self._safe_float(
+            os.getenv("QUALITY_SOFT_PASS_MIN_SCORE", str(max(0.0, quality_threshold - 0.015))),
+            max(0.0, quality_threshold - 0.015),
+        )
+        allowed_dims_raw = os.getenv(
+            "QUALITY_SOFT_PASS_ALLOWED_DIMS",
+            "logical_coherence,coverage_completeness,structure_clarity,evidence_grounding",
+        )
+        allowed_dims = {x.strip() for x in allowed_dims_raw.split(",") if x.strip()}
+
+        if not failed or len(failed) > max_failed or quality_score < min_quality:
+            return {"passed": False, "reason": "failed_count_or_score"}
+
+        for dim in failed:
+            item = per_dim.get(dim, {}) if isinstance(per_dim.get(dim), dict) else {}
+            dim_margin = self._safe_float(item.get("margin"), -1.0)
+            if dim not in allowed_dims or dim_margin < -margin:
+                return {"passed": False, "reason": f"hard_dimension:{dim}"}
+
+        return {
+            "passed": True,
+            "reason": "minor_dimension_miss",
+            "failed_dimensions": failed,
+            "min_quality": round(min_quality, 4),
+            "margin": round(margin, 4),
+        }
+
     def _quality_weights(self) -> Dict[str, float]:
         weights = {
             "topic_alignment": 0.26,
@@ -1137,7 +1179,12 @@ class FlowerNetVerifier:
         
         # 维度级阈值检查（新的主要判定逻辑）
         dimension_check = self._check_dimension_thresholds(semantic_dimensions)
-        quality_passed = dimension_check["all_passed"]
+        quality_soft_pass = self._quality_soft_pass(
+            quality_score=quality_score,
+            quality_threshold=quality_threshold,
+            dimension_check=dimension_check,
+        )
+        quality_passed = dimension_check["all_passed"] or bool(quality_soft_pass.get("passed", False))
 
         is_passed = (
             (rel['score'] >= rel_threshold)
@@ -1181,6 +1228,8 @@ class FlowerNetVerifier:
             # 维度级检查（新主逻辑）
             "quality_dimensions": semantic_dimensions,
             "quality_dimensions_passed": quality_passed,
+            "quality_dimensions_hard_passed": dimension_check["all_passed"],
+            "quality_soft_pass": quality_soft_pass,
             "quality_dimensions_check": dimension_check["per_dimension"],
             "quality_dimensions_failed": dimension_check["failed_dimensions"],
             "dimension_thresholds": self._quality_dimension_thresholds(),
