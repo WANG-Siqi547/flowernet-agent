@@ -922,9 +922,16 @@ Rules:
         if any(m in text for m in prompt_markers):
             return True
 
-        # 如果 outline 非空且两者互为子串或包含关系，认为可能是大纲
+        # 如果 outline 非空且两者互为子串或包含关系，认为可能是大纲。
+        # Long real drafts often repeat the subsection title/outline in the
+        # opening paragraph; do not reject them just because they contain the
+        # outline text.
         if compact_outline and len(compact_outline) >= 12:
-            if compact_outline in compact_text or compact_text in compact_outline:
+            if len(compact_text) > max(800, len(compact_outline) * 3):
+                return False
+            if compact_text == compact_outline or compact_text in compact_outline:
+                return True
+            if compact_outline in compact_text and len(compact_text) <= len(compact_outline) + 120:
                 return True
 
         # 否则认为不是大纲型内容
