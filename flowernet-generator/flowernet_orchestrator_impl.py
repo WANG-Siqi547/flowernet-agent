@@ -918,7 +918,15 @@ Rules:
             return True
 
         # 明显的提示/模板痕迹
-        prompt_markers = ["请你作为", "要求：", "段落主题", "系统指示", "content_prompt", "subsection"]
+        prompt_markers = [
+            "请你作为",
+            "要求：",
+            "段落主题",
+            "系统指示",
+            "content_prompt",
+            "subsection_id",
+            "subsection_title",
+        ]
         if any(m in text for m in prompt_markers):
             return True
 

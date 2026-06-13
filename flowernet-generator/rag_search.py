@@ -28,7 +28,10 @@ class RAGSearchEngine:
             "section", "subsection", "outline", "prompt", "write", "writing",
             "chapter", "part", "introduction", "conclusion", "要求", "生成", "内容",
             "小节", "章节", "大纲", "写作", "说明", "包括", "以及", "关于",
-            "指南", "方法", "体系", "策略", "研究", "分析", "综述", "实践"
+            "指南", "方法", "体系", "策略", "研究", "分析", "综述", "实践",
+            "flowerbench", "evaluation", "evaluate", "auditability", "redundancy",
+            "claim", "claims", "citation", "citations", "references", "source",
+            "sources", "structure", "completeness", "faithfulness",
         }
         self.include_social_cn = os.getenv("RAG_INCLUDE_SOCIAL_CN", "false").lower() == "true"
         self.include_social_global = os.getenv("RAG_INCLUDE_SOCIAL_GLOBAL", "false").lower() == "true"
@@ -207,6 +210,37 @@ class RAGSearchEngine:
                 "preferred_domains": ["jstor.org", "cambridge.org", "oxfordacademic.com", "tandfonline.com", "springer.com", "doi.org"],
                 "min_alignment": 0.30,
             },
+            "plant_ecology": {
+                "signals": [
+                    "plant", "plants", "flower", "flowers", "floral", "alpine", "botany", "botanical",
+                    "ecology", "phenology", "pollination", "pubescence", "heliotropism", "freeze",
+                    "freezing", "cold", "supercooling", "antifreeze", "saxifraga", "ranunculus",
+                    "植物", "花", "高山", "生态", "物候", "授粉", "耐寒", "抗冻",
+                ],
+                "expansions": [
+                    "alpine plant cold adaptation",
+                    "alpine flowers freeze tolerance",
+                    "heliotropism alpine flowers",
+                    "floral temperature alpine plants",
+                    "plant antifreeze proteins cold tolerance",
+                    "alpine plant phenology pollination",
+                ],
+                "required_any": [
+                    "plant", "plants", "flower", "flowers", "floral", "alpine", "botany", "ecology",
+                    "phenology", "pollination", "freeze", "freezing", "cold", "supercooling",
+                    "antifreeze", "植物", "高山", "生态", "物候", "授粉", "耐寒", "抗冻",
+                ],
+                "reject": [
+                    "machine learning", "artificial intelligence", "cyber", "malware", "network traffic",
+                    "software", "algorithm", "business negotiation", "clinical trial",
+                ],
+                "preferred_domains": [
+                    "doi.org", "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "springer.com",
+                    "sciencedirect.com", "tandfonline.com", "wiley.com", "onlinelibrary.wiley.com",
+                    "academic.oup.com", "oxfordacademic.com", "cambridge.org", "nature.com", "jstor.org",
+                ],
+                "min_alignment": 0.26,
+            },
         }
 
     def _deadline_exceeded(self) -> bool:
@@ -220,36 +254,51 @@ class RAGSearchEngine:
             return 0.0
         return max(0.5, min(float(self.timeout), remaining))
 
+    def _clean_query_for_retrieval(self, query: str, max_chars: int = 220) -> str:
+        text = " ".join(str(query or "").split())
+        if not text:
+            return ""
+        # Drop evaluation/prompt scaffolding that often appears in generated outlines
+        # and can pull retrieval toward unrelated CS/evaluation papers.
+        text = re.sub(r"(?is)\b(?:FlowerBench-LD|Epistemic Ledger|Evidence-SLAM|Adversarial Peer Review|Risk-Sensitive Control|Falsifiability Engine)\b.*", " ", text)
+        text = re.sub(r"(?is)\b(?:ensure|evaluate|evaluation|auditability|citation faithfulness|claim factuality|low redundancy)\b[^.;。！？]*", " ", text)
+        text = re.sub(r"(?is)\b(?:write|include|references?|peer-reviewed|publisher|pubmed|crossref|doi sources?)\b", " ", text)
+        tokens = self._tokenize_query(text)
+        if not tokens:
+            return text[:max_chars]
+        return " ".join(tokens[:14])[:max_chars]
+
     def search(self, query: str) -> Dict[str, Any]:
         try:
             started_at = time.time()
             previous_deadline = self._active_deadline
             self._active_deadline = started_at + self.max_total_seconds
-            query_candidates = self._build_query_candidates(query)
+            retrieval_query = self._clean_query_for_retrieval(query)
+            query_candidates = self._build_query_candidates(retrieval_query or query)
             results: List[Dict[str, Any]] = []
             last_error = "no_results_parsed"
 
             if self.include_academic_sources:
-                academic_results = self._search_academic_sources(query)
+                academic_results = self._search_academic_sources(retrieval_query or query)
                 if academic_results:
-                    ranked_academic = self._rank_results(query, academic_results)
+                    ranked_academic = self._rank_results(retrieval_query or query, academic_results)
                     if len(ranked_academic) >= self.safe_min_results and self._has_usable_results(ranked_academic):
                         return {
                             "success": True,
                             "query": query,
-                            "effective_query": query,
+                            "effective_query": retrieval_query or query,
                             "results": ranked_academic,
                             "search_time": round(time.time() - started_at, 3),
                             "error": None,
                             "source_type": "academic",
                         }
                 if self.safe_backfill_enabled:
-                    safe_ranked = self._safe_backfill_results(query, academic_results)
+                    safe_ranked = self._safe_backfill_results(retrieval_query or query, academic_results)
                     if safe_ranked and self._has_usable_results(safe_ranked):
                         return {
                             "success": True,
                             "query": query,
-                            "effective_query": query,
+                            "effective_query": retrieval_query or query,
                             "results": safe_ranked,
                             "search_time": round(time.time() - started_at, 3),
                             "error": None,
