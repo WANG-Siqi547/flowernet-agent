@@ -138,6 +138,37 @@ class RAGSearchEngine:
                 "preferred_domains": ["sciencedirect.com", "springer.com", "tandfonline.com", "sagepub.com", "wiley.com", "doi.org", "hbr.org"],
                 "min_alignment": 0.28,
             },
+            "biology": {
+                "signals": [
+                    "bird", "birds", "avian", "flight", "evolution", "adaptation", "adaptations",
+                    "skeletal", "muscular", "muscle", "pneumatic", "pneumatization", "sternum",
+                    "pectoral", "pectoralis", "supracoracoideus", "biomechanics", "vertebrate",
+                    "鸟", "鸟类", "飞行", "进化", "适应", "骨骼", "肌肉",
+                ],
+                "expansions": [
+                    "avian flight evolution skeletal adaptation",
+                    "bird flight biomechanics pectoralis supracoracoideus",
+                    "avian skeletal pneumaticity flight evolution",
+                    "vertebrate flight evolution birds morphology",
+                ],
+                "required_any": [
+                    "bird", "birds", "avian", "flight", "evolution", "adaptation", "adaptations",
+                    "skeletal", "muscular", "muscle", "pneumatic", "pneumatization", "sternum",
+                    "pectoralis", "supracoracoideus", "biomechanics", "vertebrate",
+                    "鸟", "鸟类", "飞行", "进化", "适应", "骨骼", "肌肉",
+                ],
+                "reject": [
+                    "de-dollarization", "brics", "economy", "economic", "business", "negotiation",
+                    "man-powered flight simulator", "aircraft simulator", "software", "finance",
+                    "去美元化", "经济", "商务", "谈判", "金融",
+                ],
+                "preferred_domains": [
+                    "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "nature.com", "science.org",
+                    "cell.com", "sciencedirect.com", "springer.com", "wiley.com",
+                    "onlinelibrary.wiley.com", "jstor.org", "doi.org",
+                ],
+                "min_alignment": 0.30,
+            },
             "technology": {
                 "signals": [
                     "算法", "编程", "软件", "机器学习", "人工智能", "可靠性", "测试", "鲁棒性",
@@ -1072,6 +1103,16 @@ class RAGSearchEngine:
                 continue
             domain_score = self._domain_score(domain)
             source_tier = self._source_tier(item, domain)
+            if (
+                profile_name == "generic"
+                and source_tier >= 0.75
+                and topic_alignment < max(min_alignment, 0.34)
+                and semantic_score < 0.30
+            ):
+                # DOI/Crossref metadata can be authoritative but semantically thin.
+                # Keep best-available fallback behavior, but do not let unrelated
+                # high-tier records outrank genuinely relevant sources.
+                continue
             preferred_domains = [str(d).lower() for d in profile.get("preferred_domains", [])] if profile else []
             authority_bonus = 0.12 if any(d in domain for d in preferred_domains) else 0.0
             quality_score = round(min(1.0,
@@ -1097,10 +1138,10 @@ class RAGSearchEngine:
 
         ranked.sort(
             key=lambda x: (
-                float(x.get("source_tier", 0.0)),
                 float(x.get("quality_score", 0.0)),
                 float(x.get("topic_alignment_score", 0.0)),
                 float(x.get("semantic_score", 0.0)),
+                float(x.get("source_tier", 0.0)),
             ),
             reverse=True,
         )
