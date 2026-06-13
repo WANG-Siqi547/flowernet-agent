@@ -236,11 +236,13 @@ async def execute(request: Request):
     key = _task_key(gen_req)
     task_id = _extract_task_id(payload)
 
-    if "FlowerNet Input Parser" in text:
-        return _normalize(gen_req, fallback_status="completed")
-
+    # Downstream block prompts often mention "FlowerNet Input Parser" while
+    # describing their input contract, so the more specific blocks must win.
     if "FlowerNet Start Task Block" in text:
         return _normalize(_start_task(gen_req), fallback_status="queued")
+
+    if "FlowerNet Input Parser" in text and "FlowerNet Poll Render Block" not in text:
+        return _normalize(gen_req, fallback_status="completed")
 
     if not task_id and key in TASK_BY_KEY and TASK_BY_KEY[key] not in STALE_TASK_IDS:
         task_id = TASK_BY_KEY[key]
