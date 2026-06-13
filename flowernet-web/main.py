@@ -2091,12 +2091,15 @@ def _domain_quality(domain: str) -> float:
 
     high_quality_domains = {
         "nature.com", "science.org", "sciencedirect.com", "springer.com", "ieee.org", "acm.org",
-        "arxiv.org", "doi.org", "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org", "nist.gov", "nih.gov",
+        "arxiv.org", "doi.org", "crossref.org", "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov",
+        "who.int", "oecd.org", "un.org", "nist.gov", "nih.gov", "wiley.com", "onlinelibrary.wiley.com",
+        "tandfonline.com", "sagepub.com", "cambridge.org", "cambridge.org", "oxfordacademic.com",
+        "academic.oup.com", "jstor.org", "cell.com", "thelancet.com", "nejm.org", "bmj.com",
         "gov.cn", "edu.cn", "ruc.edu.cn", "tsinghua.edu.cn", "pku.edu.cn", "cass.cn", "moe.gov.cn",
     }
     low_quality_domains = {
         "baike.baidu.com", "zhidao.baidu.com", "tieba.baidu.com", "jingyan.baidu.com",
-        "m.baidu.com", "weibo.com", "t.co", "bit.ly", "tinyurl.com",
+        "m.baidu.com", "weibo.com", "t.co", "bit.ly", "tinyurl.com", "researchgate.net",
     }
 
     if host in low_quality_domains:
@@ -3733,6 +3736,52 @@ def build_markdown_document(
                 return True, f"anchor_hits={anchor_hits[:3]} term_hits={selected_hits[:3]}"
             return False, "weak_domain_overlap"
 
+        def _candidate_host(candidate: Dict[str, Any]) -> str:
+            url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").strip()
+            return (urlparse(url).netloc or str(candidate.get("source") or "")).lower().replace("www.", "")
+
+        def _scholarly_source_tier(candidate: Dict[str, Any]) -> float:
+            """Prefer peer-reviewed / publisher / Crossref/PubMed sources, but keep fallback candidates usable."""
+            host = _candidate_host(candidate)
+            url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").lower()
+            source = str(candidate.get("source") or candidate.get("provider") or "").lower()
+            source_type = str(candidate.get("source_type") or candidate.get("type") or "").lower()
+            container = str(candidate.get("container_title") or candidate.get("journal") or candidate.get("venue") or "").strip()
+            publisher = str(candidate.get("publisher") or "").lower()
+
+            strong_publishers = {
+                "nature.com", "science.org", "cell.com", "sciencedirect.com", "springer.com",
+                "link.springer.com", "wiley.com", "onlinelibrary.wiley.com", "tandfonline.com",
+                "sagepub.com", "cambridge.org", "cambridge.org", "oxfordacademic.com", "academic.oup.com",
+                "jstor.org", "ieee.org", "ieeexplore.ieee.org", "acm.org", "dl.acm.org",
+                "aclweb.org", "openreview.net", "proceedings.neurips.cc", "proceedings.mlr.press",
+                "thelancet.com", "nejm.org", "bmj.com", "cochranelibrary.com",
+            }
+            public_evidence = {
+                "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "nih.gov", "who.int", "oecd.org",
+                "un.org", "worldbank.org", "imf.org", "nber.org", "nist.gov", "eric.ed.gov",
+            }
+            preprint_or_secondary = {"arxiv.org", "biorxiv.org", "medrxiv.org", "ssrn.com", "researchgate.net", "mdpi.com"}
+
+            score = 0.0
+            if "crossref" in source or "doi.org" in host or "doi.org" in url:
+                score += 0.55
+            if host in strong_publishers or any(d in host for d in strong_publishers):
+                score += 0.50
+            if host in public_evidence or any(d in host for d in public_evidence):
+                score += 0.42
+            if source_type in {"journal-article", "proceedings-article", "book-chapter", "book", "report"}:
+                score += 0.22
+            if container:
+                score += 0.12
+            if publisher and any(p in publisher for p in ["elsevier", "springer", "wiley", "sage", "taylor", "cambridge", "oxford", "ieee", "acm"]):
+                score += 0.12
+            if any(d in host for d in preprint_or_secondary):
+                score -= 0.18
+            if host in {"researchgate.net"}:
+                score -= 0.22
+            return max(0.0, min(1.0, score))
+
         def _source_whitelist_weight(candidate: Dict[str, Any]) -> float:
             text = " ".join([
                 str(candidate.get("title") or ""),
@@ -3742,23 +3791,30 @@ def build_markdown_document(
             url = str(candidate.get("href") or candidate.get("url") or candidate.get("link") or "").lower()
 
             domain_whitelist = [
+                "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "crossref.org", "doi.org",
                 "sciencedirect.com", "springer.com", "link.springer.com", "wiley.com", "onlinelibrary.wiley.com",
-                "tandfonline.com", "emerald.com", "jstor.org", "ssrn.com", "doi.org", "cambridge.org", "oxfordacademic.com",
+                "tandfonline.com", "sagepub.com", "emerald.com", "jstor.org", "cambridge.org",
+                "oxfordacademic.com", "academic.oup.com", "nature.com", "science.org", "cell.com",
+                "ieee.org", "ieeexplore.ieee.org", "acm.org", "dl.acm.org", "aclweb.org", "openreview.net",
             ]
             business_terms = [
                 "business", "management", "marketing", "negotiation", "commerce", "economics", "supply chain",
                 "商业", "商务", "管理", "营销", "经济", "谈判", "供应链",
             ]
-            doi_prefix_whitelist = ["10.1287", "10.5465", "10.1111", "10.1177", "10.1080", "10.1002", "10.2139"]
+            doi_prefix_whitelist = [
+                "10.1038", "10.1126", "10.1016", "10.1007", "10.1002", "10.1111", "10.1177",
+                "10.1080", "10.1093", "10.1109", "10.1145", "10.1287", "10.5465",
+            ]
 
             w = 0.0
+            w += 0.45 * _scholarly_source_tier(candidate)
             if any(d in url for d in domain_whitelist):
-                w += 0.35
+                w += 0.25
             if any(t in text for t in business_terms):
-                w += 0.35
+                w += 0.18
             m = re.search(r"10\.\d{4,9}/[^\s]+", url)
             if m and any(m.group(0).lower().startswith(p) for p in doi_prefix_whitelist):
-                w += 0.30
+                w += 0.20
             return min(1.0, w)
 
         def _build_augmented_domain_terms(base_terms: set[str], title_text: str) -> set[str]:
@@ -3814,14 +3870,22 @@ def build_markdown_document(
             weighted = []
             for c in cands or []:
                 cc = dict(c)
+                cc["source_tier"] = _scholarly_source_tier(cc)
                 cc["source_weight"] = _source_whitelist_weight(cc)
                 weighted.append(cc)
-            weighted.sort(key=lambda x: float(x.get("source_weight", 0.0)), reverse=True)
+            weighted.sort(
+                key=lambda x: (
+                    float(x.get("source_tier", 0.0)),
+                    float(x.get("source_weight", 0.0)),
+                    float(x.get("quality_score", 0.0) or x.get("domain_similarity", 0.0) or 0.0),
+                ),
+                reverse=True,
+            )
             if weighted:
                 print(
                     "📌 [引用诊断] SourceWeight Top: " +
                     "; ".join([
-                        f"{str(x.get('title') or '')[:40]}={float(x.get('source_weight', 0.0)):.2f}"
+                        f"{str(x.get('title') or '')[:40]}=tier{float(x.get('source_tier', 0.0)):.2f}/w{float(x.get('source_weight', 0.0)):.2f}"
                         for x in weighted[:3]
                     ])
                 )
@@ -4118,7 +4182,25 @@ def build_markdown_document(
                     title = " ".join(itm.get("title") or [])
                     abstract = itm.get("abstract") or ""
                     url_link = f"https://doi.org/{doi}" if doi else itm.get("URL")
-                    out.append({"href": url_link, "title": title, "body": re.sub(r"<[^>]+>", " ", str(abstract))[:1000]})
+                    container = " ".join(itm.get("container-title") or [])
+                    published = itm.get("published-print") or itm.get("published-online") or itm.get("issued") or {}
+                    year_parts = published.get("date-parts") if isinstance(published, dict) else None
+                    year = ""
+                    if year_parts and isinstance(year_parts, list) and year_parts and isinstance(year_parts[0], list) and year_parts[0]:
+                        year = str(year_parts[0][0])
+                    out.append({
+                        "href": url_link,
+                        "title": title,
+                        "body": re.sub(r"<[^>]+>", " ", str(abstract))[:1000],
+                        "source": "crossref.org",
+                        "provider": "Crossref",
+                        "source_type": itm.get("type") or "",
+                        "container_title": container,
+                        "journal": container,
+                        "publisher": itm.get("publisher") or "",
+                        "year": year,
+                        "doi": doi or "",
+                    })
                     if len(out) >= max_results:
                         break
             except Exception:
@@ -4138,7 +4220,7 @@ def build_markdown_document(
 
             api_key = os.environ.get("SEMANTIC_SCHOLAR_API_KEY") or os.environ.get("S2_API_KEY")
             url = "https://api.semanticscholar.org/graph/v1/paper/search"
-            params = {"query": query, "limit": max_results, "fields": "title,abstract,url,doi,paperId"}
+            params = {"query": query, "limit": max_results, "fields": "title,abstract,url,doi,paperId,venue,year,publicationTypes,journal"}
             headers = {"User-Agent": "FlowerNet/1.0"}
             if api_key:
                 # try both common header forms
@@ -4165,7 +4247,21 @@ def build_markdown_document(
                                 pid = itm.get("paperId")
                                 if pid:
                                     url_link = f"https://www.semanticscholar.org/paper/{pid}"
-                            out.append({"href": url_link, "title": title, "body": abstract[:1000]})
+                            journal = itm.get("journal") if isinstance(itm.get("journal"), dict) else {}
+                            venue = itm.get("venue") or journal.get("name") or ""
+                            pub_types = itm.get("publicationTypes") or []
+                            out.append({
+                                "href": url_link,
+                                "title": title,
+                                "body": abstract[:1000],
+                                "source": "semanticscholar.org",
+                                "provider": "SemanticScholar",
+                                "source_type": ",".join(str(x) for x in pub_types) if isinstance(pub_types, list) else str(pub_types or ""),
+                                "container_title": venue,
+                                "journal": venue,
+                                "year": str(itm.get("year") or ""),
+                                "doi": doi or "",
+                            })
                             if len(out) >= max_results:
                                 break
                         return out
@@ -4226,14 +4322,24 @@ def build_markdown_document(
                     print(f"📌 [引用诊断] 兜底拒绝: {str(c.get('title') or '')[:60]} | 原因={reason}")
                     continue
                 cc = dict(c)
+                cc["source_tier"] = _scholarly_source_tier(cc)
                 cc["source_weight"] = _source_whitelist_weight(cc)
                 # Weighted fallback score: keep domain similarity primary, source quality secondary
-                cc["fallback_score"] = float(cc.get("domain_similarity", 0.0)) + 0.25 * float(cc.get("source_weight", 0.0))
+                cc["fallback_score"] = (
+                    float(cc.get("domain_similarity", 0.0))
+                    + 0.35 * float(cc.get("source_tier", 0.0))
+                    + 0.20 * float(cc.get("source_weight", 0.0))
+                    + 0.10 * float(cc.get("quality_score", 0.0) or 0.0)
+                )
                 gated.append(cc)
 
             ranked = sorted(
                 gated,
-                key=lambda x: float(x.get("fallback_score", 0.0)),
+                key=lambda x: (
+                    float(x.get("fallback_score", 0.0)),
+                    float(x.get("source_tier", 0.0)),
+                    float(x.get("source_weight", 0.0)),
+                ),
                 reverse=True,
             )
             return ranked[: max(0, DOMAIN_FILTER_FALLBACK_TOP_K)]

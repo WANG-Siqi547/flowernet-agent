@@ -38,15 +38,19 @@ class RAGSearchEngine:
         self.safe_backfill_enabled = os.getenv("RAG_SAFE_BACKFILL_ENABLED", "true").lower() == "true"
         self.high_quality_domains = {
             "nature.com", "science.org", "sciencedirect.com", "springer.com", "ieee.org",
-            "acm.org", "arxiv.org", "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org",
+            "acm.org", "arxiv.org", "crossref.org", "pubmed.ncbi.nlm.nih.gov",
+            "ncbi.nlm.nih.gov", "who.int", "oecd.org", "un.org",
             "nist.gov", "nih.gov", "gov.cn", "edu.cn", "ruc.edu.cn", "tsinghua.edu.cn",
-            "pku.edu.cn", "cass.cn", "moe.gov.cn", "researchgate.net", "doi.org",
+            "pku.edu.cn", "cass.cn", "moe.gov.cn", "doi.org",
             "eric.ed.gov", "apa.org", "psycnet.apa.org", "tandfonline.com", "sagepub.com",
-            "frontiersin.org", "mdpi.com", "cambridge.org", "oxfordacademic.com",
+            "frontiersin.org", "cambridge.org", "oxfordacademic.com", "academic.oup.com",
+            "wiley.com", "onlinelibrary.wiley.com", "jstor.org", "cell.com", "thelancet.com",
+            "nejm.org", "bmj.com", "cochranelibrary.com", "aclweb.org", "openreview.net",
+            "proceedings.neurips.cc", "proceedings.mlr.press",
         }
         self.low_quality_domains = {
             "baike.baidu.com", "zhidao.baidu.com", "tieba.baidu.com", "jingyan.baidu.com",
-            "m.baidu.com", "t.co", "bit.ly", "tinyurl.com",
+            "m.baidu.com", "t.co", "bit.ly", "tinyurl.com", "researchgate.net",
         }
         self.social_quality_domains = {
             "zhihu.com", "bilibili.com", "weibo.com", "xiaohongshu.com", "douyin.com",
@@ -128,7 +132,7 @@ class RAGSearchEngine:
                 "expansions": ["business negotiation", "negotiation strategy", "commercial negotiation"],
                 "required_any": ["negotiation", "business", "commercial", "procurement", "谈判", "商务", "商业"],
                 "reject": ["quantum", "protein", "gene", "spectral sequence", "量子", "基因", "蛋白质"],
-                "preferred_domains": ["hbr.org", "ssrn.com", "sciencedirect.com", "springer.com", "doi.org"],
+                "preferred_domains": ["sciencedirect.com", "springer.com", "tandfonline.com", "sagepub.com", "wiley.com", "doi.org", "hbr.org"],
                 "min_alignment": 0.28,
             },
             "technology": {
@@ -168,7 +172,7 @@ class RAGSearchEngine:
                 "expansions": ["legal analysis", "law review", "regulatory framework", "case law"],
                 "required_any": ["law", "legal", "regulation", "court", "contract", "法律", "法规", "司法", "法院", "合同"],
                 "reject": ["clinical trial", "machine learning", "quantum", "临床", "算法", "量子"],
-                "preferred_domains": ["law.cornell.edu", "supreme.justia.com", "ssrn.com", "heinonline.org", "doi.org", "gov.cn", "edu.cn"],
+                "preferred_domains": ["law.cornell.edu", "supreme.justia.com", "heinonline.org", "doi.org", "gov.cn", "edu.cn", "ssrn.com"],
                 "min_alignment": 0.30,
             },
             "finance": {
@@ -176,7 +180,7 @@ class RAGSearchEngine:
                 "expansions": ["financial risk", "investment management", "corporate finance", "banking regulation"],
                 "required_any": ["finance", "financial", "investment", "bank", "risk", "asset", "金融", "投资", "银行", "风险", "资产", "财务"],
                 "reject": ["clinical", "construction", "spectral sequence", "临床", "施工", "量子"],
-                "preferred_domains": ["imf.org", "worldbank.org", "bis.org", "nber.org", "ssrn.com", "sciencedirect.com", "doi.org"],
+                "preferred_domains": ["imf.org", "worldbank.org", "bis.org", "nber.org", "sciencedirect.com", "springer.com", "doi.org", "ssrn.com"],
                 "min_alignment": 0.30,
             },
             "environment": {
@@ -358,11 +362,15 @@ class RAGSearchEngine:
             ])
         if self.include_academic_sources and semantic:
             candidates.extend([
-                f"{semantic} site:arxiv.org",
-                f"{semantic} site:ssrn.com",
-                f"{semantic} site:scholar.google.com",
+                f"{semantic} site:doi.org",
+                f"{semantic} site:pubmed.ncbi.nlm.nih.gov",
                 f"{semantic} site:springer.com",
+                f"{semantic} site:sciencedirect.com",
+                f"{semantic} site:tandfonline.com",
+                f"{semantic} site:wiley.com",
                 f"{semantic} site:ieee.org",
+                f"{semantic} site:acm.org",
+                f"{semantic} site:arxiv.org",
             ])
         dedup: List[str] = []
         seen = set()
@@ -422,21 +430,21 @@ class RAGSearchEngine:
                         if len(results) >= raw_limit:
                             return results
 
-        targeted_domains = ["ssrn.com", "scholar.google.com", "springer.com", "sciencedirect.com"]
+        targeted_domains = ["doi.org", "springer.com", "sciencedirect.com", "tandfonline.com", "wiley.com", "jstor.org"]
         if profile_name == "long_context_llm":
             targeted_domains = ["arxiv.org", "acm.org", "ieee.org", "aclweb.org", "openreview.net", "springer.com"]
         elif profile_name == "education":
-            targeted_domains = ["eric.ed.gov", "apa.org", "tandfonline.com", "sagepub.com", "springer.com"]
+            targeted_domains = ["eric.ed.gov", "apa.org", "tandfonline.com", "sagepub.com", "springer.com", "sciencedirect.com"]
         elif profile_name == "medicine":
-            targeted_domains = ["pubmed.ncbi.nlm.nih.gov", "who.int", "cochranelibrary.com", "bmj.com"]
+            targeted_domains = ["pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "who.int", "cochranelibrary.com", "bmj.com", "thelancet.com"]
         elif profile_name == "law":
-            targeted_domains = ["law.cornell.edu", "ssrn.com", "justia.com", "gov.cn"]
+            targeted_domains = ["law.cornell.edu", "heinonline.org", "justia.com", "gov.cn", "ssrn.com"]
         elif profile_name == "finance":
-            targeted_domains = ["imf.org", "worldbank.org", "bis.org", "nber.org", "ssrn.com"]
+            targeted_domains = ["imf.org", "worldbank.org", "bis.org", "nber.org", "sciencedirect.com", "ssrn.com"]
         elif profile_name == "environment":
             targeted_domains = ["ipcc.ch", "un.org", "oecd.org", "nature.com", "sciencedirect.com"]
         elif profile_name == "social_science":
-            targeted_domains = ["oecd.org", "un.org", "worldbank.org", "sagepub.com", "tandfonline.com"]
+            targeted_domains = ["oecd.org", "un.org", "worldbank.org", "sagepub.com", "tandfonline.com", "sciencedirect.com"]
         elif profile_name == "humanities":
             targeted_domains = ["jstor.org", "cambridge.org", "oxfordacademic.com", "tandfonline.com", "springer.com"]
 
@@ -771,6 +779,8 @@ class RAGSearchEngine:
                     year = str(year_parts[0][0])
 
                 source = str(item.get("container-title", [""])[0] if item.get("container-title") else "").strip()
+                work_type = str(item.get("type") or "").strip()
+                publisher = str(item.get("publisher") or "").strip()
                 summary_bits = []
                 if author_names:
                     summary_bits.append(", ".join(author_names))
@@ -785,6 +795,13 @@ class RAGSearchEngine:
                         "body": " | ".join(summary_bits)[:400],
                         "href": href,
                         "source": "crossref.org",
+                        "provider": "Crossref",
+                        "source_type": work_type,
+                        "container_title": source,
+                        "journal": source,
+                        "publisher": publisher,
+                        "year": year,
+                        "doi": doi,
                     }
                 )
                 if len(results) >= rows:
@@ -906,6 +923,47 @@ class RAGSearchEngine:
             return 0.62
         return 0.5
 
+    def _source_tier(self, item: Dict[str, Any], domain: str) -> float:
+        host = (domain or self._extract_domain(str(item.get("href", "")))).lower().replace("www.", "")
+        href = str(item.get("href") or "").lower()
+        source = str(item.get("source") or item.get("provider") or "").lower()
+        source_type = str(item.get("source_type") or item.get("type") or "").lower()
+        container = str(item.get("container_title") or item.get("journal") or item.get("venue") or "").strip()
+        publisher = str(item.get("publisher") or "").lower()
+
+        strong_publishers = {
+            "nature.com", "science.org", "cell.com", "sciencedirect.com", "springer.com",
+            "link.springer.com", "wiley.com", "onlinelibrary.wiley.com", "tandfonline.com",
+            "sagepub.com", "cambridge.org", "oxfordacademic.com", "academic.oup.com", "jstor.org",
+            "ieee.org", "ieeexplore.ieee.org", "acm.org", "dl.acm.org", "aclweb.org",
+            "openreview.net", "proceedings.neurips.cc", "proceedings.mlr.press", "thelancet.com",
+            "nejm.org", "bmj.com", "cochranelibrary.com",
+        }
+        evidence_indexes = {
+            "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "nih.gov", "eric.ed.gov", "oecd.org",
+            "un.org", "worldbank.org", "imf.org", "nber.org", "nist.gov", "who.int",
+        }
+        preprint_or_secondary = {"arxiv.org", "biorxiv.org", "medrxiv.org", "ssrn.com", "researchgate.net", "mdpi.com"}
+
+        tier = 0.0
+        if "crossref" in source or "doi.org" in host or "doi.org" in href:
+            tier += 0.55
+        if host in strong_publishers or any(d in host for d in strong_publishers):
+            tier += 0.45
+        if host in evidence_indexes or any(d in host for d in evidence_indexes):
+            tier += 0.40
+        if source_type in {"journal-article", "proceedings-article", "book-chapter", "book", "report"}:
+            tier += 0.22
+        if container:
+            tier += 0.12
+        if publisher and any(p in publisher for p in ["elsevier", "springer", "wiley", "sage", "taylor", "cambridge", "oxford", "ieee", "acm"]):
+            tier += 0.12
+        if any(d in host for d in preprint_or_secondary):
+            tier -= 0.16
+        if "researchgate.net" in host:
+            tier -= 0.24
+        return max(0.0, min(1.0, tier))
+
     def _semantic_score(self, query: str, item: Dict[str, Any]) -> float:
         query_tokens = self._tokenize_query(query)
         if not query_tokens:
@@ -964,13 +1022,22 @@ class RAGSearchEngine:
             if profile_name and topic_alignment < min_alignment:
                 continue
             domain_score = self._domain_score(domain)
+            source_tier = self._source_tier(item, domain)
             preferred_domains = [str(d).lower() for d in profile.get("preferred_domains", [])] if profile else []
             authority_bonus = 0.12 if any(d in domain for d in preferred_domains) else 0.0
-            quality_score = round((topic_alignment * 0.50) + (semantic_score * 0.25) + (domain_score * 0.25) + authority_bonus, 4)
+            quality_score = round(min(1.0,
+                (topic_alignment * 0.44)
+                + (semantic_score * 0.20)
+                + (domain_score * 0.18)
+                + (source_tier * 0.18)
+                + authority_bonus),
+                4,
+            )
 
             enriched = dict(item)
             enriched["source"] = enriched.get("source") or domain
             enriched["domain_score"] = round(domain_score, 4)
+            enriched["source_tier"] = round(source_tier, 4)
             enriched["semantic_score"] = round(semantic_score, 4)
             enriched["topic_alignment_score"] = round(topic_alignment, 4)
             enriched["domain_profile"] = profile_name
@@ -981,6 +1048,7 @@ class RAGSearchEngine:
 
         ranked.sort(
             key=lambda x: (
+                float(x.get("source_tier", 0.0)),
                 float(x.get("quality_score", 0.0)),
                 float(x.get("topic_alignment_score", 0.0)),
                 float(x.get("semantic_score", 0.0)),
