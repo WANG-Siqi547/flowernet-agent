@@ -364,6 +364,7 @@ async def health():
         "worker_count": outline_worker_count,
         "configured_workers": OUTLINE_TASK_WORKERS,
         "queue_size": outline_task_queue.qsize(),
+        "generation_lock_locked": outline_generation_lock.locked(),
         "task_counts": status_counts,
         "hard_timeout_seconds": OUTLINE_TASK_HARD_TIMEOUT,
         "lock_wait_timeout_seconds": OUTLINE_LOCK_WAIT_TIMEOUT,

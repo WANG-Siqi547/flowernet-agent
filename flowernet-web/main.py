@@ -254,6 +254,8 @@ POFFICES_TASKS_LOCK = threading.Lock()
 POFFICES_CHECKPOINT_STORE = None
 POFFICES_CHECKPOINT_STORE_LOCK = threading.Lock()
 POFFICES_OUTLINER_RETRY_STALE_SECONDS = int(os.getenv("POFFICES_OUTLINER_RETRY_STALE_SECONDS", "180"))
+POFFICES_RESTART_STALE_SECONDS = int(os.getenv("POFFICES_RESTART_STALE_SECONDS", "180"))
+POFFICES_OUTLINER_RETRY_MAX = int(os.getenv("POFFICES_OUTLINER_RETRY_MAX", "4"))
 RECENT_PIPELINE_SECONDS = deque(maxlen=20)
 RECENT_ITERATION_SECONDS = deque(maxlen=20)
 METRICS_LOCK = threading.Lock()
@@ -410,9 +412,62 @@ def _poffices_outliner_retry_stale(task: Dict[str, Any]) -> bool:
     return updated_age >= max(60, POFFICES_OUTLINER_RETRY_STALE_SECONDS)
 
 
+def _poffices_task_restart_stale(task: Dict[str, Any]) -> bool:
+    status = str(task.get("status") or "").lower()
+    if status not in {"queued", "running"}:
+        return False
+    updated_age = _iso_age_seconds(str(task.get("updated_at") or ""))
+    started_age = _iso_age_seconds(str(task.get("started_at") or task.get("created_at") or ""))
+    return max(updated_age, started_age) >= max(60, POFFICES_RESTART_STALE_SECONDS)
+
+
+def _poffices_task_cancelled(task: Dict[str, Any]) -> bool:
+    return str(task.get("cancel_requested") or "").lower() == "true" or task.get("cancel_requested") is True
+
+
+def _cancel_poffices_task(task_id: str) -> Dict[str, Any]:
+    task = _restore_poffices_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="task_id not found")
+    if str(task.get("status") or "").lower() == "completed":
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": "completed",
+            "task_status": "completed",
+            "message": "任务已完成，无法取消",
+        }
+    _set_poffices_task(
+        task_id,
+        status="failed",
+        task_status="failed",
+        cancel_requested=True,
+        error="task_cancelled",
+        message="任务已取消",
+        completed_at=datetime.now().isoformat(),
+    )
+    return {
+        "success": True,
+        "task_id": task_id,
+        "status": "failed",
+        "task_status": "failed",
+        "message": "任务已取消",
+        "error": "task_cancelled",
+    }
+
+
 def _restart_restored_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
     status = str(task.get("status") or "").lower()
     if status not in {"queued", "running"}:
+        return
+    if _poffices_task_cancelled(task):
+        _set_poffices_task(
+            task_id,
+            status="failed",
+            error="task_cancelled",
+            message="任务已取消",
+            completed_at=datetime.now().isoformat(),
+        )
         return
     request_payload = task.get("request")
     if not isinstance(request_payload, dict):
@@ -426,6 +481,8 @@ def _restart_restored_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
         return
     with POFFICES_TASKS_LOCK:
         current = POFFICES_TASKS.setdefault(task_id, dict(task))
+        if not current.get("_thread_started") and not _poffices_task_restart_stale(current):
+            return
         if current.get("_thread_started") and not _poffices_outliner_retry_stale(current):
             return
         if current.get("_thread_started"):
@@ -483,6 +540,7 @@ class PofficesTaskStatusRequest(BaseModel):
     task_id: str = ""
     wait: bool = False
     wait_seconds: int = Field(default=7200, ge=1, le=7200)
+    cancel: bool = False
 
 
 app = FastAPI(title="FlowerNet Web UI", version="1.0.0")
@@ -2889,6 +2947,8 @@ def _poffices_wait_for_task_result(
             }
 
         if not wait or time.time() >= deadline:
+            started_at = str(last_task.get("started_at") or last_task.get("created_at") or "")
+            elapsed_seconds = round(_iso_age_seconds(started_at), 2) if started_at else None
             return {
                 "success": True,
                 "task_id": task_id,
@@ -2896,6 +2956,12 @@ def _poffices_wait_for_task_result(
                 "task_status": status,
                 "poll_url": str(request.url_for("poffices_task_status")),
                 "message": last_task.get("message", "处理中"),
+                "retry_count": last_task.get("retry_count", 0),
+                "elapsed_seconds": elapsed_seconds,
+                "created_at": last_task.get("created_at"),
+                "started_at": last_task.get("started_at"),
+                "updated_at": last_task.get("updated_at"),
+                "last_retryable_error": last_task.get("last_retryable_error", ""),
                 "content": f"FlowerNet task {task_id} is {status}. Please poll again.",
                 "text": f"FlowerNet task {task_id} is {status}. Please poll again.",
                 "result": f"FlowerNet task {task_id} is {status}. Please poll again.",
@@ -5888,7 +5954,7 @@ def index(request: Request) -> FileResponse:
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok", "service": "flowernet-web", "source_version": "2026-05-26-recovery-complete-v1"}
+    return {"status": "ok", "service": "flowernet-web", "source_version": "2026-06-14-poffices-task-stability-v1"}
 
 
 @app.get("/api/stats")
@@ -6719,6 +6785,11 @@ def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
         build_attempt = 0
 
         while True:
+            current_task = _restore_poffices_task(task_id) or {}
+            if _poffices_task_cancelled(current_task):
+                raise RuntimeError("task_cancelled")
+            if build_attempt >= POFFICES_OUTLINER_RETRY_MAX:
+                raise TimeoutError(f"outliner_retry_exhausted_after_{build_attempt}_attempts")
             build_attempt += 1
             doc_req = GenerateDocRequest(
                 topic=req.query,
@@ -6771,6 +6842,10 @@ def _run_poffices_task(task_id: str, req: PofficesGenerateRequest):
                 )
                 print(f"[Poffices] ⏳ retryable outliner exception for {task_id}; retry in {delay:.1f}s: {detail[:180]}")
                 time.sleep(delay)
+
+        current_task = _restore_poffices_task(task_id) or {}
+        if _poffices_task_cancelled(current_task):
+            raise RuntimeError("task_cancelled")
 
         elapsed = time.time() - start_time
         _record_timeout_metrics(elapsed_seconds=elapsed, result=result)
@@ -6928,6 +7003,7 @@ def poffices_task_status(
     task_id = (req.task_id or _extract_task_id_from_payload(payload)).strip()
     wait = _coerce_bool((payload or {}).get("wait"), default=req.wait)
     wait_seconds = int((payload or {}).get("wait_seconds") or req.wait_seconds or 7200)
+    cancel = _coerce_bool((payload or {}).get("cancel"), default=req.cancel)
     stale_404_payload = _payload_contains_task_not_found(payload)
 
     if stale_404_payload:
@@ -6964,6 +7040,9 @@ def poffices_task_status(
             "error": "task_id not found in Poffices input. Connect FlowerNet Start Task output to Poll Render, or pass task_id explicitly.",
             "message": "缺少 task_id",
         }
+
+    if cancel:
+        return _cancel_poffices_task(task_id)
 
     try:
         return _poffices_wait_for_task_result(
