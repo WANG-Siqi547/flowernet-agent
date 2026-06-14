@@ -104,6 +104,7 @@ class GenerateDocumentRequest(BaseModel):
 
 class GenerateDocumentTaskStatusRequest(BaseModel):
     task_id: str
+    cancel: bool = False
 
 
 class ProviderDiagnosticRequest(BaseModel):
@@ -153,11 +154,16 @@ document_tasks: Dict[str, Dict[str, Any]] = {}
 document_tasks_lock = threading.Lock()
 document_worker_started = False
 document_worker_count = 0
-DOCUMENT_TASK_HARD_TIMEOUT = max(120, int(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT", "2400")))
+DOCUMENT_TASK_HARD_TIMEOUT_CAP = max(300, int(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT_CAP", "1500")))
+DOCUMENT_TASK_HARD_TIMEOUT = min(
+    DOCUMENT_TASK_HARD_TIMEOUT_CAP,
+    max(120, int(os.getenv("DOCUMENT_TASK_HARD_TIMEOUT", "1200"))),
+)
 DOCUMENT_TASK_STALE_SECONDS = max(120, int(os.getenv("DOCUMENT_TASK_STALE_SECONDS", "900")))
 DOCUMENT_TASK_WORKERS = max(1, min(4, int(os.getenv("DOCUMENT_TASK_WORKERS", "2"))))
 DOCUMENT_TASK_HEARTBEAT_SECONDS = max(10.0, float(os.getenv("DOCUMENT_TASK_HEARTBEAT_SECONDS", "30")))
 PROVIDER_DIAGNOSTIC_TIMEOUT = max(3.0, float(os.getenv("PROVIDER_DIAGNOSTIC_TIMEOUT", "20")))
+DOCUMENT_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 checkpoint_store = get_checkpoint_store()
 agent_task_queue = get_task_queue("flowernet:generator:tasks")
 vector_store = get_vector_store()
@@ -215,6 +221,10 @@ def ensure_generator_initialized():
 def _set_document_task(task_id: str, **updates: Any) -> None:
     with document_tasks_lock:
         task = document_tasks.setdefault(task_id, {})
+        current_status = str(task.get("status") or "")
+        next_status = str(updates.get("status") or "")
+        if current_status in DOCUMENT_TERMINAL_STATUSES and next_status not in DOCUMENT_TERMINAL_STATUSES:
+            return
         task.update(updates)
         task["updated_at"] = datetime.now().isoformat()
         checkpoint_payload = {k: v for k, v in task.items() if k != "request"}
@@ -255,7 +265,17 @@ def _mark_stale_document_tasks() -> None:
             stale_limit = DOCUMENT_TASK_STALE_SECONDS
             if status == "running" and heartbeat_age > 0:
                 stale_limit = min(DOCUMENT_TASK_STALE_SECONDS, max(120, DOCUMENT_TASK_HEARTBEAT_SECONDS * 4))
-            if age >= DOCUMENT_TASK_HARD_TIMEOUT or (age >= stale_limit and heartbeat_age >= stale_limit):
+            if bool(task.get("cancel_requested")):
+                task["status"] = "cancelled"
+                task["error"] = "document_task_cancelled"
+                task["completed_at"] = now
+                task["updated_at"] = now
+            elif age >= DOCUMENT_TASK_HARD_TIMEOUT:
+                task["status"] = "failed"
+                task["error"] = f"document_task_hard_timeout_after_{int(age)}s"
+                task["completed_at"] = now
+                task["updated_at"] = now
+            elif age >= stale_limit and heartbeat_age >= stale_limit:
                 task["status"] = "failed"
                 task["error"] = f"document_task_stale_after_{int(age)}s_no_heartbeat_{int(heartbeat_age)}s"
                 task["completed_at"] = now
@@ -380,6 +400,10 @@ def _document_task_worker_loop() -> None:
             finally:
                 stop_heartbeat.set()
             runtime_seconds = round(time.monotonic() - started_monotonic, 1)
+            with document_tasks_lock:
+                terminal_status = str(document_tasks.get(task_id, {}).get("status") or "")
+            if terminal_status in DOCUMENT_TERMINAL_STATUSES:
+                continue
             if isinstance(result, dict) and result.get("success"):
                 _set_document_task(
                     task_id,
@@ -588,7 +612,10 @@ async def health():
     return {
         "status": "healthy" if generator else "degraded",
         "generator_initialized": generator is not None,
-        "source_version": "2026-05-26-chapter-assets-v2",
+        "source_version": "2026-06-14-generator-task-timeout-cancel-v1",
+        "document_task_workers": DOCUMENT_TASK_WORKERS,
+        "document_task_hard_timeout_seconds": DOCUMENT_TASK_HARD_TIMEOUT,
+        "document_task_hard_timeout_cap_seconds": DOCUMENT_TASK_HARD_TIMEOUT_CAP,
     }
 
 
@@ -817,6 +844,47 @@ def _document_task_status_payload(task_id: str) -> Dict[str, Any]:
     return payload
 
 
+def _cancel_document_task(task_id: str) -> Dict[str, Any]:
+    now = datetime.now().isoformat()
+    with document_tasks_lock:
+        task = document_tasks.get(task_id)
+        if not task:
+            checkpoint = checkpoint_store.get(f"generator_task:{task_id}")
+            if checkpoint:
+                payload = dict(checkpoint)
+                payload["success"] = False
+                payload["status"] = "cancelled"
+                payload["error"] = "document_task_cancelled_after_restore"
+                payload["cancel_requested"] = True
+                payload["completed_at"] = now
+                payload["updated_at"] = now
+                try:
+                    checkpoint_store.set(f"generator_task:{task_id}", payload, ttl_seconds=7 * 24 * 3600)
+                except Exception:
+                    pass
+                return payload
+            raise HTTPException(status_code=404, detail=f"未知文档生成任务: {task_id}")
+
+        status = str(task.get("status") or "")
+        if status in DOCUMENT_TERMINAL_STATUSES:
+            payload = {k: v for k, v in task.items() if k != "request"}
+            payload["success"] = status == "completed"
+            return payload
+
+        task["cancel_requested"] = True
+        task["status"] = "cancelled"
+        task["error"] = "document_task_cancelled"
+        task["completed_at"] = now
+        task["updated_at"] = now
+        payload = {k: v for k, v in task.items() if k != "request"}
+    try:
+        checkpoint_store.set(f"generator_task:{task_id}", payload, ttl_seconds=7 * 24 * 3600)
+    except Exception:
+        pass
+    payload["success"] = False
+    return payload
+
+
 @app.get("/generate_document_task/{task_id}")
 def get_generate_document_task_status_get(task_id: str):
     return _document_task_status_payload(task_id)
@@ -824,7 +892,14 @@ def get_generate_document_task_status_get(task_id: str):
 
 @app.post("/generate_document_task/status")
 def get_generate_document_task_status_post(request: GenerateDocumentTaskStatusRequest):
+    if request.cancel:
+        return _cancel_document_task(request.task_id)
     return _document_task_status_payload(request.task_id)
+
+
+@app.post("/generate_document_task/cancel")
+def cancel_generate_document_task(request: GenerateDocumentTaskStatusRequest):
+    return _cancel_document_task(request.task_id)
 
 
 @app.get("/generate_document_tasks/summary")
@@ -846,6 +921,9 @@ def get_generate_document_tasks_summary():
                 "started_at": task.get("started_at"),
                 "completed_at": task.get("completed_at"),
                 "updated_at": task.get("updated_at"),
+                "heartbeat_at": task.get("heartbeat_at"),
+                "runtime_seconds": task.get("runtime_seconds"),
+                "cancel_requested": bool(task.get("cancel_requested")),
                 "error": str(task.get("error") or "")[:300],
             })
     items.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
@@ -856,6 +934,7 @@ def get_generate_document_tasks_summary():
         "checkpoint_store": checkpoint_store.capabilities(),
         "worker_started": document_worker_started,
         "hard_timeout_seconds": DOCUMENT_TASK_HARD_TIMEOUT,
+        "hard_timeout_cap_seconds": DOCUMENT_TASK_HARD_TIMEOUT_CAP,
         "stale_seconds": DOCUMENT_TASK_STALE_SECONDS,
         "counts": counts,
         "tasks": items[:25],
