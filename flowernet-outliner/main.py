@@ -154,7 +154,7 @@ outline_task_queue: "queue.Queue[str]" = queue.Queue()
 outline_tasks: Dict[str, Dict[str, Any]] = {}
 outline_tasks_lock = threading.Lock()
 outline_worker_count = 0
-OUTLINE_TASK_HARD_TIMEOUT = float(os.getenv("OUTLINE_TASK_HARD_TIMEOUT", "900"))
+OUTLINE_TASK_HARD_TIMEOUT = max(1500.0, float(os.getenv("OUTLINE_TASK_HARD_TIMEOUT", "1500")))
 OUTLINE_LOCK_WAIT_TIMEOUT = float(os.getenv("OUTLINE_LOCK_WAIT_TIMEOUT", "300"))
 OUTLINE_TASK_WORKERS = max(1, min(4, int(os.getenv("OUTLINE_TASK_WORKERS", "2"))))
 OUTLINE_TASK_HEARTBEAT_SECONDS = max(5.0, float(os.getenv("OUTLINE_TASK_HEARTBEAT_SECONDS", "15")))
@@ -394,12 +394,20 @@ async def health():
         "success": True,
         "service": "FlowerNet Outliner",
         "status": "healthy",
-        "source_version": "2026-06-14-outliner-remote-queue-heartbeat-v1",
+        "source_version": "2026-06-14-outliner-remote-provider-hardening-v1",
         "worker_count": outline_worker_count,
         "configured_workers": OUTLINE_TASK_WORKERS,
         "queue_size": outline_task_queue.qsize(),
         "generation_lock_locked": outline_generation_lock.locked(),
         "task_counts": status_counts,
+        "provider_chain_env": os.getenv("OUTLINER_PROVIDER_CHAIN", ""),
+        "configured_provider_keys": {
+            "azure": bool(os.getenv("OUTLINER_AZURE_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY")),
+            "deepseek": bool(os.getenv("OUTLINER_DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")),
+            "sensenova": bool(os.getenv("OUTLINER_SENSENOVA_API_KEY") or os.getenv("SENSENOVA_API_KEY")),
+            "dashscope": bool(os.getenv("OUTLINER_DASHSCOPE_API_KEY") or os.getenv("DASHSCOPE_API_KEY")),
+            "openrouter": bool(os.getenv("OPENROUTER_API_KEY")),
+        },
         "hard_timeout_seconds": OUTLINE_TASK_HARD_TIMEOUT,
         "lock_wait_timeout_seconds": OUTLINE_LOCK_WAIT_TIMEOUT,
         "heartbeat_seconds": OUTLINE_TASK_HEARTBEAT_SECONDS,

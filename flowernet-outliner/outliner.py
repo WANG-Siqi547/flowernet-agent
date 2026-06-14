@@ -78,7 +78,6 @@ class FlowerNetOutliner:
         for candidate in parsed_chain:
             if candidate in allowed_providers and candidate not in normalized_chain:
                 normalized_chain.append(candidate)
-        self.provider_chain = normalized_chain or ["deepseek"]
 
         self.model = model
         self.azure_model = os.getenv("OUTLINER_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -120,6 +119,26 @@ class FlowerNetOutliner:
         self.openrouter_api_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1/chat/completions").rstrip("/")
         self.openrouter_referrer = os.getenv("OPENROUTER_HTTP_REFERER", os.getenv("PUBLIC_BASE_URL", "https://flowernet-web.onrender.com"))
         self.openrouter_app_name = os.getenv("OPENROUTER_APP_NAME", "FlowerNet")
+        configured_provider_order = [
+            ("azure", bool(self.azure_api_key and self.azure_api_base and self.azure_deployment_name)),
+            ("deepseek", bool(self.deepseek_api_key)),
+            ("sensenova", bool(self.sensenova_api_key)),
+            ("dashscope", bool(self.dashscope_api_key)),
+            ("openrouter", bool(self.openrouter_api_key)),
+        ]
+        configured_remote_providers = [
+            provider_name
+            for provider_name, is_configured in configured_provider_order
+            if is_configured and provider_name != "deepseek"
+        ]
+        provider_chain: List[str] = []
+        for provider_name in configured_remote_providers + normalized_chain:
+            if provider_name in allowed_providers and provider_name not in provider_chain:
+                provider_chain.append(provider_name)
+        for provider_name, is_configured in configured_provider_order:
+            if is_configured and provider_name not in provider_chain:
+                provider_chain.append(provider_name)
+        self.provider_chain = provider_chain or normalized_chain or ["deepseek"]
 
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434').rstrip('/')
         self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
