@@ -1278,11 +1278,14 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
             if "HTTP 429" not in detail and "Too Many Requests" not in detail:
                 raise
             if start_attempt >= start_attempts or time.time() >= start_deadline:
-                print("[Web] ⚠️ Outliner task start repeatedly hit 429; trying in-process real outline generation")
-                local_resp = _call_inprocess_outliner_generate(payload, reason=last_start_error[:500])
-                if isinstance(local_resp, dict) and local_resp.get("success"):
-                    return local_resp
-                return _build_local_outline_response(payload, reason=f"{last_start_error[:240]} | local={local_resp}")
+                print("[Web] ⚠️ Outliner task start repeatedly hit 429; remote-only mode will retry at task level")
+                return {
+                    "success": False,
+                    "error": "outliner_task_start_rate_limited",
+                    "detail": last_start_error[:1000],
+                    "retryable": True,
+                    "remote_only": True,
+                }
             delay = min(
                 DOWNSTREAM_MAX_BACKOFF,
                 max(DOWNSTREAM_OUTLINER_MIN_DELAY_429, OUTLINER_TASK_START_BACKOFF * start_attempt),
@@ -1325,11 +1328,12 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
                         "task_id": task_id,
                     }
                 started_at = str(status_body.get("started_at") or "")
+                heartbeat_at = str(status_body.get("heartbeat_at") or "")
                 updated_at = str(status_body.get("updated_at") or "")
                 if status in {"queued", "running"}:
                     last_status = status_body
-                    if started_at or updated_at:
-                        heartbeat_age = _iso_age_seconds(updated_at or started_at)
+                    if started_at or heartbeat_at or updated_at:
+                        heartbeat_age = _iso_age_seconds(heartbeat_at or updated_at or started_at)
                         run_age = _iso_age_seconds(started_at) if started_at else 0.0
                         if heartbeat_age > 240 and run_age > 300:
                             return {
@@ -1344,20 +1348,13 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
         time.sleep(min(8.0, sleep_seconds))
         sleep_seconds = min(8.0, sleep_seconds * 1.3)
 
-    local_timeout_resp = _call_inprocess_outliner_generate(
-        payload,
-        reason=f"remote outline task timeout: task_id={task_id}; last_status={last_status}",
-    )
-    if isinstance(local_timeout_resp, dict) and local_timeout_resp.get("success"):
-        return local_timeout_resp
-
     return {
         "success": False,
         "error": f"outliner_task_timeout after {poll_timeout}s",
         "task_id": task_id,
         "last_status": last_status,
         "retryable": True,
-        "local_fallback_error": local_timeout_resp,
+        "remote_only": True,
     }
 
 
@@ -5954,7 +5951,7 @@ def index(request: Request) -> FileResponse:
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok", "service": "flowernet-web", "source_version": "2026-06-14-poffices-task-stability-v1"}
+    return {"status": "ok", "service": "flowernet-web", "source_version": "2026-06-14-poffices-remote-outliner-only-v1"}
 
 
 @app.get("/api/stats")

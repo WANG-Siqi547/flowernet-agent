@@ -124,9 +124,9 @@ services:
       - key: PORT
         value: 8003
       - key: OUTLINER_PROVIDER
-        value: deepseek
+        value: azure
       - key: OUTLINER_PROVIDER_CHAIN
-        value: deepseek
+        value: azure,deepseek,sensenova,dashscope,openrouter
       - key: OUTLINER_MODEL
         value: deepseek-v4-flash
       - key: OUTLINER_OPENROUTER_MODEL
@@ -232,15 +232,19 @@ services:
       - key: OUTLINER_SERIALIZE_TASKS
         value: "true"
       - key: OUTLINER_TASK_WAIT_TIMEOUT
-        value: "60"
+        value: "0"
       - key: OUTLINE_LOCK_WAIT_TIMEOUT
-        value: "60"
+        value: "0"
+      - key: OUTLINE_TASK_WORKERS
+        value: "1"
       - key: OUTLINE_TASK_HARD_TIMEOUT
-        value: "420"
+        value: "1500"
+      - key: OUTLINE_TASK_HEARTBEAT_SECONDS
+        value: "15"
       - key: OUTLINER_FLOW_RETRIES
-        value: "2"
+        value: "4"
       - key: OUTLINER_FLOW_BACKOFF
-        value: "1.5"
+        value: "4.0"
       - key: USE_DATABASE
         value: "true"
       - key: DATABASE_PATH
@@ -510,9 +514,9 @@ services:
       - key: OUTLINER_TASK_START_MAX_WAIT
         value: "900"
       - key: WEB_INPROCESS_OUTLINER_FALLBACK
-        value: "true"
+        value: "false"
       - key: WEB_OUTLINER_PROVIDER_CHAIN
-        value: deepseek
+        value: azure,deepseek,sensenova,dashscope,openrouter
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
       - key: MIN_REFERENCES_PER_SUBSECTION

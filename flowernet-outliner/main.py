@@ -157,6 +157,7 @@ outline_worker_count = 0
 OUTLINE_TASK_HARD_TIMEOUT = float(os.getenv("OUTLINE_TASK_HARD_TIMEOUT", "900"))
 OUTLINE_LOCK_WAIT_TIMEOUT = float(os.getenv("OUTLINE_LOCK_WAIT_TIMEOUT", "300"))
 OUTLINE_TASK_WORKERS = max(1, min(4, int(os.getenv("OUTLINE_TASK_WORKERS", "2"))))
+OUTLINE_TASK_HEARTBEAT_SECONDS = max(5.0, float(os.getenv("OUTLINE_TASK_HEARTBEAT_SECONDS", "15")))
 TERMINAL_OUTLINE_STATUSES = {"completed", "failed", "cancelled", "stale"}
 
 
@@ -176,6 +177,13 @@ def _find_outline_task_by_document(document_id: str) -> Optional[str]:
         for task_id, task in outline_tasks.items():
             if task.get("document_id") == document_id and task.get("status") in {"queued", "running", "completed"}:
                 return task_id
+    return None
+
+
+def _find_outline_task_by_document_locked(document_id: str) -> Optional[str]:
+    for task_id, task in outline_tasks.items():
+        if task.get("document_id") == document_id and task.get("status") in {"queued", "running", "completed"}:
+            return task_id
     return None
 
 
@@ -216,9 +224,31 @@ def _mark_stale_outline_tasks() -> None:
                 task["updated_at"] = now
 
 
+def _start_outline_task_heartbeat(task_id: str) -> threading.Event:
+    stop_event = threading.Event()
+
+    def heartbeat_loop() -> None:
+        while not stop_event.wait(OUTLINE_TASK_HEARTBEAT_SECONDS):
+            with outline_tasks_lock:
+                task = outline_tasks.get(task_id)
+                if not task or task.get("status") not in {"queued", "running"}:
+                    return
+                now = datetime.now().isoformat()
+                task["heartbeat_at"] = now
+                task["updated_at"] = now
+
+    threading.Thread(
+        target=heartbeat_loop,
+        daemon=True,
+        name=f"outline-task-heartbeat-{task_id}",
+    ).start()
+    return stop_event
+
+
 def _outline_task_worker_loop() -> None:
     while True:
         task_id = outline_task_queue.get()
+        heartbeat_stop: Optional[threading.Event] = None
         try:
             with outline_tasks_lock:
                 task = outline_tasks.get(task_id, {})
@@ -230,7 +260,9 @@ def _outline_task_worker_loop() -> None:
                 _set_outline_task(task_id, status="failed", error="invalid_task_request")
                 continue
 
-            _set_outline_task(task_id, status="running", started_at=datetime.now().isoformat())
+            now = datetime.now().isoformat()
+            _set_outline_task(task_id, status="running", started_at=now, heartbeat_at=now)
+            heartbeat_stop = _start_outline_task_heartbeat(task_id)
             result = generate_and_save_outline(request)
             with outline_tasks_lock:
                 current_status = str(outline_tasks.get(task_id, {}).get("status") or "").lower()
@@ -257,6 +289,8 @@ def _outline_task_worker_loop() -> None:
                     completed_at=datetime.now().isoformat(),
                 )
         finally:
+            if heartbeat_stop is not None:
+                heartbeat_stop.set()
             outline_task_queue.task_done()
 
 
@@ -360,7 +394,7 @@ async def health():
         "success": True,
         "service": "FlowerNet Outliner",
         "status": "healthy",
-        "source_version": "2026-06-14-outliner-worker-isolation-v1",
+        "source_version": "2026-06-14-outliner-remote-queue-heartbeat-v1",
         "worker_count": outline_worker_count,
         "configured_workers": OUTLINE_TASK_WORKERS,
         "queue_size": outline_task_queue.qsize(),
@@ -368,6 +402,7 @@ async def health():
         "task_counts": status_counts,
         "hard_timeout_seconds": OUTLINE_TASK_HARD_TIMEOUT,
         "lock_wait_timeout_seconds": OUTLINE_LOCK_WAIT_TIMEOUT,
+        "heartbeat_seconds": OUTLINE_TASK_HEARTBEAT_SECONDS,
         "oldest_running_age_seconds": round(oldest_running_age_seconds, 2),
         "oldest_queued_age_seconds": round(oldest_queued_age_seconds, 2),
         "timestamp": datetime.now().isoformat(),
@@ -976,7 +1011,35 @@ def start_outline_generation_task(request: GenerateAndSaveOutlineRequest):
     """Queue outline generation and return immediately to avoid Render request 429s."""
     _ensure_outline_worker_started()
     _mark_stale_outline_tasks()
-    existing_task_id = _find_outline_task_by_document(request.document_id)
+    with outline_tasks_lock:
+        existing_task_id = _find_outline_task_by_document_locked(request.document_id)
+        if not existing_task_id:
+            task_id = f"outline_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(outline_tasks) + 1}"
+            outline_tasks[task_id] = {
+                "task_id": task_id,
+                "document_id": request.document_id,
+                "request": request,
+                "status": "queued",
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+            }
+            existing_task_id = task_id
+            should_enqueue = True
+        else:
+            should_enqueue = False
+        existing = dict(outline_tasks.get(existing_task_id, {}))
+
+    if should_enqueue:
+        outline_task_queue.put(existing_task_id)
+        return {
+            "success": True,
+            "task_id": existing_task_id,
+            "document_id": request.document_id,
+            "status": "queued",
+            "queued": True,
+            "message": "Outline task queued.",
+        }
+
     if existing_task_id:
         with outline_tasks_lock:
             existing = dict(outline_tasks.get(existing_task_id, {}))
@@ -988,26 +1051,6 @@ def start_outline_generation_task(request: GenerateAndSaveOutlineRequest):
             "queued": existing.get("status") in {"queued", "running"},
             "message": "Outline task already exists for this document_id.",
         }
-
-    task_id = f"outline_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{len(outline_tasks) + 1}"
-    with outline_tasks_lock:
-        outline_tasks[task_id] = {
-            "task_id": task_id,
-            "document_id": request.document_id,
-            "request": request,
-            "status": "queued",
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-        }
-    outline_task_queue.put(task_id)
-    return {
-        "success": True,
-        "task_id": task_id,
-        "document_id": request.document_id,
-        "status": "queued",
-        "queued": True,
-        "message": "Outline task queued.",
-    }
 
 
 @app.get("/outline/task-status/{task_id}")
