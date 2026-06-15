@@ -540,8 +540,8 @@ class PofficesTaskStatusRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     task_id: str = ""
-    wait: bool = False
-    wait_seconds: int = Field(default=7200, ge=1, le=7200)
+    wait: bool = True
+    wait_seconds: int = Field(default=POFFICES_POLL_WAIT_SECONDS, ge=1, le=7200)
     cancel: bool = False
 
 
@@ -2393,7 +2393,7 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                 "post": {
                     "operationId": "getFlowerNetTaskStatus",
                     "summary": "Get FlowerNet generation task status",
-                    "description": "Short-poll with the task_id returned by createFlowerNetDocument. By default this endpoint returns immediately: running/queued responses should be passed into the next poll block; completed responses include the full Markdown document.",
+                    "description": f"Long-poll with the task_id returned by createFlowerNetDocument. By default this endpoint waits up to {POFFICES_POLL_WAIT_SECONDS} seconds before returning a running/queued response, so repeated Poffices poll blocks keep the generation open long enough for FlowerNet to finish. Completed responses include the full Markdown document.",
                     "security": security,
                     "requestBody": {
                         "required": True,
@@ -2426,7 +2426,7 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                 "post": {
                     "operationId": "pollAndRenderFlowerNetDocument",
                     "summary": "Poll a FlowerNet task and render the final document",
-                    "description": "Poffices bridge endpoint for repeated poll blocks. It extracts task_id from nested upstream block output and returns immediately. If still queued/running, pass the same response to the next poll block. If completed, content/text/result/output contain the complete Markdown document.",
+                    "description": f"Poffices bridge endpoint for repeated poll blocks. It extracts task_id from nested upstream block output and waits up to {POFFICES_POLL_WAIT_SECONDS} seconds by default before returning a running/queued response. If completed, content/text/result/output contain the complete Markdown document.",
                     "security": security,
                     "requestBody": {
                         "required": True,
@@ -2504,7 +2504,7 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                     "properties": {
                         "task_id": {"type": "string"},
                         "wait": {"type": "boolean", "default": True},
-                        "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 7200, "default": 7200},
+                        "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 7200, "default": POFFICES_POLL_WAIT_SECONDS},
                     },
                 },
                 "PofficesPollRenderRequest": {
@@ -2512,7 +2512,8 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
                     "properties": {
                         "task_id": {"type": "string", "description": "May be nested inside upstream block output; the endpoint will extract it recursively."},
                         "query": {"type": "string", "description": "Original user request. Used to recover or start the task if task_id is missing or stale."},
-                        "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 7200, "default": 7200},
+                        "wait": {"type": "boolean", "default": True},
+                        "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 7200, "default": POFFICES_POLL_WAIT_SECONDS},
                     },
                 },
                 "DownloadDocxRequest": {
@@ -2894,7 +2895,7 @@ def _poffices_wait_for_task_result(
     request: Request,
     task_id: str,
     wait: bool = True,
-    wait_seconds: int = 7200,
+    wait_seconds: int = POFFICES_POLL_WAIT_SECONDS,
     poll_interval_seconds: float = POFFICES_POLL_INTERVAL_SECONDS,
 ) -> Dict[str, Any]:
     deadline = time.time() + max(1, int(wait_seconds))
@@ -7001,7 +7002,7 @@ def poffices_task_status(
     req = PofficesTaskStatusRequest.model_validate(payload or {})
     task_id = (req.task_id or _extract_task_id_from_payload(payload)).strip()
     wait = _coerce_bool((payload or {}).get("wait"), default=req.wait)
-    wait_seconds = int((payload or {}).get("wait_seconds") or req.wait_seconds or 7200)
+    wait_seconds = int((payload or {}).get("wait_seconds") or req.wait_seconds or POFFICES_POLL_WAIT_SECONDS)
     cancel = _coerce_bool((payload or {}).get("cancel"), default=req.cancel)
     stale_404_payload = _payload_contains_task_not_found(payload)
 
