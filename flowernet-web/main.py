@@ -2584,12 +2584,13 @@ def _build_poffices_openapi(request: Request) -> Dict[str, Any]:
     }
 
 
-def _build_poffices_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
+def _build_poffices_result(request: Request, result: Dict[str, Any], task_id: str = "") -> Dict[str, Any]:
     download_url = _build_download_url(request)
     content = result.get("content", "") or result.get("markdown", "") or result.get("document", "")
     title = result.get("title", "") or "FlowerNet Document"
     return {
         "success": True,
+        "task_id": task_id or result.get("task_id", ""),
         "task_status": "completed",
         "status": "completed",
         "document_id": result.get("document_id", ""),
@@ -2914,12 +2915,12 @@ def _poffices_wait_for_task_result(
 
         last_task = task
         if status == "completed":
-            return _build_poffices_result(request=request, result=task.get("result", {}))
+            return _build_poffices_result(request=request, result=task.get("result", {}), task_id=task_id)
 
         if status == "failed":
             task_result = _extract_renderable_result_from_failed_task(task)
             if task_result is not None:
-                rendered = _build_poffices_result(request=request, result=task_result)
+                rendered = _build_poffices_result(request=request, result=task_result, task_id=task_id)
                 rendered.update(
                     {
                         "success": True,
