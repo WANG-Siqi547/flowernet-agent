@@ -124,9 +124,13 @@ services:
       - key: PORT
         value: 8003
       - key: OUTLINER_PROVIDER
-        value: azure
+        value: deepseek
       - key: OUTLINER_PROVIDER_CHAIN
-        value: azure,deepseek,sensenova,dashscope,openrouter
+        value: deepseek
+      - key: OUTLINER_FORCE_DEEPSEEK_ON_RENDER
+        value: "true"
+      - key: OUTLINER_DETAIL_LLM_ENABLED
+        value: "false"
       - key: OUTLINER_MODEL
         value: deepseek-v4-flash
       - key: OUTLINER_OPENROUTER_MODEL
@@ -268,6 +272,8 @@ services:
         value: deepseek
       - key: GENERATOR_PROVIDER_CHAIN
         value: deepseek
+      - key: GENERATOR_FORCE_DEEPSEEK_ON_RENDER
+        value: "true"
       - key: GENERATOR_MODEL
         value: deepseek-v4-flash
       - key: GENERATOR_OPENROUTER_MODEL
@@ -516,7 +522,7 @@ services:
       - key: WEB_INPROCESS_OUTLINER_FALLBACK
         value: "false"
       - key: WEB_OUTLINER_PROVIDER_CHAIN
-        value: azure,deepseek,sensenova,dashscope,openrouter
+        value: deepseek
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
       - key: MIN_REFERENCES_PER_SUBSECTION

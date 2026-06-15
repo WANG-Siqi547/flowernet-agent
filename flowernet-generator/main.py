@@ -213,8 +213,8 @@ def ensure_generator_initialized():
         if generator is not None:
             return generator
         return init_generator(
-            provider=os.getenv("GENERATOR_PROVIDER", "deepseek"),
-            model=os.getenv("GENERATOR_MODEL", None),
+            provider=os.getenv("GENERATOR_PROVIDER_CHAIN", "").strip() or os.getenv("GENERATOR_PROVIDER", "deepseek"),
+            model=os.getenv("GENERATOR_MODEL", "deepseek-v4-flash"),
         )
 
 
@@ -505,9 +505,9 @@ def get_orchestrator():
         provider = (
             os.getenv('GENERATOR_PROVIDER_CHAIN', '').strip()
             or os.getenv('GENERATOR_PROVIDER', '').strip()
-            or 'sensenova,azure,gemini,dashscope,openrouter,ollama'
+            or 'deepseek'
         )
-        model = os.getenv('GENERATOR_MODEL', None)
+        model = os.getenv('GENERATOR_MODEL', 'deepseek-v4-flash')
         local_gen = FlowerNetGenerator(provider=provider, model=model)
         orchestrator._local_generator = local_gen
         print(f"✅ Orchestrator 已配置本地 Generator（provider={provider}, model={model}）")
@@ -552,9 +552,9 @@ async def startup_event():
     provider = (
         os.getenv('GENERATOR_PROVIDER_CHAIN', '').strip()
         or os.getenv('GENERATOR_PROVIDER', '').strip()
-        or 'sensenova,azure,gemini,dashscope,openrouter,ollama'
+        or 'deepseek'
     )
-    model = os.getenv('GENERATOR_MODEL', None)
+    model = os.getenv('GENERATOR_MODEL', 'deepseek-v4-flash')
     ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
     preload_on_startup = os.getenv('GENERATOR_PRELOAD_ON_STARTUP', 'false').lower() == 'true'
     

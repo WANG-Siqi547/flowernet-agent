@@ -94,6 +94,8 @@ services:
         value: "1"
       - key: GENERATOR_PROVIDER_CHAIN
         value: "deepseek"
+      - key: GENERATOR_FORCE_DEEPSEEK_ON_RENDER
+        value: "true"
       - key: PROVIDER_BACKOFF
         value: "2.0"
       - key: PROVIDER_MAX_BACKOFF

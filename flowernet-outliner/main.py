@@ -322,7 +322,7 @@ async def startup_event():
             or os.getenv('OUTLINER_PROVIDER', '').strip()
             or 'deepseek'
         )
-        model = os.getenv('OUTLINER_MODEL', 'gpt-4o-mini')
+        model = os.getenv('OUTLINER_MODEL', 'deepseek-v4-flash')
 
         print(f"🔧 初始化 Outliner（provider={provider}, model={model}）...")
         api_key = os.getenv('GOOGLE_API_KEY', '')
@@ -414,6 +414,32 @@ async def health():
         "oldest_running_age_seconds": round(oldest_running_age_seconds, 2),
         "oldest_queued_age_seconds": round(oldest_queued_age_seconds, 2),
         "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/debug")
+async def debug():
+    """调试 outliner 当前远端 LLM 配置。"""
+    return {
+        "status": "Outliner initialized" if outliner else "Outliner NOT initialized",
+        "outliner": {
+            "is_none": outliner is None,
+            "type": str(type(outliner)) if outliner else "None",
+            "provider_chain": getattr(outliner, "provider_chain", None) if outliner else None,
+            "deepseek_model": getattr(outliner, "deepseek_model", None) if outliner else None,
+            "detail_llm_enabled": getattr(outliner, "detail_llm_enabled", None) if outliner else None,
+        },
+        "environment": {
+            "OUTLINER_PROVIDER": os.getenv("OUTLINER_PROVIDER", "NOT SET"),
+            "OUTLINER_PROVIDER_CHAIN": os.getenv("OUTLINER_PROVIDER_CHAIN", "NOT SET"),
+            "OUTLINER_MODEL": os.getenv("OUTLINER_MODEL", "NOT SET"),
+            "OUTLINER_DEEPSEEK_MODEL": os.getenv("OUTLINER_DEEPSEEK_MODEL", "NOT SET"),
+            "DEEPSEEK_MODEL": os.getenv("DEEPSEEK_MODEL", "NOT SET"),
+            "OUTLINER_FORCE_DEEPSEEK_ON_RENDER": os.getenv("OUTLINER_FORCE_DEEPSEEK_ON_RENDER", "NOT SET"),
+            "OUTLINER_DETAIL_LLM_ENABLED": os.getenv("OUTLINER_DETAIL_LLM_ENABLED", "NOT SET"),
+            "deepseek_key_present": bool(os.getenv("OUTLINER_DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")),
+            "render_runtime": bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID") or os.getenv("RENDER_EXTERNAL_HOSTNAME")),
+        },
     }
 
 

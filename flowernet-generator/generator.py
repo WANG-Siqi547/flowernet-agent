@@ -67,9 +67,13 @@ class FlowerNetGenerator:
             provider: LLM 提供商，支持单个或链式（如 "azure,ollama"）
         """
         provider_chain_env = os.getenv("GENERATOR_PROVIDER_CHAIN", "").strip()
-        requested_provider = provider_chain_env or provider or os.getenv("GENERATOR_PROVIDER", "sensenova")
-        parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
+        requested_provider = provider_chain_env or provider or os.getenv("GENERATOR_PROVIDER", "deepseek")
         allowed_providers = {"azure", "gemini", "dashscope", "sensenova", "deepseek", "openrouter", "ollama"}
+        force_deepseek_on_render = os.getenv("GENERATOR_FORCE_DEEPSEEK_ON_RENDER", "true").lower() == "true"
+        if _is_render_runtime() and force_deepseek_on_render:
+            parsed_chain = ["deepseek"]
+        else:
+            parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
         normalized_chain: List[str] = []
         for candidate in parsed_chain:
             if candidate in allowed_providers and candidate not in normalized_chain:

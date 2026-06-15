@@ -72,12 +72,16 @@ class FlowerNetOutliner:
             or provider
             or os.getenv("OUTLINER_PROVIDER", "deepseek")
         )
-        parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
         allowed_providers = {"azure", "gemini", "dashscope", "sensenova", "deepseek", "openrouter", "ollama"}
-        normalized_chain: List[str] = []
-        for candidate in parsed_chain:
-            if candidate in allowed_providers and candidate not in normalized_chain:
-                normalized_chain.append(candidate)
+        force_deepseek_on_render = os.getenv("OUTLINER_FORCE_DEEPSEEK_ON_RENDER", "true").lower() == "true"
+        if _is_render_runtime() and force_deepseek_on_render:
+            normalized_chain = ["deepseek"]
+        else:
+            parsed_chain = [p.strip().lower() for p in requested_provider.split(",") if p.strip()]
+            normalized_chain: List[str] = []
+            for candidate in parsed_chain:
+                if candidate in allowed_providers and candidate not in normalized_chain:
+                    normalized_chain.append(candidate)
 
         self.model = model
         self.azure_model = os.getenv("OUTLINER_AZURE_MODEL", os.getenv("AZURE_OPENAI_MODEL", model or "gpt-4o-mini"))
@@ -131,14 +135,17 @@ class FlowerNetOutliner:
             for provider_name, is_configured in configured_provider_order
             if is_configured and provider_name != "deepseek"
         ]
-        provider_chain: List[str] = []
-        for provider_name in configured_remote_providers + normalized_chain:
-            if provider_name in allowed_providers and provider_name not in provider_chain:
-                provider_chain.append(provider_name)
-        for provider_name, is_configured in configured_provider_order:
-            if is_configured and provider_name not in provider_chain:
-                provider_chain.append(provider_name)
-        self.provider_chain = provider_chain or normalized_chain or ["deepseek"]
+        if _is_render_runtime() and force_deepseek_on_render:
+            self.provider_chain = ["deepseek"]
+        else:
+            provider_chain: List[str] = []
+            for provider_name in configured_remote_providers + normalized_chain:
+                if provider_name in allowed_providers and provider_name not in provider_chain:
+                    provider_chain.append(provider_name)
+            for provider_name, is_configured in configured_provider_order:
+                if is_configured and provider_name not in provider_chain:
+                    provider_chain.append(provider_name)
+            self.provider_chain = provider_chain or normalized_chain or ["deepseek"]
 
         self.ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434').rstrip('/')
         self.ollama_retries = int(os.getenv('OLLAMA_RETRIES', '5'))
@@ -169,6 +176,10 @@ class FlowerNetOutliner:
             "OUTLINER_DEEPSEEK_JSON_RESPONSE_FORMAT",
             os.getenv("DEEPSEEK_JSON_RESPONSE_FORMAT", "false"),
         ).lower() == "true"
+        self.detail_llm_enabled = os.getenv(
+            "OUTLINER_DETAIL_LLM_ENABLED",
+            "false" if _is_render_runtime() else "true",
+        ).lower() == "true"
         self.http_session = requests.Session()
         self.http_session.trust_env = False
         self._provider_next_allowed: Dict[str, float] = {}
@@ -190,6 +201,7 @@ class FlowerNetOutliner:
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
         print(f"  - Ollama URL: {self.ollama_url}")
+        print(f"  - Detail LLM enabled: {self.detail_llm_enabled}")
 
     @staticmethod
     def _sanitize_json_text(raw_text: str) -> str:
@@ -1218,6 +1230,23 @@ JSON 结构：
             """
             阶段 2: 基于整篇结构，再调用一次 LLM 生成每个 section/subsection 的详细大纲。
             """
+            if not self.detail_llm_enabled:
+                derived = self._derive_detailed_outline_from_base_structure(
+                    structure=structure,
+                    user_background=user_background,
+                    user_requirements=user_requirements,
+                    reason="detail_llm_disabled",
+                )
+                return {
+                    "success": True,
+                    "structure": derived,
+                    "metadata": {
+                        "provider": "structure_only",
+                        "model": "no_second_llm_call",
+                        "detail_recovery": "base_structure_derived",
+                        "detail_llm_enabled": False,
+                    },
+                }
             structure_json = json.dumps(structure, ensure_ascii=False, indent=2)
             detailed_prompt = f"""
     你是一个专业的学术写作大纲设计专家。

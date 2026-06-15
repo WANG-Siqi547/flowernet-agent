@@ -15,11 +15,15 @@ services:
       - key: AZURE_OPENAI_API_KEY
         sync: false
       - key: OUTLINER_PROVIDER
-        value: azure
+        value: deepseek
       - key: OUTLINER_PROVIDER_CHAIN
-        value: "azure,deepseek,sensenova,dashscope,openrouter"
+        value: "deepseek"
+      - key: OUTLINER_FORCE_DEEPSEEK_ON_RENDER
+        value: "true"
+      - key: OUTLINER_DETAIL_LLM_ENABLED
+        value: "false"
       - key: OUTLINER_MODEL
-        value: glm-5
+        value: deepseek-v4-flash
       - key: OUTLINER_OPENROUTER_MODEL
         value: qwen/qwen3-coder:free
       - key: OUTLINER_GEMINI_MODEL
