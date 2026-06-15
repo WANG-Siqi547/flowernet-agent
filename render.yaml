@@ -523,6 +523,10 @@ services:
         value: "false"
       - key: WEB_OUTLINER_PROVIDER_CHAIN
         value: deepseek
+      - key: POFFICES_POLL_WAIT_SECONDS
+        value: "25"
+      - key: POFFICES_POLL_INTERVAL_SECONDS
+        value: "2.0"
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
       - key: MIN_REFERENCES_PER_SUBSECTION

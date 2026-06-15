@@ -209,6 +209,8 @@ OUTLINER_STREAM_MAX_WAIT = int(os.getenv("OUTLINER_STREAM_MAX_WAIT", str(OUTLINE
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
 DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
 WEB_INPROCESS_OUTLINER_FALLBACK = os.getenv("WEB_INPROCESS_OUTLINER_FALLBACK", "true").lower() == "true"
+POFFICES_POLL_WAIT_SECONDS = max(1, int(os.getenv("POFFICES_POLL_WAIT_SECONDS", "25")))
+POFFICES_POLL_INTERVAL_SECONDS = max(0.5, float(os.getenv("POFFICES_POLL_INTERVAL_SECONDS", "2.0")))
 DOWNSTREAM_GENERATOR_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_GENERATOR_COOLDOWN_429", "20.0"))
 GENERATOR_RESUME_BACKOFF = float(os.getenv("GENERATOR_RESUME_BACKOFF", "2.0"))
 API_AUTH_ENABLED = os.getenv("API_AUTH_ENABLED", "false").lower() == "true"
@@ -2736,7 +2738,7 @@ def _poffices_reuse_existing_request_task(
     request: Request,
     req: PofficesGenerateRequest,
     wait: bool = False,
-    wait_seconds: int = 20,
+    wait_seconds: int = POFFICES_POLL_WAIT_SECONDS,
 ) -> Optional[Dict[str, Any]]:
     existing_task_id = _restore_poffices_request_task_id(req)
     if not existing_task_id:
@@ -2761,7 +2763,7 @@ def _poffices_start_or_reuse_async_task(
     request: Request,
     req: PofficesGenerateRequest,
     wait: bool = False,
-    wait_seconds: int = 20,
+    wait_seconds: int = POFFICES_POLL_WAIT_SECONDS,
 ) -> Dict[str, Any]:
     """Idempotently start or recover a FlowerNet task for Poffices blocks."""
     req = req.model_copy(update={"query": (req.query or "").strip(), "async_mode": True})
@@ -2893,7 +2895,7 @@ def _poffices_wait_for_task_result(
     task_id: str,
     wait: bool = True,
     wait_seconds: int = 7200,
-    poll_interval_seconds: float = 4.0,
+    poll_interval_seconds: float = POFFICES_POLL_INTERVAL_SECONDS,
 ) -> Dict[str, Any]:
     deadline = time.time() + max(1, int(wait_seconds))
     last_task: Dict[str, Any] = {}
@@ -2965,7 +2967,7 @@ def _poffices_wait_for_task_result(
                 "output": f"FlowerNet task {task_id} is {status}. Please poll again.",
             }
 
-        time.sleep(poll_interval_seconds)
+        time.sleep(min(poll_interval_seconds, max(0.1, deadline - time.time())))
 
 
 def _poffices_recover_from_missing_task(
@@ -6891,7 +6893,7 @@ def poffices_generate(
                 request=request,
                 task_id=incoming_task_id,
                 wait=False,
-                wait_seconds=20,
+                wait_seconds=POFFICES_POLL_WAIT_SECONDS,
             )
         except HTTPException as exc:
             if exc.status_code == 404:
@@ -6901,7 +6903,7 @@ def poffices_generate(
                     request=request,
                     payload=recovered_payload,
                     wait=False,
-                    wait_seconds=20,
+                    wait_seconds=POFFICES_POLL_WAIT_SECONDS,
                 )
                 if recovered is not None:
                     recovered.setdefault("warning", f"stale_or_unknown_task_id_recovered: {incoming_task_id}")
@@ -6916,7 +6918,7 @@ def poffices_generate(
                 request=request,
                 task_id=query_task_id,
                 wait=False,
-                wait_seconds=20,
+                wait_seconds=POFFICES_POLL_WAIT_SECONDS,
             )
         except HTTPException as exc:
             if exc.status_code == 404:
@@ -6924,7 +6926,7 @@ def poffices_generate(
                     request=request,
                     payload=req.model_dump(),
                     wait=False,
-                    wait_seconds=20,
+                    wait_seconds=POFFICES_POLL_WAIT_SECONDS,
                 )
                 if recovered is not None:
                     recovered.setdefault("warning", f"stale_or_unknown_task_id_recovered: {query_task_id}")
@@ -6946,7 +6948,7 @@ def poffices_generate(
             request=request,
             req=req,
             wait=False,
-            wait_seconds=20,
+            wait_seconds=POFFICES_POLL_WAIT_SECONDS,
         )
 
     timeout_profile = _build_timeout_profile(
@@ -7072,8 +7074,8 @@ def poffices_poll_render(
     verify_auth(x_api_key=x_api_key, authorization=authorization)
 
     task_id = _extract_task_id_from_payload(payload).strip()
-    wait = _coerce_bool((payload or {}).get("wait"), default=False)
-    wait_seconds = int((payload or {}).get("wait_seconds") or 7200)
+    wait = _coerce_bool((payload or {}).get("wait"), default=True)
+    wait_seconds = int((payload or {}).get("wait_seconds") or POFFICES_POLL_WAIT_SECONDS)
     stale_404_payload = _payload_contains_task_not_found(payload)
 
     if stale_404_payload:

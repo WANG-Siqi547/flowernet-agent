@@ -10,6 +10,7 @@ from typing import Any
 app = FastAPI()
 
 FLOWERNET_BASE_URL = "https://flowernet-web.onrender.com"
+POLL_WAIT_SECONDS = 25
 START_URL = f"{FLOWERNET_BASE_URL}/api/poffices/generate"
 STATUS_URL = f"{FLOWERNET_BASE_URL}/api/poffices/task-status"
 POLL_URL = f"{FLOWERNET_BASE_URL}/api/poffices/poll-render"
@@ -209,7 +210,7 @@ def _start_task(gen_req: dict) -> dict:
     return data
 
 
-def _poll_task(task_id: str, payload: dict, wait_seconds: int = 24) -> dict:
+def _poll_task(task_id: str, payload: dict, wait_seconds: int = POLL_WAIT_SECONDS) -> dict:
     poll_payload = dict(payload or {})
     poll_payload.update({"task_id": task_id, "wait": True, "wait_seconds": wait_seconds})
     return _post_json(POLL_URL, poll_payload, timeout=max(30, wait_seconds + 10))
@@ -248,7 +249,7 @@ async def execute(request: Request):
         task_id = TASK_BY_KEY[key]
 
     if task_id:
-        data = _poll_task(task_id, payload, wait_seconds=24)
+        data = _poll_task(task_id, payload, wait_seconds=POLL_WAIT_SECONDS)
         if _contains_task_not_found(data):
             TASK_BY_KEY.pop(key, None)
             data = _start_or_recover(gen_req, old_task_id=task_id)

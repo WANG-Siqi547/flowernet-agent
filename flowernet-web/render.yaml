@@ -50,6 +50,10 @@ services:
         value: "true"
       - key: WEB_OUTLINER_PROVIDER_CHAIN
         value: deepseek
+      - key: POFFICES_POLL_WAIT_SECONDS
+        value: "25"
+      - key: POFFICES_POLL_INTERVAL_SECONDS
+        value: "2.0"
       - key: DOWNSTREAM_GENERATOR_COOLDOWN_429
         value: "20.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
