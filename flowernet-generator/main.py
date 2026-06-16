@@ -596,8 +596,12 @@ async def debug():
         "init_error": _init_error,
         "environment": {
             "GENERATOR_PROVIDER": os.getenv('GENERATOR_PROVIDER', 'NOT SET'),
+            "GENERATOR_PROVIDER_CHAIN": os.getenv('GENERATOR_PROVIDER_CHAIN', 'NOT SET'),
             "GENERATOR_MODEL": os.getenv('GENERATOR_MODEL', 'NOT SET'),
+            "GENERATOR_DEEPSEEK_MODEL": os.getenv('GENERATOR_DEEPSEEK_MODEL', os.getenv("DEEPSEEK_MODEL", "NOT SET")),
             "OLLAMA_URL": os.getenv('OLLAMA_URL', 'NOT SET'),
+            "deepseek_key_present": bool(os.getenv("GENERATOR_DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")),
+            "render_runtime": bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID") or os.getenv("RENDER_EXTERNAL_HOSTNAME")),
             "azure_key_present": bool(os.getenv('GENERATOR_AZURE_API_KEY') or os.getenv('AZURE_OPENAI_API_KEY')),
             "azure_api_base_present": bool(os.getenv('GENERATOR_AZURE_API_BASE') or os.getenv('AZURE_OPENAI_API_BASE')),
             "azure_deployment_present": bool(os.getenv('GENERATOR_AZURE_DEPLOYMENT_NAME') or os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'))
@@ -612,7 +616,10 @@ async def health():
     return {
         "status": "healthy" if generator else "degraded",
         "generator_initialized": generator is not None,
-        "source_version": "2026-06-14-generator-task-timeout-cancel-v1",
+        "source_version": "2026-06-16-generator-deepseek-preload-v1",
+        "provider_chain": getattr(generator, "provider_chain", None),
+        "deepseek_model": getattr(generator, "deepseek_model", os.getenv("GENERATOR_DEEPSEEK_MODEL", os.getenv("DEEPSEEK_MODEL", "NOT SET"))) if generator else os.getenv("GENERATOR_DEEPSEEK_MODEL", os.getenv("DEEPSEEK_MODEL", "NOT SET")),
+        "deepseek_key_present": bool(os.getenv("GENERATOR_DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_API_KEY")),
         "document_task_workers": DOCUMENT_TASK_WORKERS,
         "document_task_hard_timeout_seconds": DOCUMENT_TASK_HARD_TIMEOUT,
         "document_task_hard_timeout_cap_seconds": DOCUMENT_TASK_HARD_TIMEOUT_CAP,

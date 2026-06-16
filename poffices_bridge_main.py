@@ -47,6 +47,18 @@ def _post_json(url: str, payload: dict, timeout: int = 120) -> dict:
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
+        if exc.code in (502, 503, 504):
+            return {
+                "success": True,
+                "status": "running",
+                "task_status": "running",
+                "error": f"HTTP {exc.code}: upstream temporarily unavailable",
+                "message": f"FlowerNet upstream returned HTTP {exc.code}; please continue polling.",
+                "content": f"FlowerNet upstream returned HTTP {exc.code}; please continue polling.",
+                "text": f"FlowerNet upstream returned HTTP {exc.code}; please continue polling.",
+                "result": f"FlowerNet upstream returned HTTP {exc.code}; please continue polling.",
+                "output": f"FlowerNet upstream returned HTTP {exc.code}; please continue polling.",
+            }
         return {"success": False, "status": "failed", "error": f"HTTP {exc.code}: {raw}"}
     except Exception as exc:
         return {"success": False, "status": "failed", "error": str(exc)}
