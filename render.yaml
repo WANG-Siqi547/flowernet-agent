@@ -531,6 +531,12 @@ services:
         value: "2.0"
       - key: POFFICES_OUTLINER_RETRY_MAX
         value: "20"
+      - key: WEB_INPROCESS_OUTLINER_FALLBACK
+        value: "true"
+      - key: WEB_OUTLINER_PROVIDER_CHAIN
+        value: deepseek
+      - key: WEB_OUTLINER_PROVIDER
+        value: deepseek
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
       - key: MIN_REFERENCES_PER_SUBSECTION

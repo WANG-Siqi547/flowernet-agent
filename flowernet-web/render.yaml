@@ -56,6 +56,12 @@ services:
         value: "2.0"
       - key: POFFICES_OUTLINER_RETRY_MAX
         value: "20"
+      - key: WEB_INPROCESS_OUTLINER_FALLBACK
+        value: "true"
+      - key: WEB_OUTLINER_PROVIDER_CHAIN
+        value: deepseek
+      - key: WEB_OUTLINER_PROVIDER
+        value: deepseek
       - key: DOWNSTREAM_GENERATOR_COOLDOWN_429
         value: "20.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503

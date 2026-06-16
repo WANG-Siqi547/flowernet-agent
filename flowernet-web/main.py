@@ -1282,6 +1282,13 @@ def call_outliner_generate_and_save(payload: Dict[str, Any], timeout: int) -> Di
                 raise
             if start_attempt >= start_attempts or time.time() >= start_deadline:
                 print("[Web] ⚠️ Outliner task start repeatedly hit 429; remote-only mode will retry at task level")
+                inprocess_resp = _call_inprocess_outliner_generate(
+                    payload,
+                    reason=f"remote outliner task start hit 429: {last_start_error[:500]}",
+                )
+                if isinstance(inprocess_resp, dict) and inprocess_resp.get("success"):
+                    print("[Web] ✅ In-process DeepSeek outliner recovered after remote task-start 429")
+                    return inprocess_resp
                 return {
                     "success": False,
                     "error": "outliner_task_start_rate_limited",
