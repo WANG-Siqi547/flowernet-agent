@@ -33,21 +33,21 @@ services:
       - key: DOWNSTREAM_JITTER
         value: "0.4"
       - key: DOWNSTREAM_OUTLINER_MIN_RETRIES
-        value: "8"
+        value: "1"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_429
         value: "35.0"
       - key: DOWNSTREAM_OUTLINER_COOLDOWN_429
         value: "60.0"
       - key: OUTLINER_TASK_START_RETRIES
-        value: "30"
+        value: "2"
       - key: OUTLINER_TASK_START_BACKOFF
         value: "10.0"
       - key: OUTLINER_TASK_START_MAX_WAIT
-        value: "900"
+        value: "120"
       - key: OUTLINER_TASK_POLL_MAX_TIMEOUT
-        value: "900"
+        value: "1200"
       - key: WEB_INPROCESS_OUTLINER_FALLBACK
-        value: "true"
+        value: "false"
       - key: WEB_OUTLINER_PROVIDER_CHAIN
         value: deepseek
       - key: POFFICES_POLL_WAIT_SECONDS
@@ -58,14 +58,8 @@ services:
         value: "20.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
-      - key: OUTLINER_TASK_START_RETRIES
-        value: "60"
-      - key: OUTLINER_TASK_START_MAX_WAIT
-        value: "3600"
-      - key: OUTLINER_TASK_POLL_MAX_TIMEOUT
-        value: "3600"
       - key: OUTLINER_STREAM_MAX_WAIT
-        value: "3600"
+        value: "1800"
       - key: WEB_DEFAULT_REL_THRESHOLD
         value: "0.77"
       - key: WEB_DEFAULT_RED_THRESHOLD

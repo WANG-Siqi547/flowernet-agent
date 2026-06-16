@@ -504,7 +504,7 @@ services:
       - key: DOWNSTREAM_RETRIES
         value: "1"
       - key: DOWNSTREAM_OUTLINER_MIN_RETRIES
-        value: "8"
+        value: "1"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_429
         value: "35.0"
       - key: DOWNSTREAM_OUTLINER_COOLDOWN_429
@@ -512,15 +512,15 @@ services:
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503
         value: "8.0"
       - key: OUTLINER_TASK_POLL_MAX_TIMEOUT
-        value: "900"
+        value: "1200"
       - key: OUTLINER_STREAM_MAX_WAIT
-        value: "480"
+        value: "1800"
       - key: OUTLINER_TASK_START_RETRIES
-        value: "30"
+        value: "2"
       - key: OUTLINER_TASK_START_BACKOFF
         value: "10.0"
       - key: OUTLINER_TASK_START_MAX_WAIT
-        value: "900"
+        value: "120"
       - key: WEB_INPROCESS_OUTLINER_FALLBACK
         value: "false"
       - key: WEB_OUTLINER_PROVIDER_CHAIN

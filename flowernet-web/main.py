@@ -185,9 +185,9 @@ DOWNSTREAM_MAX_BACKOFF = float(os.getenv("DOWNSTREAM_MAX_BACKOFF", "30.0"))
 DOWNSTREAM_JITTER = float(os.getenv("DOWNSTREAM_JITTER", "0.35"))
 DOWNSTREAM_OUTLINER_MIN_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MIN_RETRIES", "1"))
 DOWNSTREAM_OUTLINER_MAX_RETRIES = int(os.getenv("DOWNSTREAM_OUTLINER_MAX_RETRIES", "2"))
-OUTLINER_TASK_START_RETRIES = int(os.getenv("OUTLINER_TASK_START_RETRIES", "20"))
+OUTLINER_TASK_START_RETRIES = int(os.getenv("OUTLINER_TASK_START_RETRIES", "2"))
 OUTLINER_TASK_START_BACKOFF = float(os.getenv("OUTLINER_TASK_START_BACKOFF", "8.0"))
-OUTLINER_TASK_START_MAX_WAIT = int(os.getenv("OUTLINER_TASK_START_MAX_WAIT", "900"))
+OUTLINER_TASK_START_MAX_WAIT = int(os.getenv("OUTLINER_TASK_START_MAX_WAIT", "120"))
 DOWNSTREAM_OUTLINER_MIN_DELAY_503 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_503", "8.0"))
 DOWNSTREAM_GENERATOR_MIN_RETRIES = int(os.getenv("DOWNSTREAM_GENERATOR_MIN_RETRIES", "1"))
 DOWNSTREAM_GENERATOR_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_GENERATOR_MIN_DELAY_429", "10.0"))
@@ -208,7 +208,7 @@ OUTLINER_TASK_POLL_MAX_TIMEOUT = int(os.getenv("OUTLINER_TASK_POLL_MAX_TIMEOUT",
 OUTLINER_STREAM_MAX_WAIT = int(os.getenv("OUTLINER_STREAM_MAX_WAIT", str(OUTLINER_TASK_POLL_MAX_TIMEOUT)))
 DOWNSTREAM_OUTLINER_MIN_DELAY_429 = float(os.getenv("DOWNSTREAM_OUTLINER_MIN_DELAY_429", "35.0"))
 DOWNSTREAM_OUTLINER_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_OUTLINER_COOLDOWN_429", "60.0"))
-WEB_INPROCESS_OUTLINER_FALLBACK = os.getenv("WEB_INPROCESS_OUTLINER_FALLBACK", "true").lower() == "true"
+WEB_INPROCESS_OUTLINER_FALLBACK = os.getenv("WEB_INPROCESS_OUTLINER_FALLBACK", "false").lower() == "true"
 POFFICES_POLL_WAIT_SECONDS = max(1, int(os.getenv("POFFICES_POLL_WAIT_SECONDS", "25")))
 POFFICES_POLL_INTERVAL_SECONDS = max(0.5, float(os.getenv("POFFICES_POLL_INTERVAL_SECONDS", "2.0")))
 DOWNSTREAM_GENERATOR_COOLDOWN_429 = float(os.getenv("DOWNSTREAM_GENERATOR_COOLDOWN_429", "20.0"))
@@ -485,10 +485,11 @@ def _restart_restored_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
         current = POFFICES_TASKS.setdefault(task_id, dict(task))
         if not current.get("_thread_started") and not _poffices_task_restart_stale(current):
             return
-        if current.get("_thread_started") and not _poffices_outliner_retry_stale(current):
-            return
         if current.get("_thread_started"):
-            print(f"[Poffices] ♻️ restarting stale outliner retry task {task_id}", flush=True)
+            # A live in-process worker may be inside the outliner-start retry loop.
+            # Starting a second worker for the same task multiplies downstream start
+            # requests and can turn a transient 429 into a long self-sustaining queue.
+            return
         current["_thread_started"] = True
     try:
         req = PofficesGenerateRequest(**request_payload)
