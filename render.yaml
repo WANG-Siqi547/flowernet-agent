@@ -529,6 +529,8 @@ services:
         value: "25"
       - key: POFFICES_POLL_INTERVAL_SECONDS
         value: "2.0"
+      - key: POFFICES_OUTLINER_RETRY_MAX
+        value: "20"
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
       - key: MIN_REFERENCES_PER_SUBSECTION
