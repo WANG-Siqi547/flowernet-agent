@@ -531,6 +531,8 @@ services:
         value: "2.0"
       - key: POFFICES_OUTLINER_RETRY_MAX
         value: "20"
+      - key: POFFICES_OUTLINER_RETRY_STALE_SECONDS
+        value: "75"
       - key: WEB_INPROCESS_OUTLINER_FALLBACK
         value: "true"
       - key: WEB_OUTLINER_PROVIDER_CHAIN

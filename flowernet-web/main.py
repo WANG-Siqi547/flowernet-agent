@@ -255,7 +255,7 @@ POFFICES_TASKS: Dict[str, Dict[str, Any]] = {}
 POFFICES_TASKS_LOCK = threading.Lock()
 POFFICES_CHECKPOINT_STORE = None
 POFFICES_CHECKPOINT_STORE_LOCK = threading.Lock()
-POFFICES_OUTLINER_RETRY_STALE_SECONDS = int(os.getenv("POFFICES_OUTLINER_RETRY_STALE_SECONDS", "180"))
+POFFICES_OUTLINER_RETRY_STALE_SECONDS = int(os.getenv("POFFICES_OUTLINER_RETRY_STALE_SECONDS", "75"))
 POFFICES_RESTART_STALE_SECONDS = int(os.getenv("POFFICES_RESTART_STALE_SECONDS", "180"))
 POFFICES_OUTLINER_RETRY_MAX = int(os.getenv("POFFICES_OUTLINER_RETRY_MAX", "20"))
 RECENT_PIPELINE_SECONDS = deque(maxlen=20)
@@ -483,13 +483,19 @@ def _restart_restored_poffices_task(task_id: str, task: Dict[str, Any]) -> None:
         return
     with POFFICES_TASKS_LOCK:
         current = POFFICES_TASKS.setdefault(task_id, dict(task))
-        if not current.get("_thread_started") and not _poffices_task_restart_stale(current):
+        outliner_retry_stale = _poffices_outliner_retry_stale(current)
+        restart_stale = _poffices_task_restart_stale(current)
+        if not current.get("_thread_started") and not restart_stale and not outliner_retry_stale:
             return
         if current.get("_thread_started"):
-            # A live in-process worker may be inside the outliner-start retry loop.
-            # Starting a second worker for the same task multiplies downstream start
-            # requests and can turn a transient 429 into a long self-sustaining queue.
-            return
+            if not outliner_retry_stale:
+                # A live in-process worker may be inside a normal long-running step.
+                # Avoid multiplying downstream requests unless the task is visibly
+                # stale in the outliner-start retry state.
+                return
+            current["_thread_started"] = False
+            current["last_retryable_error"] = ""
+            current["retry_count"] = 0
         current["_thread_started"] = True
     try:
         req = PofficesGenerateRequest(**request_payload)
