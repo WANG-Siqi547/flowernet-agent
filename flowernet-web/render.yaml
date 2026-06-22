@@ -47,7 +47,7 @@ services:
       - key: OUTLINER_TASK_POLL_MAX_TIMEOUT
         value: "1200"
       - key: WEB_INPROCESS_OUTLINER_FALLBACK
-        value: "false"
+        value: "true"
       - key: WEB_OUTLINER_PROVIDER_CHAIN
         value: deepseek
       - key: POFFICES_POLL_WAIT_SECONDS

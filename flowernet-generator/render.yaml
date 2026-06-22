@@ -153,7 +153,7 @@ services:
       - key: ORCH_GENERATOR_MAX_BACKOFF
         value: "20.0"
       - key: ORCH_GENERATOR_MAX_TOKENS
-        value: "2400"
+        value: "1800"
       - key: ORCH_COMPACT_GENERATION_ENABLED
         value: "false"
       - key: GENERATOR_COMPACT_FALLBACK_ENABLED
@@ -163,7 +163,11 @@ services:
       - key: ORCH_COMPACT_MAX_TOKENS
         value: "1800"
       - key: ORCH_MIN_DRAFT_CHARS
-        value: "900"
+        value: "800"
+      - key: ORCH_TARGET_DRAFT_MIN_CHARS
+        value: "850"
+      - key: ORCH_TARGET_DRAFT_MAX_CHARS
+        value: "1100"
       - key: RAG_FORCE_CITATION
         value: "true"
       - key: SERIALIZE_DOCUMENT_TASKS
@@ -183,9 +187,9 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: SUBSECTION_MAX_SECONDS
-        value: "900"
+        value: "420"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "5"
+        value: "3"
       - key: MAX_PASS_REL_MARGIN
         value: "0.15"
       - key: MAX_PASS_RED_MARGIN
@@ -193,7 +197,11 @@ services:
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
         value: "2"
       - key: MAX_CONTROLLER_RETRIES
-        value: "4"
+        value: "1"
+      - key: NEAR_PASS_QUALITY_MARGIN
+        value: "0.08"
+      - key: BEST_DRAFT_MAX_FAILED_DIMS
+        value: "2"
       - key: STRICT_CONTROLLER_EFFECTIVE
         value: "false"
       - key: USE_DATABASE

@@ -141,10 +141,10 @@ class FlowerNetController:
         new_prompt += f"---\n"
         
         new_prompt += f"\n\n请基于以上指导重新生成完整小节正文。内容应该：\n"
-        new_prompt += f"1. 保持长文档小节规模，通常 900-1400 字；不得压缩成 200-500 字短答\n"
+        new_prompt += f"1. 保持可发表小节规模但控制篇幅，通常 850-1100 字符；不得压缩成 200-500 字短答，也不要扩写成超长章节\n"
         new_prompt += f"2. 逻辑清晰、表述准确，并显式补齐缺失主题覆盖和证据支撑\n"
         new_prompt += f"3. 保留前次有价值内容，但针对缺口进行扩写，不要为了“不同”而偏离主题\n"
-        new_prompt += f"4. 像专业编辑一样做 targeted expansion：补论点、补证据、补推理、补边界，不做模板化格式修补\n"
+        new_prompt += f"4. 像专业编辑一样做 targeted expansion：只补缺失论点、证据、推理和边界；同时删去重复背景、模板化过渡和泛化空话\n"
         
         return new_prompt
 

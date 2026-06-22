@@ -413,7 +413,7 @@ services:
       - key: ORCH_GENERATOR_MAX_BACKOFF
         value: "20.0"
       - key: ORCH_GENERATOR_MAX_TOKENS
-        value: "2400"
+        value: "1800"
       - key: CHAPTER_ASSETS_ENABLED
         value: "true"
       - key: CHAPTER_ASSETS_MAX_TOKENS
@@ -427,7 +427,11 @@ services:
       - key: ORCH_COMPACT_MAX_TOKENS
         value: "1800"
       - key: ORCH_MIN_DRAFT_CHARS
-        value: "900"
+        value: "800"
+      - key: ORCH_TARGET_DRAFT_MIN_CHARS
+        value: "850"
+      - key: ORCH_TARGET_DRAFT_MAX_CHARS
+        value: "1100"
       - key: RAG_FORCE_CITATION
         value: "true"
       - key: SERIALIZE_DOCUMENT_TASKS
@@ -449,11 +453,15 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: SUBSECTION_MAX_SECONDS
-        value: "600"
+        value: "420"
       - key: MAX_SUBSECTION_ATTEMPTS
-        value: "5"
+        value: "3"
       - key: MAX_CONTROLLER_RETRIES
-        value: "4"
+        value: "1"
+      - key: NEAR_PASS_QUALITY_MARGIN
+        value: "0.08"
+      - key: BEST_DRAFT_MAX_FAILED_DIMS
+        value: "2"
       - key: STRICT_CONTROLLER_EFFECTIVE
         value: "false"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
@@ -522,7 +530,7 @@ services:
       - key: OUTLINER_TASK_START_MAX_WAIT
         value: "120"
       - key: WEB_INPROCESS_OUTLINER_FALLBACK
-        value: "false"
+        value: "true"
       - key: WEB_OUTLINER_PROVIDER_CHAIN
         value: deepseek
       - key: POFFICES_POLL_WAIT_SECONDS

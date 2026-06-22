@@ -1218,7 +1218,7 @@ async def improve_outline(req: ImproveOutlineRequest):
 {"1. 相关性不足（" + str(round(rel_score,4)) + " < " + str(rel_threshold) + "）：大纲要更明确、具体，强调该小节的核心主题，列出必须涵盖的关键点，确保每个写作要点都与主题直接相关。" if rel_score < rel_threshold else "1. 相关性已满足，保持当前主题聚焦度。"}
 {"2. 冗余度过高（" + str(round(red_score,4)) + " > " + str(red_threshold) + "）：大纲中必须明确指出哪些角度/信息已被前文覆盖，要求写全新的视角，可以列出具体的禁止重复方向。" if red_score > red_threshold else "2. 冗余度已满足，保持现有差异化要求。"}
 3. 你不是格式修补器，而是专业编辑：优先补内容覆盖、证据支撑、论证深度和主题专属性；只有必要时才调整格式。
-4. 输出的大纲必须包含 Targeted Expansion Plan：列出 3-5 个必须新增的论点，每个论点绑定一个证据槽和一个避免重复的说明。
+4. 输出的大纲必须包含 Targeted Expansion Plan：列出 2-3 个最关键的新增论点，每个论点绑定一个证据槽和一个避免重复的说明；不要把所有缺口机械扩写成超长章节。
 
 请直接输出改进后的详细大纲文本（仍然是大纲，不是正文），不要添加任何前言或解释标签。
 """

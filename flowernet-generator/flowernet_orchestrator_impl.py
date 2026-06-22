@@ -98,8 +98,10 @@ class DocumentGenerationOrchestrator:
         self.retry_max_delay = float(os.getenv("DOC_RETRY_MAX_DELAY", "10.0"))
         self.retry_jitter = float(os.getenv("DOC_RETRY_JITTER", "0.2"))
         self.subsection_retry_forever = os.getenv("SUBSECTION_RETRY_FOREVER", "false").lower() == "true"
-        # 默认轮次收敛到 5，给 Controller 更多改纲次数以提升质量
-        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "5")))
+        # Keep the loop quality-focused but bounded: one draft plus one or two
+        # targeted repairs is usually enough, while longer loops inflate length
+        # and can overfit verifier wording.
+        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "3")))
         # 单个小节最长处理时长（秒），超过后按最佳努力通过，避免长时间卡住。
         self.subsection_max_seconds = max(120, int(os.getenv("SUBSECTION_MAX_SECONDS", "900")))
         # 当 Generator 连续失败时，优先按该阈值触发兜底，避免单小节长时间阻塞。
@@ -142,6 +144,14 @@ class DocumentGenerationOrchestrator:
         self.accept_best_real_draft = os.getenv("ACCEPT_BEST_REAL_DRAFT", "true").lower() == "true"
         self.generator_max_tokens = max(400, int(os.getenv("ORCH_GENERATOR_MAX_TOKENS", "2000")))
         self.min_draft_chars = max(200, int(os.getenv("ORCH_MIN_DRAFT_CHARS", "500")))
+        self.target_draft_min_chars = max(
+            self.min_draft_chars,
+            int(os.getenv("ORCH_TARGET_DRAFT_MIN_CHARS", str(max(self.min_draft_chars, 850)))),
+        )
+        self.target_draft_max_chars = max(
+            self.target_draft_min_chars + 100,
+            int(os.getenv("ORCH_TARGET_DRAFT_MAX_CHARS", "1100")),
+        )
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -432,7 +442,7 @@ class DocumentGenerationOrchestrator:
             rel >= rel_threshold
             and red <= min(1.0, red_threshold + red_margin)
             and quality >= max(0.0, quality_threshold - self.near_pass_quality_margin)
-            and failed_count <= 1
+            and failed_count <= self.best_draft_max_failed_dims
         )
 
     def _verification_borderline_audit(
@@ -493,11 +503,11 @@ class DocumentGenerationOrchestrator:
         - 第3轮起：每轮放宽 0.040，最多放宽 0.120，避免边缘小节在已触发
           Controller 后仍被同一阈值卡到 max_attempts
         """
-        if iteration <= 2:
+        if iteration <= 1:
             return round(rel_threshold, 4), round(red_threshold, 4)
 
-        relax_steps = min(3, max(0, iteration - 2))
-        relax_amount = 0.040 * relax_steps
+        relax_steps = min(3, max(0, iteration - 1))
+        relax_amount = 0.050 * relax_steps
         effective_rel = max(0.0, rel_threshold - relax_amount)
         effective_red = min(1.0, red_threshold + relax_amount)
         return round(effective_rel, 4), round(effective_red, 4)
@@ -3441,6 +3451,11 @@ Rules:
             source_results=source_results or [],
         )
         evidence_slots = self._build_evidence_slot_plan(source_results or [])
+        target_length_rule = (
+            f"字数控制在 {self.target_draft_min_chars}～{self.target_draft_max_chars} 字符；"
+            f"低于 {self.min_draft_chars} 字符会被系统视为短草稿并要求重写；"
+            "超过上限时必须压缩重复背景、泛化定义和模板化过渡，保留主题覆盖与证据。"
+        )
 
         enhanced = """你正在撰写一篇文档的某个小节。
 
@@ -3548,7 +3563,7 @@ Rules:
    
 3. 质量要求：
    - 与前面小节保持逻辑连贯，但展开全新的视角和信息
-   - 字数控制在 900～1300 字；低于 800 字会被系统视为短草稿并要求重写
+   - {target_length_rule}
    - 不要使用 Markdown 标题符号（例如 #、##、####）；如需分层，用自然段或“1.”“2.”编号句，并保持每个编号单独成段
    - 表述专业、准确、避免空洞内容
    - 必须采用论证链结构：Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）
@@ -3564,7 +3579,7 @@ Rules:
    - 确保段落标题直接来自或对应大纲的标题
 
 2. 质量要求：
-   - 字数控制在 900～1300 字；低于 800 字会被系统视为短草稿并要求重写
+   - {target_length_rule}
    - 不要使用 Markdown 标题符号（例如 #、##、####）；如需分层，用自然段或“1.”“2.”编号句，并保持每个编号单独成段
    - 表述专业、准确、避免空洞内容
    - 必须采用论证链结构：Claim（主张）→ Evidence（证据）→ Reasoning（推理）→ Transition（过渡）→ Implication（小结）
@@ -3625,7 +3640,8 @@ Rules:
 - 至少提供 2+ 处事实句 + [序号] 内联引用（不是末尾列表！）
 - 只能使用当前参考资料中存在的编号；不要为了“增加引用”而输出不存在的 [6][7][8] 等编号
 - 改进逻辑连贯性：确保每个段落都能直接回答大纲中的某个要点
-- 若上一轮短于 {self.min_draft_chars} 字符，本轮必须扩展为 900～1300 字的完整正文
+- 若上一轮短于 {self.min_draft_chars} 字符，本轮必须扩展为 {self.target_draft_min_chars}～{self.target_draft_max_chars} 字符的完整正文
+- 若上一轮已经超过 {self.target_draft_max_chars} 字符，本轮只允许做覆盖/证据补强和压缩去重，禁止继续扩写篇幅
 """
 
         enhanced += """【原始生成指令】
