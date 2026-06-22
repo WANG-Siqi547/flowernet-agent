@@ -2446,6 +2446,7 @@ Rules:
                 require_source_citations=require_source_citations,
                 available_source_count=len(rag_search_result.get("results", []) or []),
                 negative_constraints=last_negative_constraints,
+                source_results=rag_search_result.get("results", []) or [],
             )
             
             gen_result = self._call_generator(enhanced_prompt)
@@ -3404,6 +3405,7 @@ Rules:
         require_source_citations: bool,
         available_source_count: int = 0,
         negative_constraints: Optional[Dict[str, Any]] = None,
+        source_results: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         构建增强的生成提示，按照正确流程:
@@ -3432,6 +3434,13 @@ Rules:
             compact_outline = " ".join(outline.split())
             if compact_outline and compact_outline in compact_original:
                 original_prompt = compact_original.replace(compact_outline, "[同当前小节详细大纲，已省略重复文本]")
+
+        coverage_terms = self._extract_generation_coverage_terms(
+            outline=outline,
+            original_prompt=original_prompt,
+            source_results=source_results or [],
+        )
+        evidence_slots = self._build_evidence_slot_plan(source_results or [])
 
         enhanced = """你正在撰写一篇文档的某个小节。
 
@@ -3489,6 +3498,18 @@ Rules:
 
 【当前小节的详细大纲（这是内容的完整范围和边界，必须100%严格遵循）】
 {outline}
+
+"""
+
+        if coverage_terms:
+            enhanced += f"""【Topic-specific coverage checklist（必须自然覆盖，不要原样堆词）】
+{coverage_terms}
+
+"""
+
+        if evidence_slots:
+            enhanced += f"""【Evidence grounding plan（写作前先匹配证据，不要编造来源）】
+{evidence_slots}
 
 """
 
@@ -3569,8 +3590,13 @@ Rules:
         if negative_constraints:
             failed_dims = negative_constraints.get("quality_dimensions_failed") if isinstance(negative_constraints.get("quality_dimensions_failed"), list) else []
             source_check = negative_constraints.get("source_check") if isinstance(negative_constraints.get("source_check"), dict) else {}
+            coverage_diag = negative_constraints.get("coverage_diagnostics") if isinstance(negative_constraints.get("coverage_diagnostics"), dict) else {}
+            evidence_diag = negative_constraints.get("evidence_diagnostics") if isinstance(negative_constraints.get("evidence_diagnostics"), dict) else {}
             blacklist = source_check.get("blacklist_matches") if isinstance(source_check.get("blacklist_matches"), list) else []
             feedback_text = str(negative_constraints.get("feedback", "") or "").strip()
+            missing_terms = [str(x) for x in coverage_diag.get("missing_terms", []) if str(x).strip()][:10] if coverage_diag else []
+            missing_aspects = [str(x) for x in coverage_diag.get("missing_aspects", []) if str(x).strip()][:6] if coverage_diag else []
+            missing_evidence = [str(x) for x in evidence_diag.get("missing_evidence_types", []) if str(x).strip()][:6] if evidence_diag else []
 
             enhanced += """【负向约束重试（CRITICAL - 本轮必须改进）】
 上一轮被 Verifier 判定失败，本轮MUST IMPROVE或系统自动标记为"失败"。需要在以下方面明确加强：
@@ -3579,6 +3605,12 @@ Rules:
                 enhanced += f"\n【失败维度 - 本轮必须改进】：{', '.join(str(x) for x in failed_dims)}\n"
             if feedback_text:
                 enhanced += f"【Verifier反馈 - 必须立即纠正】：{feedback_text[:280]}\n"
+            if missing_terms:
+                enhanced += "【缺失主题词 - 本轮必须自然覆盖】：{} \n".format("、".join(missing_terms))
+            if missing_aspects:
+                enhanced += "【缺失内容面向 - 本轮必须补齐】：{} \n".format("、".join(missing_aspects))
+            if missing_evidence:
+                enhanced += "【缺失证据类型 - 本轮必须补齐】：{} \n".format("、".join(missing_evidence))
             if blacklist:
                 enhanced += "【禁止再次引用 - 跨领域来源黑名单】：\n"
                 for item in blacklist[:6]:
@@ -3610,6 +3642,74 @@ Rules:
             "resource_exhausted", "service unavailable", "upstream",
         ]
         return any(token in lowered for token in transient_tokens)
+
+    def _extract_generation_coverage_terms(
+        self,
+        outline: str,
+        original_prompt: str,
+        source_results: List[Dict[str, Any]],
+        max_terms: int = 14,
+    ) -> str:
+        stop = {
+            "section", "subsection", "outline", "prompt", "chapter", "content",
+            "write", "writing", "draft", "article", "document", "quality",
+            "要求", "生成", "内容", "小节", "章节", "大纲", "写作", "文档",
+            "分析", "研究", "说明", "包括", "以及", "关于", "当前", "必须",
+            "and", "or", "the", "for", "with", "about", "use", "using", "uses",
+            "this", "that", "these", "those", "into", "from",
+        }
+        terms: List[str] = []
+
+        def add_terms(text: str) -> None:
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9+._/-]{2,}|[\u4e00-\u9fff]{2,12}", str(text or "")):
+                normalized = token.strip(" \t\r\n.,;:!?()[]{}<>\"'“”‘’")
+                if not normalized or normalized.lower() in stop or normalized.isdigit():
+                    continue
+                if len(normalized) > 28:
+                    continue
+                if normalized not in terms:
+                    terms.append(normalized)
+                if len(terms) >= max_terms:
+                    return
+
+        add_terms(outline)
+        add_terms(original_prompt)
+        for item in source_results[:4]:
+            add_terms(" ".join([
+                str((item or {}).get("title") or ""),
+                str((item or {}).get("body") or ""),
+                str((item or {}).get("description") or ""),
+                str((item or {}).get("summary") or ""),
+            ])[:900])
+            if len(terms) >= max_terms:
+                break
+
+        if not terms:
+            return ""
+        return (
+            "- 必须覆盖这些主题锚点中的大多数，并把它们写成具体论点："
+            + "、".join(terms[:max_terms])
+            + "\n- 每个核心段落至少围绕 1 个主题锚点展开，不能只写通用治理、通用优缺点或泛泛背景。"
+            + "\n- 至少覆盖：定义/边界、机制/方法、应用/案例、评估/指标、风险/局限、未来方向中的 4 类。"
+        )
+
+    def _build_evidence_slot_plan(self, source_results: List[Dict[str, Any]], max_items: int = 4) -> str:
+        if not source_results:
+            return ""
+        lines = [
+            "- 先决定每个来源能支撑哪个具体主张；不能支撑当前小节主张的来源不要引用。",
+            "- 每条关键主张都要写成：主张句 + [编号] + 证据如何支撑该主张的一句解释。",
+        ]
+        for idx, item in enumerate(source_results[:max_items], 1):
+            title = re.sub(r"\s+", " ", str((item or {}).get("title") or "")).strip()[:120]
+            snippet = re.sub(
+                r"\s+",
+                " ",
+                str((item or {}).get("body") or (item or {}).get("description") or (item or {}).get("summary") or ""),
+            ).strip()[:180]
+            href = str((item or {}).get("href") or (item or {}).get("url") or "").strip()[:160]
+            lines.append(f"- [{idx}] 可用来源：{title or 'Untitled source'}；线索：{snippet or href or '仅在与主题直接匹配时使用'}")
+        return "\n".join(lines)
     
     def _call_generator(self, prompt: str, max_tokens: Optional[int] = None) -> Dict[str, Any]:
         """调用 Generator API（优先使用本地实例）"""

@@ -50,6 +50,12 @@ class FlowerNetController:
         redundancy_index = feedback.get('redundancy_index', 0.0)
         relevancy_index = feedback.get('relevancy_index', 0.0)
         feedback_msg = feedback.get('feedback', '')
+        coverage_diag = feedback.get("coverage_diagnostics") if isinstance(feedback.get("coverage_diagnostics"), dict) else {}
+        evidence_diag = feedback.get("evidence_diagnostics") if isinstance(feedback.get("evidence_diagnostics"), dict) else {}
+        missing_terms = [str(x) for x in coverage_diag.get("missing_terms", []) if str(x).strip()][:10] if coverage_diag else []
+        missing_aspects = [str(x) for x in coverage_diag.get("missing_aspects", []) if str(x).strip()][:6] if coverage_diag else []
+        missing_evidence = [str(x) for x in evidence_diag.get("missing_evidence_types", []) if str(x).strip()][:6] if evidence_diag else []
+        source_terms = [str(x) for x in evidence_diag.get("source_topic_terms", []) if str(x).strip()][:8] if evidence_diag else []
         
         print(f"\n🔧 [Controller 迭代 {iteration}]")
         print(f"  - 相关性分数: {relevancy_index:.4f}")
@@ -110,6 +116,19 @@ class FlowerNetController:
             new_prompt += f"\n⚠️ 【小幅调整】\n"
             new_prompt += f"- 保持当前内容的主题和质量\n"
             new_prompt += f"- 略微增加新的细节或角度以通过验证\n"
+
+        if missing_terms or missing_aspects or missing_evidence or source_terms:
+            new_prompt += "\n🎯 【Targeted Expansion Plan - 专业编辑式补写】\n"
+            new_prompt += "- 本轮不是只修格式；必须补充新的主题信息、证据、机制和推理。\n"
+            if missing_terms:
+                new_prompt += "- 缺失主题词必须自然写入具体论点：" + "、".join(missing_terms) + "\n"
+            if missing_aspects:
+                new_prompt += "- 缺失内容面向必须补齐：" + "、".join(missing_aspects) + "\n"
+            if missing_evidence:
+                new_prompt += "- 缺失证据类型必须补齐：" + "、".join(missing_evidence) + "\n"
+            if source_terms:
+                new_prompt += "- 优先围绕检索来源中的这些主题锚点展开：" + "、".join(source_terms) + "\n"
+            new_prompt += "- 每个新增段落采用『具体主张 → 可验证证据/来源线索 → 为什么该证据支撑主张 → 与本小节的关系』。\n"
         
         # 添加用户反馈
         if feedback_msg:
@@ -121,11 +140,11 @@ class FlowerNetController:
         new_prompt += f"{failed_draft[:500]}...\n" if len(failed_draft) > 500 else failed_draft
         new_prompt += f"---\n"
         
-        new_prompt += f"\n\n请基于以上指导重新生成内容。内容应该：\n"
-        new_prompt += f"1. 长度适中（200-500字）\n"
-        new_prompt += f"2. 逻辑清晰、表述准确\n"
-        new_prompt += f"3. 完全不同于前次尝试\n"
-        new_prompt += f"4. 相关性和新意达到平衡\n"
+        new_prompt += f"\n\n请基于以上指导重新生成完整小节正文。内容应该：\n"
+        new_prompt += f"1. 保持长文档小节规模，通常 900-1400 字；不得压缩成 200-500 字短答\n"
+        new_prompt += f"2. 逻辑清晰、表述准确，并显式补齐缺失主题覆盖和证据支撑\n"
+        new_prompt += f"3. 保留前次有价值内容，但针对缺口进行扩写，不要为了“不同”而偏离主题\n"
+        new_prompt += f"4. 像专业编辑一样做 targeted expansion：补论点、补证据、补推理、补边界，不做模板化格式修补\n"
         
         return new_prompt
 

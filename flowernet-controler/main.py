@@ -276,6 +276,27 @@ def _build_dimension_guidance(feedback: Dict[str, Any]) -> List[str]:
         guidance.append("- transition_requirement: 每个小节至少使用 1 个显式过渡词（例如：因此/然而/此外/总之）。")
         guidance.append("- unsupported_claim_guard: 出现强结论词（必须/证明/it is clear）时，必须绑定可验证事实或引用。")
 
+    coverage_diag = feedback.get("coverage_diagnostics") if isinstance(feedback.get("coverage_diagnostics"), dict) else {}
+    if coverage_diag:
+        missing_terms = [str(x) for x in coverage_diag.get("missing_terms", []) if str(x).strip()][:10]
+        missing_aspects = [str(x) for x in coverage_diag.get("missing_aspects", []) if str(x).strip()][:6]
+        if missing_terms:
+            guidance.append("- targeted_coverage_terms: 下一版必须自然覆盖这些缺失主题词，并把它们写成具体论点而不是词表：" + "、".join(missing_terms) + "。")
+        if missing_aspects:
+            guidance.append("- targeted_coverage_aspects: 下一版必须补齐这些内容面向：" + "、".join(missing_aspects) + "。")
+
+    evidence_diag = feedback.get("evidence_diagnostics") if isinstance(feedback.get("evidence_diagnostics"), dict) else {}
+    if evidence_diag:
+        missing_types = [str(x) for x in evidence_diag.get("missing_evidence_types", []) if str(x).strip()][:6]
+        source_terms = [str(x) for x in evidence_diag.get("source_topic_terms", []) if str(x).strip()][:8]
+        failures = [str(x) for x in evidence_diag.get("source_failures", []) if str(x).strip()][:5]
+        if missing_types:
+            guidance.append("- targeted_evidence_types: 下一版必须补齐这些证据类型：" + "、".join(missing_types) + "。")
+        if source_terms:
+            guidance.append("- source_grounding_terms: 优先围绕检索来源中的这些主题词构造可验证论点：" + "、".join(source_terms) + "。")
+        if failures:
+            guidance.append("- source_failure_repair: 修复这些来源问题：" + "、".join(failures) + "；不要编造来源或继续引用跨域来源。")
+
     return guidance
 
 
@@ -1151,6 +1172,21 @@ async def improve_outline(req: ImproveOutlineRequest):
 
         dimension_guidance = _build_dimension_guidance(req.feedback)
         dimension_guidance_text = "\n".join(dimension_guidance) if dimension_guidance else "- 暂无明确失败维度，按笼统反馈进行最小修改。"
+        coverage_diag = req.feedback.get("coverage_diagnostics") if isinstance(req.feedback.get("coverage_diagnostics"), dict) else {}
+        evidence_diag = req.feedback.get("evidence_diagnostics") if isinstance(req.feedback.get("evidence_diagnostics"), dict) else {}
+        missing_terms = [str(x) for x in coverage_diag.get("missing_terms", []) if str(x).strip()][:10] if coverage_diag else []
+        missing_aspects = [str(x) for x in coverage_diag.get("missing_aspects", []) if str(x).strip()][:6] if coverage_diag else []
+        source_terms = [str(x) for x in evidence_diag.get("source_topic_terms", []) if str(x).strip()][:8] if evidence_diag else []
+        missing_evidence_types = [str(x) for x in evidence_diag.get("missing_evidence_types", []) if str(x).strip()][:6] if evidence_diag else []
+        targeted_gap_text = "\n".join(
+            line for line in [
+                ("- 缺失主题词：" + "、".join(missing_terms)) if missing_terms else "",
+                ("- 缺失内容面向：" + "、".join(missing_aspects)) if missing_aspects else "",
+                ("- 检索来源主题锚点：" + "、".join(source_terms)) if source_terms else "",
+                ("- 缺失证据类型：" + "、".join(missing_evidence_types)) if missing_evidence_types else "",
+            ]
+            if line
+        ) or "- 暂无结构化缺口。"
 
         improvement_prompt = f"""
 你是一个文档写作指导专家。本次你的任务是改进一个小节的详细写作大纲，使得根据该大纲生成的内容能够通过以下验证指标：
@@ -1174,10 +1210,15 @@ async def improve_outline(req: ImproveOutlineRequest):
 【失败维度定向修复建议】
 {dimension_guidance_text}
 
+【结构化缺口（必须转化为正文扩写计划，不要原样堆词）】
+{targeted_gap_text}
+
 {history_context}
 【改进要求】
 {"1. 相关性不足（" + str(round(rel_score,4)) + " < " + str(rel_threshold) + "）：大纲要更明确、具体，强调该小节的核心主题，列出必须涵盖的关键点，确保每个写作要点都与主题直接相关。" if rel_score < rel_threshold else "1. 相关性已满足，保持当前主题聚焦度。"}
 {"2. 冗余度过高（" + str(round(red_score,4)) + " > " + str(red_threshold) + "）：大纲中必须明确指出哪些角度/信息已被前文覆盖，要求写全新的视角，可以列出具体的禁止重复方向。" if red_score > red_threshold else "2. 冗余度已满足，保持现有差异化要求。"}
+3. 你不是格式修补器，而是专业编辑：优先补内容覆盖、证据支撑、论证深度和主题专属性；只有必要时才调整格式。
+4. 输出的大纲必须包含 Targeted Expansion Plan：列出 3-5 个必须新增的论点，每个论点绑定一个证据槽和一个避免重复的说明。
 
 请直接输出改进后的详细大纲文本（仍然是大纲，不是正文），不要添加任何前言或解释标签。
 """
@@ -1251,6 +1292,12 @@ async def improve_outline(req: ImproveOutlineRequest):
             )
             if repeated_terms:
                 fallback_lines.append("补充要求：避免重复这些已出现词：" + "、".join(repeated_terms) + "。")
+        if missing_terms:
+            fallback_lines.append("Targeted Expansion Plan：必须把这些缺失主题词转化为具体论点：" + "、".join(missing_terms) + "。")
+        if missing_aspects:
+            fallback_lines.append("Targeted Expansion Plan：必须补齐这些内容面向：" + "、".join(missing_aspects) + "。")
+        if missing_evidence_types:
+            fallback_lines.append("Evidence Plan：必须补齐这些证据类型：" + "、".join(missing_evidence_types) + "。")
         if "偏离主题" in feedback_text or rel_score < 0.5:
             fallback_lines.append(
                 "补充要求：删除泛泛背景描述，只保留与当前大纲要点直接相关的内容。"
@@ -1267,10 +1314,15 @@ async def improve_outline(req: ImproveOutlineRequest):
         ]
         if missing_anchor_terms:
             structured_blocks.append("【必写关键词】" + "、".join(missing_anchor_terms))
+        if missing_terms:
+            structured_blocks.append("【缺失主题词扩写】" + "、".join(missing_terms))
+        if missing_aspects:
+            structured_blocks.append("【必须补齐的内容面向】" + "、".join(missing_aspects))
         if repeated_terms:
             structured_blocks.append("【禁止重复词】" + "、".join(repeated_terms))
         if red_score > red_threshold:
             structured_blocks.append("【差异化要求】每个要点至少包含一个新的事实、案例、数据或机制说明。")
+        structured_blocks.append("【专业编辑要求】不要只增加格式；每一处修改都必须带来新的主题信息、证据或推理。")
         if feedback_text:
             structured_blocks.append("【Verifier反馈约束】" + feedback_text[:180])
         structured_blocks.append("【质量阈值】relevancy >= {:.2f}, redundancy <= {:.2f}".format(rel_threshold, red_threshold))
@@ -1294,7 +1346,9 @@ async def improve_outline(req: ImproveOutlineRequest):
                     "【原始主题锁定】" + (original_outline[:260] if original_outline else "保持当前小节主题"),
                     "- 核心论点：第一段必须直接回答原始小节标题，不得改写成泛泛背景介绍。",
                     "- 主题锚点：每个段落至少包含 1 个原始主题关键词，并围绕该关键词给出结论句。",
-                    "- 覆盖清单：按“定义/机制 -> 代表方法 -> 适用边界 -> 与长文档生成的关系”补齐缺失点。",
+                    "- 覆盖清单：按“定义/机制 -> 代表方法 -> 应用场景 -> 评价指标 -> 风险边界 -> 未来方向”补齐缺失点。",
+                    "- 缺失主题词：" + ("、".join(missing_terms) if missing_terms else "从原始大纲中提取至少 5 个具体术语"),
+                    "- 缺失内容面向：" + ("、".join(missing_aspects) if missing_aspects else "根据大纲自行判断缺失的内容面向"),
                     "- 证据约束：只有在主题句完成后才插入证据，不允许证据主题替代本小节主题。",
                     "- 反漂移约束：禁止转向与原始小节无关的金融、心理、软件可靠性泛化案例。",
                 ]
@@ -1318,6 +1372,8 @@ async def improve_outline(req: ImproveOutlineRequest):
                     "- 证据槽 Evidence Slot 2：补充一个机制性证据或工程案例，说明该主张如何发生、在哪些条件下成立。",
                     "- 证据槽 Evidence Slot 3：加入一个限制/反例/边界条件，避免把局部证据扩大成普遍结论。",
                     "- 推理槽 Reasoning：每个证据后必须写 1 句“证据如何支撑主张”的解释，而不是只堆引用。",
+                    "- 缺失证据类型：" + ("、".join(missing_evidence_types) if missing_evidence_types else "至少包含方法/模型、实证或基准、应用案例、风险边界中的两类"),
+                    "- 检索来源主题锚点：" + ("、".join(source_terms) if source_terms else "使用当前来源中与主题最相关的术语"),
                     "- 防幻觉约束：不得编造作者、年份、DOI、数值或不存在的论文；缺少来源时必须改写为谨慎表述并标注需要进一步验证。",
                     "- 引用位置：每个关键段落至少预留 1 个引用标记位置，不把所有引用集中到段末。",
                     "- 主题锚点：" + ("、".join(evidence_anchor_tokens) if evidence_anchor_tokens else "保持原主题关键词"),

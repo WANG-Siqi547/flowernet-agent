@@ -396,16 +396,31 @@ def subsection_outlines(topic: Dict[str, Any]) -> List[Dict[str, str]]:
 
 def build_subsection_prompt(topic: Dict[str, Any], item: Dict[str, str], history: List[str]) -> str:
     history_hint = "\n\n".join(h[:900] for h in history[-2:])
+    stopwords = {"and", "the", "for", "with", "from", "into", "about", "请写一篇关于"}
+    topic_terms = ", ".join(
+        dict.fromkeys(
+            term
+            for term in re.findall(
+                r"[A-Za-z][A-Za-z0-9+./_-]{2,}|[\u4e00-\u9fff]{2,12}",
+                f"{topic.get('topic', '')} {topic.get('prompt', '')}",
+            )
+            if term.lower() not in stopwords and len(term.strip()) >= 2
+        )
+    )
     return (
         f"主题：{topic.get('topic')}\n"
         f"用户要求：{topic.get('prompt')}\n"
         f"当前小节：{item['title']}\n"
         f"小节大纲：{item['outline']}\n\n"
-        "请生成这个小节的最终正文，中文学术报告风格，约 700-1100 字。"
-        "必须包含至少 3 个来源标记（如 [1]、[2]、[3]）和简短证据线索；"
-        "必须加入一个紧凑 Markdown 表格，表格至少 3 行，列为：论点、证据来源线索、可证伪风险。"
+        "请生成这个小节的最终正文，中文学术报告风格，约 1200-1600 字。"
+        "必须优先覆盖原始主题中的具体概念、技术名词、应用场景、评估指标、风险类型和未来趋势；"
+        f"可参考但不限于这些关键词：{topic_terms[:900]}。"
+        "不要只写泛化方法论、治理口号或抽象审计流程。"
+        "必须包含至少 4 个来源标记（如 [1]、[2]、[3]、[4]）和简短证据线索；"
+        "必须加入一个紧凑 Markdown 表格，表格 3-5 行，列为：论点、证据来源线索、可证伪风险。"
         "每个来源线索都要绑定到当前小节的具体论点，不能只堆引用标记。"
-        "避免空泛模板，避免与历史内容重复。"
+        "正文段落应比表格更重要，表格不能替代主体分析。"
+        "避免空泛模板，避免与历史内容重复；每个段落至少引入一个新的 topic-specific 信息点。"
         f"\n\n已通过历史内容摘要：\n{history_hint}"
     )
 
@@ -437,10 +452,10 @@ def static_candidate_score(text: str) -> float:
         0.0,
         min(
             1.0,
-            0.30 * min(1.0, chars / 900.0)
+            0.30 * min(1.0, chars / 1300.0)
             + 0.16 * min(1.0, headings / 2.0)
             + 0.14 * min(1.0, paras / 6.0)
-            + 0.22 * min(1.0, citations / 3.0)
+            + 0.22 * min(1.0, citations / 4.0)
             + 0.10 * min(1.0, tables / 10.0)
             + 0.08
             - min(0.20, rep * 0.4),
@@ -578,9 +593,11 @@ def full_audit_repair_guard(topic: Dict[str, Any], item: Dict[str, str], verific
         f"- Exact subsection anchor: {item['title']}\n"
         f"- Failed dimensions to repair only: {failed}\n"
         "- Preserve useful accepted content, but remove repeated headings and duplicate paragraphs.\n"
-        "- Do not shorten the draft below 850 Chinese characters; add concrete mechanisms, examples, limitations, and falsifiable checks.\n"
+        "- Do not shorten the draft below 1200 Chinese characters; add concrete mechanisms, examples, limitations, and falsifiable checks.\n"
+        "- Add topic-specific terminology, named methods, application scenarios, benchmark/evaluation terms, risks, and concrete future directions from the original request.\n"
+        "- Avoid generic audit prose that could apply to any topic; each paragraph must contain at least one concrete concept tied to the current topic.\n"
         "- Every main paragraph must explicitly connect the subsection title to the overall topic.\n"
-        "- Keep at least three source markers [1], [2], [3] and a Markdown evidence table with at least three rows.\n"
+        "- Keep at least four source markers [1], [2], [3], [4] and a Markdown evidence table with 3-5 rows.\n"
         "- Rewrite any repeated sentence patterns; no paragraph may reuse the same opening phrase or table row template.\n"
         "- Keep the evidence table compact but complete: exactly one table with 3-5 rows, not many fragmented tables.\n"
         "- Avoid unsupported numeric claims unless they are framed as testable assumptions or evaluation targets.\n"
@@ -671,8 +688,8 @@ def best_real_candidate_score(draft: str, verification: Dict[str, Any], topic: D
     topic_tokens = [t for t in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z][A-Za-z0-9_-]+", topic_text.lower()) if len(t) >= 2]
     anchor_hits = sum(1 for t in topic_tokens[:18] if t and t in draft.lower())
     anchor = min(1.0, anchor_hits / max(1, min(8, len(topic_tokens))))
-    length = min(1.0, chars / 900.0)
-    evidence = min(1.0, citations / 3.0)
+    length = min(1.0, chars / 1300.0)
+    evidence = min(1.0, citations / 4.0)
     compact_table = 1.0 if 3 <= tables <= 28 else (0.65 if tables > 0 else 0.0)
     repetition_penalty = min(0.22, rep * 0.55)
     failed_count = len(verification.get("quality_dimensions_failed") or [])
@@ -924,7 +941,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=15)
     parser.add_argument("--topic-id")
     parser.add_argument("--systems", default="vanilla_llm,self_refine,cogwriter_adapter,longwriter_gguf_ollama,arise_adapter,flowernet_no_vc_direct,flowernet_no_vc_budget20,flowernet_full,flowernet_wo_bandit,flowernet_wo_nli,flowernet_wo_multidim")
-    parser.add_argument("--max-tokens", type=int, default=900)
+    parser.add_argument("--max-tokens", type=int, default=1800)
     parser.add_argument("--max-attempts", type=int, default=5)
     parser.add_argument("--rel-threshold", type=float, default=0.765)
     parser.add_argument("--red-threshold", type=float, default=0.265)

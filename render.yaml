@@ -395,7 +395,7 @@ services:
       - key: PROMPT_RAG_MAX_CHARS
         value: "2200"
       - key: RAG_TIMEOUT
-        value: "4"
+        value: "8"
       - key: RAG_SEARCH_MAX_SECONDS
         value: "12"
       - key: PROMPT_HISTORY_MAX_CHARS
@@ -413,7 +413,7 @@ services:
       - key: ORCH_GENERATOR_MAX_BACKOFF
         value: "20.0"
       - key: ORCH_GENERATOR_MAX_TOKENS
-        value: "2000"
+        value: "2400"
       - key: CHAPTER_ASSETS_ENABLED
         value: "true"
       - key: CHAPTER_ASSETS_MAX_TOKENS
@@ -427,7 +427,7 @@ services:
       - key: ORCH_COMPACT_MAX_TOKENS
         value: "1800"
       - key: ORCH_MIN_DRAFT_CHARS
-        value: "500"
+        value: "900"
       - key: RAG_FORCE_CITATION
         value: "true"
       - key: SERIALIZE_DOCUMENT_TASKS
@@ -449,11 +449,11 @@ services:
       - key: SUBSECTION_RETRY_FOREVER
         value: "false"
       - key: SUBSECTION_MAX_SECONDS
-        value: "420"
+        value: "600"
       - key: MAX_SUBSECTION_ATTEMPTS
         value: "5"
       - key: MAX_CONTROLLER_RETRIES
-        value: "2"
+        value: "4"
       - key: STRICT_CONTROLLER_EFFECTIVE
         value: "false"
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION

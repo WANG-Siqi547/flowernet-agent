@@ -221,14 +221,30 @@ class FlowerNetVerifier:
         rel: Dict[str, Any],
         red: Dict[str, Any],
         source_check: Dict[str, Any],
+        context_text: str = "",
+        source_results: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, float]:
         draft = draft or ""
         outline = outline or ""
         history_list = history_list or []
+        coverage_diag = self._coverage_diagnostics(
+            draft=draft,
+            outline=outline,
+            context_text=context_text,
+        )
+        evidence_diag = self._evidence_diagnostics(
+            draft=draft,
+            outline=outline,
+            context_text=context_text,
+            source_results=source_results or [],
+            source_check=source_check,
+        )
+        coverage_diag["source_topic_coverage"] = self._safe_float(evidence_diag.get("source_topic_coverage"), 0.0)
 
         keyword_coverage = max(
             self._safe_float((rel.get("details") or {}).get("keyword_coverage"), rel.get("score", 0.0)),
             self._safe_float((rel.get("details") or {}).get("anchor_coverage"), 0.0),
+            self._safe_float(coverage_diag.get("target_term_coverage"), 0.0),
         )
         rouge_l = self._safe_float((rel.get("details") or {}).get("rouge_l"), rel.get("score", 0.0))
         bm25_score = self._safe_float((rel.get("details") or {}).get("bm25_score"), rel.get("score", 0.0))
@@ -239,8 +255,17 @@ class FlowerNetVerifier:
         # 2) Novelty: 与历史去重互补，越高越新
         novelty = self._clip01(1.0 - self._safe_float(red.get("score"), 0.0))
 
-        # 3) Coverage completeness: 是否覆盖大纲关键信息
-        coverage_completeness = self._clip01(0.7 * keyword_coverage + 0.3 * rouge_l)
+        # 3) Coverage completeness: 是否覆盖大纲关键信息。
+        # 旧逻辑只看关键词/ROUGE，容易把“提到主题”误判成“充分覆盖”。
+        # 新逻辑加入 target terms、内容面向(aspects)和来源覆盖，逼迫生成器写出
+        # 方法、应用、评价、风险、未来方向等 topic-specific 信息。
+        coverage_completeness = self._clip01(
+            0.36 * keyword_coverage
+            + 0.18 * rouge_l
+            + 0.26 * self._safe_float(coverage_diag.get("aspect_coverage"), 0.0)
+            + 0.12 * self._safe_float(coverage_diag.get("source_topic_coverage"), 0.0)
+            + 0.08 * self._safe_float(coverage_diag.get("specificity_score"), 0.0)
+        )
 
         chinese_ratio = (
             len(re.findall(r"[\u4e00-\u9fff]", draft))
@@ -271,7 +296,13 @@ class FlowerNetVerifier:
         else:
             avg_semantic_match = 0.0
         citation_signal = 1.0 if source_check.get("passed") else 0.35
-        evidence_grounding = self._clip01(0.65 * avg_semantic_match + 0.35 * citation_signal)
+        evidence_grounding = self._clip01(
+            0.36 * avg_semantic_match
+            + 0.22 * citation_signal
+            + 0.22 * self._safe_float(evidence_diag.get("claim_evidence_alignment"), 0.0)
+            + 0.12 * self._safe_float(evidence_diag.get("evidence_type_coverage"), 0.0)
+            + 0.08 * self._safe_float(evidence_diag.get("source_usage_coverage"), 0.0)
+        )
 
         # 6) Structure clarity: 小节组织形态质量。
         # 发表型正文通常是多段论证，而不是小节内部继续堆标题/项目符号。
@@ -716,6 +747,7 @@ class FlowerNetVerifier:
             "介绍", "分析", "讨论", "说明", "包括", "以及", "关于",
             "标准", "分钟", "休息", "周期", "如何", "应对", "记录", "内部",
             "外部", "模板", "状态", "次数", "任务", "步骤", "流程", "示例",
+            "当前", "需要", "覆盖", "必须", "本轮", "下一版", "写作", "要求",
         }
         zh_en_expansions = {
             "时间": ["time"],
@@ -756,6 +788,130 @@ class FlowerNetVerifier:
             if len(terms) >= 36:
                 break
         return terms
+
+    def _source_topic_terms(self, source_results: List[Dict[str, Any]], max_terms: int = 24) -> List[str]:
+        """Extract topic-bearing terms from retrieved source titles/snippets."""
+        terms: List[str] = []
+        for item in source_results or []:
+            source_text = " ".join([
+                str((item or {}).get("title") or ""),
+                str((item or {}).get("body") or ""),
+                str((item or {}).get("description") or ""),
+                str((item or {}).get("summary") or ""),
+                str((item or {}).get("abstract") or ""),
+            ])
+            for token in self._content_tokens(source_text):
+                if token not in terms:
+                    terms.append(token)
+                if len(terms) >= max_terms:
+                    return terms
+        return terms
+
+    def _coverage_aspects(self) -> Dict[str, List[str]]:
+        return {
+            "definition_scope": ["定义", "概念", "边界", "scope", "definition", "concept"],
+            "mechanism_method": ["机制", "方法", "模型", "算法", "框架", "method", "model", "mechanism", "framework"],
+            "application_case": ["应用", "场景", "案例", "实践", "application", "case", "practice", "deployment"],
+            "evaluation_metric": ["评估", "指标", "基准", "实验", "metric", "benchmark", "evaluation", "experiment"],
+            "risk_limitation": ["风险", "局限", "限制", "挑战", "risk", "limitation", "challenge", "failure"],
+            "future_direction": ["未来", "趋势", "方向", "开放问题", "future", "direction", "open question"],
+        }
+
+    def _coverage_diagnostics(self, draft: str, outline: str, context_text: str = "") -> Dict[str, Any]:
+        draft_lower = str(draft or "").lower()
+        target_terms = self._topic_terms(outline=outline, context_text=context_text, draft=draft)
+        target_terms = [term for term in target_terms if len(str(term).strip()) >= 2][:24]
+        matched_terms = [term for term in target_terms if str(term).lower() in draft_lower]
+        missing_terms = [term for term in target_terms if term not in matched_terms]
+        target_term_coverage = len(matched_terms) / max(1, len(target_terms)) if target_terms else 0.0
+
+        aspect_hits: Dict[str, bool] = {}
+        for aspect, markers in self._coverage_aspects().items():
+            aspect_hits[aspect] = any(marker.lower() in draft_lower for marker in markers)
+        aspect_coverage = sum(1 for ok in aspect_hits.values() if ok) / max(1, len(aspect_hits))
+
+        # Domain specificity: reward named methods/entities and citation-bearing analytic sentences.
+        named_terms = re.findall(r"[A-Z][A-Za-z0-9+._-]{2,}|[\u4e00-\u9fff]{3,12}", draft or "")
+        generic_noise = {"本文", "因此", "然而", "此外", "同时", "可以", "需要", "通过", "分析", "研究", "方法"}
+        specific_count = sum(1 for item in named_terms if item not in generic_noise)
+        citation_sentences = len(re.findall(r"[^。.!?\n]{12,}\[\d+\]", draft or ""))
+        specificity_score = self._clip01(0.55 * min(1.0, specific_count / 28.0) + 0.45 * min(1.0, citation_sentences / 4.0))
+
+        return {
+            "target_terms": target_terms,
+            "matched_terms": matched_terms[:18],
+            "missing_terms": missing_terms[:12],
+            "target_term_coverage": round(float(target_term_coverage), 4),
+            "aspect_hits": aspect_hits,
+            "missing_aspects": [k for k, ok in aspect_hits.items() if not ok],
+            "aspect_coverage": round(float(aspect_coverage), 4),
+            "specificity_score": round(float(specificity_score), 4),
+            "source_topic_coverage": 0.0,
+        }
+
+    def _evidence_diagnostics(
+        self,
+        draft: str,
+        outline: str,
+        context_text: str,
+        source_results: List[Dict[str, Any]],
+        source_check: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        text = str(draft or "")
+        refs = [int(x) for x in re.findall(r"\[(\d+)\]", text)]
+        unique_refs = sorted(set(refs))
+        source_count = len(source_results or [])
+        source_usage_coverage = len([r for r in unique_refs if 1 <= r <= source_count]) / max(1, min(source_count, 4))
+
+        evidence_type_markers = {
+            "method_or_model": ["方法", "模型", "算法", "framework", "method", "model"],
+            "empirical_or_benchmark": ["实验", "数据", "基准", "评估", "benchmark", "experiment", "empirical", "metric"],
+            "application_or_case": ["案例", "应用", "场景", "case", "application", "deployment"],
+            "limitation_or_risk": ["局限", "风险", "限制", "challenge", "risk", "limitation"],
+        }
+        lower = text.lower()
+        evidence_type_hits = {
+            key: any(marker.lower() in lower for marker in markers)
+            for key, markers in evidence_type_markers.items()
+        }
+        evidence_type_coverage = sum(1 for ok in evidence_type_hits.values() if ok) / max(1, len(evidence_type_hits))
+
+        claim_sentences = [
+            s.strip()
+            for s in re.split(r"[。.!?\n]", text)
+            if len(s.strip()) >= 18 and re.search(r"说明|表明|意味着|导致|支持|显示|indicate|suggest|show|support", s, flags=re.I)
+        ]
+        cited_claims = [s for s in claim_sentences if re.search(r"\[\d+\]", s)]
+        claim_evidence_alignment = len(cited_claims) / max(1, min(5, len(claim_sentences))) if claim_sentences else (0.6 if unique_refs else 0.0)
+
+        source_terms = self._source_topic_terms(source_results, max_terms=24)
+        draft_lower = lower
+        source_term_hits = [term for term in source_terms if term and term.lower() in draft_lower]
+        source_topic_coverage = len(source_term_hits) / max(1, min(12, len(source_terms))) if source_terms else 0.0
+
+        source_failures: List[str] = []
+        reason = str(source_check.get("reason") or "")
+        if reason and reason != "ok":
+            source_failures.append(reason)
+        if source_check.get("low_semantic_urls"):
+            source_failures.append("low_semantic_source_quality")
+        if source_check.get("blacklist_matches"):
+            source_failures.append("blacklist_or_domain_mismatch")
+
+        return {
+            "unique_reference_ids": unique_refs,
+            "source_usage_coverage": round(float(self._clip01(source_usage_coverage)), 4),
+            "evidence_type_hits": evidence_type_hits,
+            "missing_evidence_types": [k for k, ok in evidence_type_hits.items() if not ok],
+            "evidence_type_coverage": round(float(evidence_type_coverage), 4),
+            "claim_sentence_count": len(claim_sentences),
+            "cited_claim_sentence_count": len(cited_claims),
+            "claim_evidence_alignment": round(float(self._clip01(claim_evidence_alignment)), 4),
+            "source_topic_terms": source_terms[:12],
+            "source_topic_hits": source_term_hits[:12],
+            "source_topic_coverage": round(float(self._clip01(source_topic_coverage)), 4),
+            "source_failures": sorted(set(source_failures)),
+        }
 
     def _source_relevance_score(
         self,
@@ -1140,6 +1296,19 @@ class FlowerNetVerifier:
             min_source_citations=min_source_citations,
             min_semantic_source_score=float(os.getenv("MIN_SEMANTIC_SOURCE_SCORE", "0.35")),
         )
+        coverage_diagnostics = self._coverage_diagnostics(
+            draft=draft,
+            outline=outline,
+            context_text=context_text,
+        )
+        evidence_diagnostics = self._evidence_diagnostics(
+            draft=draft,
+            outline=outline,
+            context_text=context_text,
+            source_results=source_results or [],
+            source_check=source_check,
+        )
+        coverage_diagnostics["source_topic_coverage"] = evidence_diagnostics.get("source_topic_coverage", 0.0)
 
         heuristic_dimensions = self._compute_semantic_dimensions(
             draft=draft,
@@ -1148,6 +1317,8 @@ class FlowerNetVerifier:
             rel=rel,
             red=red,
             source_check=source_check,
+            context_text=context_text,
+            source_results=source_results or [],
         )
         
         require_multidim_env = os.getenv("REQUIRE_MULTIDIM_QUALITY", "true").lower() == "true"
@@ -1216,6 +1387,20 @@ class FlowerNetVerifier:
         if require_multidim and not quality_passed:
             failed_dims = ", ".join(dimension_check["failed_dimensions"])
             advice = f"Multi-dimensional semantic quality failed on: {failed_dims}. Improve these dimensions."
+        if "coverage_completeness" in dimension_check["failed_dimensions"]:
+            missing_terms = ", ".join(coverage_diagnostics.get("missing_terms", [])[:6])
+            missing_aspects = ", ".join(coverage_diagnostics.get("missing_aspects", [])[:4])
+            advice = (
+                "Coverage check failed. Expand the subsection with missing topic-specific content"
+                + (f" terms: {missing_terms}." if missing_terms else ".")
+                + (f" Missing aspects: {missing_aspects}." if missing_aspects else "")
+            )
+        if "evidence_grounding" in dimension_check["failed_dimensions"] or not source_check["passed"]:
+            missing_evidence = ", ".join(evidence_diagnostics.get("missing_evidence_types", [])[:4])
+            advice = (
+                "Evidence grounding check failed. Bind key claims to retrieved or verifiable sources"
+                + (f" and add missing evidence types: {missing_evidence}." if missing_evidence else ".")
+            )
 
         return {
             "is_passed": is_passed,
@@ -1250,11 +1435,15 @@ class FlowerNetVerifier:
             "persona_passed": bool(persona_ok),
             "persona_threshold": float(self.persona_sim_threshold),
             "source_check": source_check,
+            "coverage_diagnostics": coverage_diagnostics,
+            "evidence_diagnostics": evidence_diagnostics,
             "raw_data": {
                 "relevancy": rel['details'],
                 "redundancy": red['details'],
                 "persona": persona_result,
                 "source_check": source_check,
+                "coverage_diagnostics": coverage_diagnostics,
+                "evidence_diagnostics": evidence_diagnostics,
                 "semantic_dimensions": semantic_dimensions,
                 "semantic_uncertainty": fusion["uncertainty"],
             }
