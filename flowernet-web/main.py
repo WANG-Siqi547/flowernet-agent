@@ -5031,7 +5031,8 @@ def build_markdown_document(
                     lines.append("")
                     chapter_asset_ordinal += 1
 
-    audit_markdown = render_audit_markdown(epistemic_audit or {}) if HAS_EPISTEMIC_AUDIT else ""
+    audit_visible = os.getenv("FLOWERNET_EPISTEMIC_AUDIT_VISIBLE", "false").lower() == "true"
+    audit_markdown = render_audit_markdown(epistemic_audit or {}) if HAS_EPISTEMIC_AUDIT and audit_visible else ""
     if audit_markdown:
         lines.append(audit_markdown)
         lines.append("")

@@ -432,6 +432,8 @@ services:
         value: "850"
       - key: ORCH_TARGET_DRAFT_MAX_CHARS
         value: "1100"
+      - key: ORCH_ENFORCE_TARGET_DRAFT_MAX
+        value: "true"
       - key: RAG_FORCE_CITATION
         value: "true"
       - key: SERIALIZE_DOCUMENT_TASKS
@@ -551,6 +553,8 @@ services:
         value: deepseek
       - key: WEB_OUTLINER_PROVIDER
         value: deepseek
+      - key: FLOWERNET_EPISTEMIC_AUDIT_VISIBLE
+        value: "false"
       - key: GENERATOR_TASK_POLL_MAX_TIMEOUT
         value: "3600"
       - key: MIN_REFERENCES_PER_SUBSECTION

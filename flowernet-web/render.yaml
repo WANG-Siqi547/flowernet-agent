@@ -64,6 +64,8 @@ services:
         value: deepseek
       - key: WEB_OUTLINER_PROVIDER
         value: deepseek
+      - key: FLOWERNET_EPISTEMIC_AUDIT_VISIBLE
+        value: "false"
       - key: DOWNSTREAM_GENERATOR_COOLDOWN_429
         value: "20.0"
       - key: DOWNSTREAM_OUTLINER_MIN_DELAY_503

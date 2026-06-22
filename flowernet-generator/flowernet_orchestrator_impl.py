@@ -160,6 +160,7 @@ class DocumentGenerationOrchestrator:
             self.target_draft_min_chars + 100,
             int(os.getenv("ORCH_TARGET_DRAFT_MAX_CHARS", "1100")),
         )
+        self.enforce_target_draft_max = os.getenv("ORCH_ENFORCE_TARGET_DRAFT_MAX", "true").lower() == "true"
         self.session = requests.Session()
         self.session.trust_env = False
         
@@ -355,6 +356,60 @@ class DocumentGenerationOrchestrator:
         text = re.sub(r"(?is)\n\s*(?:---\s*)?(?:\*\*)?\s*(?:论证链实现说明|结构优化|写作说明|生成说明|质量检查说明)\s*(?:\*\*)?\s*[:：]?.*$", "", text).strip()
         text = re.sub(r"(?is)\n\s*(?:\*\*)?\s*(?:references?|bibliography|参考文献)\s*(?:\*\*)?\s*[:：]?\s*(?:\[\d+\].*)$", "", text).strip()
         return text
+
+    def _limit_subsection_draft_length(self, draft: str) -> str:
+        """Trim overlong drafts at paragraph/sentence boundaries for fair eval.
+
+        DeepSeek can ignore length instructions when the prompt contains a lot of
+        evidence context. This keeps the model's own generated content, but
+        removes lower-priority tail paragraphs so downstream scoring is not
+        inflated by verbosity.
+        """
+        text = str(draft or "").strip()
+        if not self.enforce_target_draft_max or len(text) <= self.target_draft_max_chars:
+            return text
+
+        limit = max(self.target_draft_min_chars, self.target_draft_max_chars)
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", text) if p.strip()]
+        if not paragraphs:
+            return text[:limit].rstrip()
+
+        kept: List[str] = []
+        current_len = 0
+        for para in paragraphs:
+            candidate_len = current_len + len(para) + (2 if kept else 0)
+            if kept and candidate_len > limit:
+                break
+            kept.append(para)
+            current_len = candidate_len
+            if current_len >= self.target_draft_min_chars:
+                break
+
+        trimmed = "\n\n".join(kept).strip()
+        if len(trimmed) < self.target_draft_min_chars and len(text) > len(trimmed):
+            remaining = text[len(trimmed):].strip()
+            budget = max(0, limit - len(trimmed) - 2)
+            if budget > 80 and remaining:
+                sentence_parts = re.split(r"(?<=[。！？.!?])\s+", remaining)
+                extra = ""
+                for sent in sentence_parts:
+                    sent = sent.strip()
+                    if not sent:
+                        continue
+                    if len(extra) + len(sent) + 1 > budget:
+                        break
+                    extra = (extra + " " + sent).strip()
+                if extra:
+                    trimmed = (trimmed + "\n\n" + extra).strip()
+
+        if len(trimmed) > limit:
+            clipped = trimmed[:limit]
+            boundary = max(clipped.rfind("。"), clipped.rfind("."), clipped.rfind("\n"))
+            if boundary >= self.target_draft_min_chars:
+                clipped = clipped[: boundary + 1]
+            trimmed = clipped.rstrip()
+
+        return trimmed or text[:limit].rstrip()
 
     def _inline_source_ref_count(self, text: str, available_source_count: int) -> int:
         refs = set()
@@ -2635,6 +2690,22 @@ Rules:
             
             raw_draft = gen_result.get("draft", "")
             draft = self._sanitize_subsection_draft(raw_draft)
+            before_length_limit_chars = len(draft)
+            draft = self._limit_subsection_draft_length(draft)
+            if len(draft) < before_length_limit_chars:
+                self._emit_progress_event(
+                    document_id=document_id,
+                    section_id=section_id,
+                    subsection_id=subsection_id,
+                    stage="draft_length_limited",
+                    message="已按公平评估目标压缩超长小节草稿",
+                    metadata={
+                        "iteration": iterations,
+                        "before_chars": before_length_limit_chars,
+                        "after_chars": len(draft),
+                        "target_max_chars": self.target_draft_max_chars,
+                    },
+                )
             if source_citation_required and rag_search_result.get("results"):
                 before_ref_count = self._inline_source_ref_count(
                     draft,
