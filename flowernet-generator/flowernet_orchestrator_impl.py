@@ -160,7 +160,7 @@ class DocumentGenerationOrchestrator:
             self.target_draft_min_chars + 100,
             int(os.getenv("ORCH_TARGET_DRAFT_MAX_CHARS", "1100")),
         )
-        self.enforce_target_draft_max = os.getenv("ORCH_ENFORCE_TARGET_DRAFT_MAX", "true").lower() == "true"
+        self.enforce_target_draft_max = os.getenv("ORCH_ENFORCE_TARGET_DRAFT_MAX", "false").lower() == "true"
         self.session = requests.Session()
         self.session.trust_env = False
         

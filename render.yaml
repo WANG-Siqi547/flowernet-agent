@@ -433,7 +433,7 @@ services:
       - key: ORCH_TARGET_DRAFT_MAX_CHARS
         value: "1100"
       - key: ORCH_ENFORCE_TARGET_DRAFT_MAX
-        value: "true"
+        value: "false"
       - key: RAG_FORCE_CITATION
         value: "true"
       - key: SERIALIZE_DOCUMENT_TASKS
