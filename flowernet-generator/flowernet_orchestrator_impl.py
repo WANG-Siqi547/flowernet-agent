@@ -101,7 +101,11 @@ class DocumentGenerationOrchestrator:
         # Keep the loop quality-focused but bounded: one draft plus one or two
         # targeted repairs is usually enough, while longer loops inflate length
         # and can overfit verifier wording.
-        self.max_subsection_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "3")))
+        configured_max_attempts = max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS", "3")))
+        self.max_subsection_attempts = min(
+            configured_max_attempts,
+            max(1, int(os.getenv("MAX_SUBSECTION_ATTEMPTS_CAP", "3"))),
+        )
         # 单个小节最长处理时长（秒），超过后按最佳努力通过，避免长时间卡住。
         self.subsection_max_seconds = max(120, int(os.getenv("SUBSECTION_MAX_SECONDS", "900")))
         # 当 Generator 连续失败时，优先按该阈值触发兜底，避免单小节长时间阻塞。
@@ -112,7 +116,11 @@ class DocumentGenerationOrchestrator:
         # One controller call is usually enough to produce an actionable repair.
         # Repeating a weak repair in the same verifier round inflates latency and
         # can push the outline away from the topic.
-        self.max_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "1")))
+        configured_controller_retries = max(1, int(os.getenv("MAX_CONTROLLER_RETRIES", "1")))
+        self.max_controller_retries = min(
+            configured_controller_retries,
+            max(1, int(os.getenv("MAX_CONTROLLER_RETRIES_CAP", "1"))),
+        )
         self.allow_forced_pass = os.getenv("ALLOW_FORCED_PASS", "false").lower() == "true"
         configured_min_retries = max(1, int(os.getenv("MIN_CONTROLLER_RETRIES_BEFORE_FORCE", "1")))
         self.min_controller_retries_before_force = min(configured_min_retries, self.max_controller_retries)

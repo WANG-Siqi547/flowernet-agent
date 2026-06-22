@@ -190,6 +190,8 @@ services:
         value: "420"
       - key: MAX_SUBSECTION_ATTEMPTS
         value: "3"
+      - key: MAX_SUBSECTION_ATTEMPTS_CAP
+        value: "3"
       - key: MAX_PASS_REL_MARGIN
         value: "0.15"
       - key: MAX_PASS_RED_MARGIN
@@ -197,6 +199,8 @@ services:
       - key: MAX_GENERATOR_FAILURES_PER_SUBSECTION
         value: "2"
       - key: MAX_CONTROLLER_RETRIES
+        value: "1"
+      - key: MAX_CONTROLLER_RETRIES_CAP
         value: "1"
       - key: NEAR_PASS_QUALITY_MARGIN
         value: "0.08"

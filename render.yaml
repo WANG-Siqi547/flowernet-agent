@@ -456,7 +456,11 @@ services:
         value: "420"
       - key: MAX_SUBSECTION_ATTEMPTS
         value: "3"
+      - key: MAX_SUBSECTION_ATTEMPTS_CAP
+        value: "3"
       - key: MAX_CONTROLLER_RETRIES
+        value: "1"
+      - key: MAX_CONTROLLER_RETRIES_CAP
         value: "1"
       - key: NEAR_PASS_QUALITY_MARGIN
         value: "0.08"
