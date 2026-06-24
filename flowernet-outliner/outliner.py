@@ -176,6 +176,10 @@ class FlowerNetOutliner:
             "OUTLINER_DEEPSEEK_JSON_RESPONSE_FORMAT",
             os.getenv("DEEPSEEK_JSON_RESPONSE_FORMAT", "false"),
         ).lower() == "true"
+        self.remote_single_llm_call = os.getenv(
+            "OUTLINER_REMOTE_SINGLE_LLM_CALL",
+            "true" if _is_render_runtime() else "false",
+        ).lower() == "true"
         self.detail_llm_enabled = os.getenv(
             "OUTLINER_DETAIL_LLM_ENABLED",
             "false" if _is_render_runtime() else "true",
@@ -201,6 +205,7 @@ class FlowerNetOutliner:
         print(f"  - OpenRouter model: {self.openrouter_model}")
         print(f"  - Ollama model: {self.ollama_model}")
         print(f"  - Ollama URL: {self.ollama_url}")
+        print(f"  - Remote single LLM call: {self.remote_single_llm_call}")
         print(f"  - Detail LLM enabled: {self.detail_llm_enabled}")
 
     @staticmethod
@@ -359,6 +364,84 @@ class FlowerNetOutliner:
             stage_name="outline_quality_repair",
         )
         return repaired, metadata
+
+    def _clean_outline_title(self, value: Any, fallback: str) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if self._is_bad_outline_title(text):
+            return fallback.strip()
+        return text
+
+    def _normalize_outline_structure(
+        self,
+        structure: Dict[str, Any],
+        user_requirements: str,
+        max_sections: int,
+        max_subsections_per_section: int,
+    ) -> Dict[str, Any]:
+        """Normalize model output without making extra LLM calls."""
+        if not isinstance(structure, dict):
+            return {"title": "", "sections": []}
+
+        topic = self._extract_requirement_field(
+            user_requirements,
+            ["文档主题", "主题", "Document topic"],
+            str(structure.get("title") or "文档主题"),
+        )
+        normalized_sections: List[Dict[str, Any]] = []
+        raw_sections = structure.get("sections", [])
+        if not isinstance(raw_sections, list):
+            raw_sections = []
+
+        for section_index, section in enumerate(raw_sections[:max_sections], start=1):
+            if not isinstance(section, dict):
+                continue
+            section_id = f"section_{section_index}"
+            raw_section_title = section.get("title") or section.get("name")
+            section_title = self._clean_outline_title(
+                raw_section_title,
+                f"{topic}的核心维度{section_index}",
+            )
+            section_description = " ".join(
+                str(section.get("description") or section.get("section_outline") or f"围绕“{section_title}”展开。").split()
+            ).strip()
+
+            normalized_subsections: List[Dict[str, Any]] = []
+            raw_subsections = section.get("subsections", [])
+            if not isinstance(raw_subsections, list):
+                raw_subsections = []
+            for subsection_index, subsection in enumerate(raw_subsections[:max_subsections_per_section], start=1):
+                if not isinstance(subsection, dict):
+                    continue
+                subsection_id = f"subsection_{section_index}_{subsection_index}"
+                raw_subsection_title = subsection.get("title") or subsection.get("name")
+                subsection_title = self._clean_outline_title(
+                    raw_subsection_title,
+                    f"{section_title}的关键问题{subsection_index}",
+                )
+                subsection_description = " ".join(
+                    str(
+                        subsection.get("description")
+                        or subsection.get("outline")
+                        or f"说明“{subsection_title}”的主要内容、论证顺序与边界。"
+                    ).split()
+                ).strip()
+                normalized_subsections.append({
+                    "id": subsection_id,
+                    "title": subsection_title,
+                    "description": subsection_description,
+                })
+
+            normalized_sections.append({
+                "id": section_id,
+                "title": section_title,
+                "description": section_description,
+                "subsections": normalized_subsections,
+            })
+
+        return {
+            "title": self._clean_outline_title(structure.get("title"), topic),
+            "sections": normalized_sections,
+        }
 
     @staticmethod
     def _extract_requirement_field(user_requirements: str, labels: List[str], default: str = "") -> str:
@@ -548,8 +631,25 @@ JSON 结构：
                 print(f"❌ 标准大纲生成失败: {exc}")
                 raise
 
+            structure = self._normalize_outline_structure(
+                structure=structure,
+                user_requirements=user_requirements,
+                max_sections=max_sections,
+                max_subsections_per_section=max_subsections_per_section,
+            )
             issues = self._outline_quality_issues(structure)
             if issues:
+                if self.remote_single_llm_call:
+                    return {
+                        "success": False,
+                        "error": "outline_quality_failed",
+                        "issues": issues[:8],
+                        "metadata": {
+                            "provider_chain": self.provider_chain,
+                            "active_provider": llm_metadata.get("provider", self.last_provider_used),
+                            "model": llm_metadata.get("model", self.model),
+                        },
+                    }
                 print(f"⚠️ 大纲标题质量异常，尝试LLM修复: {issues[:4]}")
                 structure, repair_metadata = self._repair_outline_structure(
                     structure=structure,
@@ -558,6 +658,12 @@ JSON 结构：
                     max_sections=max_sections,
                     max_subsections_per_section=max_subsections_per_section,
                     reason="; ".join(issues[:6]),
+                )
+                structure = self._normalize_outline_structure(
+                    structure=structure,
+                    user_requirements=user_requirements,
+                    max_sections=max_sections,
+                    max_subsections_per_section=max_subsections_per_section,
                 )
                 llm_metadata = {**llm_metadata, "repair": repair_metadata}
                 issues = self._outline_quality_issues(structure)
@@ -742,7 +848,7 @@ JSON 结构：
                 errors.append(f"{provider}: skipped (cooldown {remain:.1f}s)")
                 continue
 
-            attempt_limit = self.provider_retries if has_fallback_provider else max(3, self.provider_retries)
+            attempt_limit = self.provider_retries
             for attempt in range(1, attempt_limit + 1):
                 try:
                     self._wait_for_provider_slot(provider)
@@ -1169,7 +1275,8 @@ JSON 结构：
         raise Exception(f"不支持的 provider: {provider}")
 
     def _generate_json_with_repair(self, prompt: str, max_tokens: int, stage_name: str) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
-        retries = max(1, int(os.getenv("OUTLINER_JSON_RETRIES", "3")))
+        default_retries = "1" if self.remote_single_llm_call else "3"
+        retries = max(1, int(os.getenv("OUTLINER_JSON_RETRIES", default_retries)))
         strict_prompt = (
             f"{prompt}\n\n"
             "【严格输出要求】\n"
@@ -1191,7 +1298,7 @@ JSON 结构：
                 return self._safe_json_loads(text), metadata, text
             except json.JSONDecodeError as exc:
                 last_error = str(exc)
-                if attempt >= retries:
+                if self.remote_single_llm_call or attempt >= retries:
                     break
 
                 repair_prompt = f"""
