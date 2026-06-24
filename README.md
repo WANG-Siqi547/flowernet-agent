@@ -1824,6 +1824,51 @@ curl -s http://localhost:8004/health/ready
 - bandit 臂选择分布与 OPE 结果
 - 不同 provider 的 fallback 比例
 
+### 17.4 PPT Diagram Prompts (BioRender / Academic Blueprint Style)
+
+1. **Problem Statement: Why Long-Document Generation Fails Without FlowerNet**
+A clean, flat, engineering schematic diagram in academic blueprint style on a white background with blue and gray lines, high information density, no 3D rendering.
+Three horizontal panels connected by bold arrows.
+Panel 1 header: 'Pain Point A: Hallucination Risk', icon set: unstable AI text block + warning triangle, labels: Goal='Reduce fabricated claims', Action='Raw long-context generation without grounded retrieval', Output='Fact drift and unsupported statements'.
+Panel 2 header: 'Pain Point B: Weak Structure & No Feedback', icon set: broken outline tree + isolated generation blocks, labels: Goal='Maintain section-level coherence', Action='One-pass generation with no verifier-controller loop', Output='Poor hierarchy, repetition, missing key points'.
+Panel 3 header: 'Pain Point C: Low Observability', icon set: faded process pipeline + crossed magnifier + missing trace logs, labels: Goal='Trace and debug generation lifecycle', Action='No checkpoint/history/eval persistence', Output='Hard to audit, hard to recover, hard to improve'.
+Add concise caption boxes: 'Hallucination', 'Poor Structure', 'No Feedback Loop', 'Untraceable Process'.
+Clean sans-serif typography, subtle red accents only for risk markers.
+
+2. **FlowerNet End-to-End Workflow Architecture: Multi-Service Closed Loop**
+A professional flat vector blueprint architecture diagram on a white background, blue/gray line system, technical academic style, no 3D.
+Arrange modules left-to-right with top control lane and bottom data lane.
+Main flow: 'Web Interface / API Gateway' -> 'Outliner Service' -> 'Generator Service' -> 'Verifier Service' -> 'Controller Service' -> loop back to Outliner/Generator when failed -> 'Final Markdown/DOCX Output'.
+Add side module 'History Store' connected to all services for passed_history, progress events, subsection tracking, recover-document flow.
+Add orchestration layer labels: 'Multi-Agent Collaboration', 'LangGraph State Transitions', 'Controller Policy Selection (Contextual Bandit)'.
+Add retrieval lane: Generator and Verifier call 'RAG Pipeline' which queries 'Vector DB Abstraction' and external literature sources.
+Include service-level labels: timeouts, retries, fallback providers, section-level quality gate, force-pass safeguards.
+Show clear arrow labels: Input, Structure Plan, Section Draft, Quality Scores, Repair Decision, Regeneration, Final Assembly.
+
+3. **Module Logic A: Outliner + Generator + Verifier + Controller Closed-Loop**
+A clean academic schematic with four connected functional panels and explicit feedback arrows, flat blueprint style, white background, blue/gray accents.
+Panel 1 'Outliner': hierarchy icon, labels Goal='Create exact chapter/subsection structure', Action='Generate title, sections, content prompts, normalize counts', Output='Structured outline + subsection prompts'.
+Panel 2 'Generator': document-with-gear icon, labels Goal='Section-wise grounded drafting', Action='Use prompt + history + RAG evidence + provider chain fallback', Output='Draft subsection + citation candidates'.
+Panel 3 'Verifier': shield + metric chart icon, labels Goal='Quality gate per subsection', Action='Compute relevancy_index, redundancy_index, multidim quality, citation/domain checks', Output='Pass/Fail + advice + uncertainty + failed dimensions'.
+Panel 4 'Controller': dual-path decision icon, labels Goal='Targeted repair strategy', Action='Rule/LLM rewrite + contextual bandit arm selection + gain threshold check', Output='Refined prompt/outline or force-pass signal'.
+Add loop annotation: 'Fail -> refine -> retry (bounded iterations)'.
+
+4. **Module Logic B: Vector DB + RAG + Reranker Retrieval Pipeline**
+A flat engineering retrieval schematic on white background with blueprint line aesthetics, no artistic rendering.
+Show pipeline blocks: 'Query Builder (topic context + outline anchors)' -> 'Vector DB Abstraction Layer' -> 'Retriever (dense + optional lexical)' -> 'Reranker' -> 'Top-k Evidence Context' -> 'Generator/Verifier Consumers'.
+Add side blocks: 'Citation Metadata Filter', 'Domain Blacklist / Drift Prevention', 'Deduplication'.
+Label critical actions: embed query, namespace routing, similarity search, rerank by relevance and citation trust, assemble grounded context window.
+Show dual outputs: (1) 'Generation Context Pack' to Generator, (2) 'Evidence Cross-Check Inputs' to Verifier.
+Include concise quality labels: 'higher source alignment', 'lower citation drift', 'better factual grounding'.
+
+5. **Module Logic C: Orchestration and Evaluation Infrastructure**
+A high-density academic blueprint module map in flat vector style, white background with blue/gray connections and small red risk markers only where needed.
+Central orchestrator node labeled 'FlowerNet Multi-Agent Runtime'.
+Around it place linked modules: 'Tool Registry' (available tools + schemas), 'MCP Bridge' (external tool protocol), 'Tool-Use Executor' (safe tool calls), 'Contextual Bandit Policy' (adaptive strategy arm selection), 'UniEval Service' (semantic dimension scoring), 'Checkpoint Store' (state snapshots for resume/recovery), 'Eval Store' (scores, traces, outcomes), and 'History/Observability Timeline'.
+Add directed arrows for data/control: policy chooses strategy -> tool invocation via registry/MCP -> generation result -> UniEval and verifier metrics -> persisted to eval store/checkpoint -> feedback to policy update.
+Add short labels for outputs: 'selected action', 'tool response', 'quality signal', 'recoverable state', 'offline OPE-ready logs'.
+Keep typography compact and research-slide ready.
+
 ---
 
 ## 18. 快速开始（最短路径）
